@@ -1,10 +1,17 @@
 #include "lexer.hpp"
 #include <cctype>
+#include <cerrno>
+#include <cstdlib>
 #include <unordered_map>
 
 #include "i18n.hpp"
 
 namespace {
+// Largest integer a double can represent exactly (2^53). Past this,
+// std::stod silently rounds -- better to refuse the literal than let
+// it quietly become the wrong number.
+constexpr unsigned long long kMaxExactDoubleInt = 9007199254740992ULL;
+
 // Indonesian keywords, each with an English alias mapping to the same
 // TokenType (fungsi/func, buat/let, jika/if, ...) -- interchangeable,
 // not two separate features to keep in sync.
@@ -110,11 +117,26 @@ std::vector<Token> Lexer::tokenize() {
 
 Token Lexer::readNumber(size_t start, int line, int col) {
     while (std::isdigit(static_cast<unsigned char>(peek()))) advance();
+    bool isInteger = true;
     if (peek() == '.' && std::isdigit(static_cast<unsigned char>(peek(1)))) {
+        isInteger = false;
         advance();
         while (std::isdigit(static_cast<unsigned char>(peek()))) advance();
     }
     std::string text = source_.substr(start, pos_ - start);
+    if (isInteger && text.size() >= 16) {
+        errno = 0;
+        char* end = nullptr;
+        unsigned long long asInt = std::strtoull(text.c_str(), &end, 10);
+        if (errno == ERANGE || asInt > kMaxExactDoubleInt) {
+            throw LexError(
+                std::string(i18n::tr("Angka integer ", "Integer literal ")) + text +
+                    i18n::tr(
+                        " kegedean -- 'angka' (double) cuma presisi exact sampe 9007199254740992, pake teks buat angka segede ini",
+                        " is too large -- 'angka' (double) is only exact up to 9007199254740992, use a text/string literal for numbers this big"),
+                line, col);
+        }
+    }
     Token tok;
     tok.type = TokenType::Number;
     tok.number = std::stod(text);
