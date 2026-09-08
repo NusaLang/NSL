@@ -1,0 +1,51 @@
+fungsi faktorial(n) {
+    jika n <= 1 { hasil 1; }
+    hasil n * faktorial(n - 1);
+}
+cetak(faktorial(5));
+cetak(faktorial(10));
+cetak(faktorial(20));
+
+fungsi fib(n) {
+    jika n < 2 { hasil n; }
+    hasil fib(n - 1) + fib(n - 2);
+}
+cetak(fib(20));
+cetak(fib(25));
+
+fungsi hitung_turun(n) {
+    jika n == 0 { hasil 0; }
+    hasil 1 + hitung_turun(n - 1);
+}
+cetak(hitung_turun(1000));
+cetak(hitung_turun(1500));
+
+fungsi ackermann(m, n) {
+    jika m == 0 { hasil n + 1; }
+    jika n == 0 { hasil ackermann(m - 1, 1); }
+    hasil ackermann(m - 1, ackermann(m, n - 1));
+}
+cetak(ackermann(2, 3));
+
+fungsi genap_p(n) {
+    jika n == 0 { hasil benar; }
+    hasil ganjil_p(n - 1);
+}
+fungsi ganjil_p(n) {
+    jika n == 0 { hasil salah; }
+    hasil genap_p(n - 1);
+}
+cetak(genap_p(100));
+cetak(ganjil_p(101));
+
+fungsi ratakan(l, keluar) {
+    untuk (buat i = 0; i < panjang(l); i = i + 1) {
+        jika tipe(l[i]) == "larik" {
+            ratakan(l[i], keluar);
+        } lain {
+            tambah(keluar, l[i]);
+        }
+    }
+    hasil keluar;
+}
+cetak(ratakan([1, [2, [3, [4, [5]]]], 6], []));

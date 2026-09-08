@@ -1,0 +1,13 @@
+n=0 mulai=0 -> 0
+n=1 mulai=1 -> 1
+n=5 mulai=-1 -> 9
+n=100 mulai=2.5 -> 4952.5
+n=100000 mulai=-1000000 -> 4998950000
+kurang n=100000 mulai=0.0001 -> -4999949999.9999
+campuran n=100000 -> 100000
+langsung n=100000 -> 4999950000
+langsungKali n=100000 -> 5016607663.477639
+boundVar n=100000 -> 4999950000
+besar sum=4499998500000
+dalam fungsi (masih lokal) -> 1249975000
+--- exit: 0

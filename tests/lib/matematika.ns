@@ -1,0 +1,16 @@
+buat PI = 3.14159;
+
+fungsi tambah(a, b) { hasil a + b; }
+fungsi kali(a, b) { hasil a * b; }
+fungsi pangkat(a, n) {
+    buat r = 1;
+    untuk (buat i = 0; i < n; i = i + 1) { r = r * a; }
+    hasil r;
+}
+
+buat penghitung_modul = 0;
+fungsi naik() {
+    penghitung_modul = penghitung_modul + 1;
+    hasil penghitung_modul;
+}
+

@@ -1,0 +1,24 @@
+// build dulu: make plugins
+buat db = muat_plugin("sqlite");
+
+buat h = db.db_buka("/tmp/nusantara_sqlite_demo.db");
+jika h == kosong {
+    cetak("gagal buka database");
+} lain {
+    db.db_jalankan(h, "DROP TABLE IF EXISTS catatan");
+    db.db_jalankan(h, "CREATE TABLE catatan (id INTEGER PRIMARY KEY, judul TEXT, selesai INTEGER)");
+
+    // placeholder ?1/?2/... + json_encode(larik), aman dari SQL injection
+    db.db_jalankan(h, "INSERT INTO catatan (judul, selesai) VALUES (?1, ?2)",
+                   json_encode(["Belajar Nusantara", salah]));
+    db.db_jalankan(h, "INSERT INTO catatan (judul, selesai) VALUES (?1, ?2)",
+                   json_encode(["Bikin plugin SQLite", benar]));
+
+    buat q = json_decode(db.db_query(h, "SELECT * FROM catatan ORDER BY id"));
+    untuk (buat i = 0; i < panjang(q.rows); i = i + 1) {
+        buat c = q.rows[i];
+        cetak(c.id, "-", c.judul, "- selesai:", c.selesai == 1);
+    }
+
+    db.db_tutup(h);
+}

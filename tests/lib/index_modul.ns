@@ -1,0 +1,41 @@
+fungsi index_larik(arr) {
+    buat first = arr[0];
+    buat last = arr[panjang(arr) - 1];
+    cetak(first);
+    cetak(last);
+}
+
+fungsi index_peta(m) {
+    buat val = m["x"];
+    cetak(val);
+}
+
+fungsi index_teks(s) {
+    buat ch = s[0];
+    cetak(ch);
+}
+
+fungsi balik_larik(arr) {
+    buat out = [];
+    buat i = panjang(arr) - 1;
+    selama i >= 0 {
+        tambah(out, arr[i]);
+        i = i - 1;
+    }
+    return out;
+}
+
+fungsi gabung(a, b) {
+    buat out = [];
+    buat i = 0;
+    selama i < panjang(a) {
+        tambah(out, a[i]);
+        i = i + 1;
+    }
+    i = 0;
+    selama i < panjang(b) {
+        tambah(out, b[i]);
+        i = i + 1;
+    }
+    return out;
+}

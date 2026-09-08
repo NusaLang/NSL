@@ -1,0 +1,4 @@
+nusantara: error: meledak di dalam (line 1, col 18)
+  di dalam fungsi 'dalam' (dipanggil dari line 2, col 17)
+  di dalam fungsi 'luar' (dipanggil dari line 3, col 1)
+--- exit: 1

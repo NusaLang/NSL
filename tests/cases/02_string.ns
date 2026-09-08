@@ -1,0 +1,38 @@
+buat s = "Nusantara Bahasa Pemrograman";
+cetak(panjang(s));
+cetak(potong(s, 0, 9));
+cetak(potong(s, 10, 16));
+cetak(potong(s, 10, panjang(s)));
+cetak(huruf_besar(s));
+cetak(huruf_kecil(s));
+cetak(pisah(s, " "));
+cetak(gabung(pisah(s, " "), "_"));
+cetak(gabung(pisah("a,b,,c", ","), "|"));
+cetak(pisah("abc", ""));
+cetak(byte_di(s, 0));
+cetak(byte_di(s, 1));
+cetak(teks_dari(78));
+cetak(teks_dari(117));
+
+cetak("halo" + " " + "dunia");
+cetak("angka: " + ke_teks(42));
+cetak("" + "");
+cetak(panjang(""));
+
+buat unicode = "héllo dünia";
+cetak(panjang(unicode));
+cetak(huruf_besar(unicode));
+cetak(byte_di(unicode, 1));
+
+buat t = "aku";
+buat u = t;
+t = t + "mu";
+cetak(t);
+cetak(u);
+
+buat nama = "Nusa";
+cetak("halo ${nama} apa kabar");
+cetak("hitung ${1 + 2} selesai");
+
+cetak(teks(123));
+cetak(teks("abc"));

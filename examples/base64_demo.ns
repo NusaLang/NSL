@@ -1,0 +1,8 @@
+// base64_encode / base64_decode -- builtin, nggak butuh library luar.
+
+buat asli = "Merdeka! Nusantara jaya, base64 nggak butuh library luar.";
+buat teracak = base64_encode(asli);
+cetak("asli   :", asli);
+cetak("base64 :", teracak);
+cetak("balik  :", base64_decode(teracak));
+cetak("sama?  :", base64_decode(teracak) == asli);

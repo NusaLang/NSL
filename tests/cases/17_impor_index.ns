@@ -1,0 +1,32 @@
+// Regression: function from imported module indexing array/map/string params
+// Bug: VmArray from VM couldn't be indexed by tree-walking interpreter
+
+buat M = impor("../lib/index_modul.ns");
+
+// Test 1: array parameter indexing
+M.index_larik([10, 20, 30]);
+
+// Test 2: map parameter indexing
+buat m = peta_baru();
+m["x"] = "hello";
+M.index_peta(m);
+
+// Test 3: string parameter indexing
+M.index_teks("abc");
+
+// Test 4: array return from imported function
+buat reversed = M.balik_larik([1, 2, 3]);
+cetak(reversed[0]);
+cetak(reversed[2]);
+
+// Test 5: multiple calls in a loop
+buat i = 0;
+selama i < 3 {
+    M.index_larik([i, i + 10, i + 20]);
+    i = i + 1;
+}
+
+// Test 6: deeper import chain (A imports B imports C)
+buat mid = impor("../lib/mid_modul.ns");
+cetak(mid.wrap([42, 99]));
+cetak(mid.wrap(["tekstual"]));

@@ -1,0 +1,2 @@
+buat salah_tipe: angka = "bukan angka";
+cetak(salah_tipe);

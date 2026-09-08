@@ -1,0 +1,14 @@
+// fib.ns — fibonacci rekursif + loop
+
+fungsi fib(n) {
+    jika n < 2 {
+        hasil n;
+    }
+    hasil fib(n - 1) + fib(n - 2);
+}
+
+buat i = 0;
+selama i < 10 {
+    cetak(fib(i));
+    i = i + 1;
+}

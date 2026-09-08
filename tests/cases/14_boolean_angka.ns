@@ -1,0 +1,19 @@
+cetak(benar == 1);
+cetak(salah == 0);
+cetak(benar == benar);
+cetak(salah == salah);
+cetak(benar == salah);
+cetak(ke_angka(benar));
+cetak(ke_angka(salah));
+cetak(ke_teks(benar));
+cetak(json_encode(benar));
+buat a = [benar, salah, 1, 0, "benar"];
+cetak(a);
+buat m = peta_baru();
+m["t"] = benar; m["f"] = salah;
+cetak(m["t"], m["f"], json_encode(m["t"]), json_encode(m["f"]));
+jika salah { cetak("BUG"); } lain { cetak("ok-falsy"); }
+jika 0 { cetak("ok-nol-truthy"); } lain { cetak("BUG2"); }
+jika kosong { cetak("BUG3"); } lain { cetak("ok-kosong-falsy"); }
+jika "" { cetak("ok-string-kosong-truthy"); } lain { cetak("BUG4"); }
+cetak(salah || benar, benar && salah, !salah);

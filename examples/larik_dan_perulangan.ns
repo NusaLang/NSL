@@ -1,0 +1,30 @@
+// Larik (array), perulangan `untuk`, `berhenti`/`lanjut`, dan
+// operator gabungan (+= -= *= /=).
+
+buat angka = [5, 3, 8, 1, 9, 2];
+cetak("larik:", angka);
+cetak("panjang:", panjang(angka));
+
+tambah(angka, 100);
+cetak("abis tambah:", angka);
+cetak("abis hapus_akhir:", hapus_akhir(angka), "->", angka);
+
+buat total = 0;
+untuk (buat i = 0; i < panjang(angka); i = i + 1) {
+    jika angka[i] > 8 {
+        lanjut;  // skip elemen yang lebih besar dari 8
+    }
+    jika angka[i] == 2 {
+        berhenti;  // stop begitu ketemu angka 2
+    }
+    total += angka[i];
+}
+cetak("total (dengan skip & stop):", total);
+
+// string helpers
+buat kalimat = "Nusantara Bahasa Pemrograman";
+cetak(huruf_besar(kalimat));
+cetak(huruf_kecil(kalimat));
+cetak(pisah(kalimat, " "));
+cetak(gabung(pisah(kalimat, " "), "_"));
+cetak(potong(kalimat, 0, 9));

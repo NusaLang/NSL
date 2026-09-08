@@ -1,0 +1,43 @@
+buat p = peta_baru();
+p["nama"] = "Nusantara";
+p["versi"] = 1;
+p["aktif"] = benar;
+cetak(p["nama"]);
+cetak(p["versi"]);
+cetak(p["aktif"]);
+cetak(p["tidak_ada"]);
+
+buat kunci = peta_kunci(p);
+cetak(panjang(kunci));
+
+buat urut = [];
+untuk (buat i = 0; i < panjang(kunci); i = i + 1) {
+    tambah(urut, kunci[i]);
+}
+cetak(panjang(urut));
+
+buat q = peta_baru();
+q["a"] = 1;
+q["b"] = 2;
+cetak(q["a"]);
+cetak(q["b"]);
+cetak(panjang(peta_kunci(q)));
+
+buat sarang = peta_baru();
+sarang["dalam"] = peta_baru();
+sarang["dalam"]["x"] = 42;
+cetak(sarang["dalam"]["x"]);
+
+buat ref = p;
+ref["baru"] = "ditambah";
+cetak(p["baru"]);
+
+buat j = json_encode(q);
+buat kembali = json_decode(j);
+cetak(kembali["a"]);
+cetak(kembali["b"]);
+cetak(json_encode([1, 2, 3]));
+cetak(json_encode("teks"));
+cetak(json_encode(42));
+cetak(json_encode(benar));
+cetak(json_encode(kosong));

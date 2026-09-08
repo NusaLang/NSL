@@ -1,0 +1,43 @@
+// contoh.ns — cover hampir semua fitur bahasa
+
+buat nama = "Nusantara";
+
+fungsi sapa(siapa) {
+    cetak("Halo,", siapa);
+}
+
+sapa(nama);
+
+// fungsi + rekursi
+fungsi faktorial(n) {
+    jika n <= 1 {
+        hasil 1;
+    }
+    hasil n * faktorial(n - 1);
+}
+
+cetak(faktorial(5));  // 120
+
+// loop
+buat i = 0;
+selama i < 5 {
+    cetak(i);
+    i = i + 1;
+}
+
+// closure
+fungsi buat_penambah(x) {
+    fungsi tambah(y) {
+        hasil x + y;
+    }
+    hasil tambah;
+}
+
+buat tambah10 = buat_penambah(10);
+cetak(tambah10(7));  // 17
+
+// operator logika
+cetak(2 < 3 && 3 < 4);  // benar
+cetak(1 == 1.0);        // benar
+cetak(salah || benar);  // benar
+cetak(kosong);          // kosong

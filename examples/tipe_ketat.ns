@@ -1,0 +1,21 @@
+// Anotasi tipe -- gradual/opsional kaya TypeScript: nulis `: tipe` bikin
+// sesuatu dicek SEBELUM program dijalankan sama sekali; nggak nulis apa-apa
+// tetep dinamis kaya biasa. Tipe yang dikenal: angka/number, teks/string/str,
+// boolean/bool, larik/array, peta/map, fungsi/function, kosong/null/void.
+
+fungsi luas_persegi_panjang(panjang_sisi: angka, lebar: angka): angka {
+    hasil panjang_sisi * lebar;
+}
+
+buat p: angka = 8;
+buat l: angka = 5;
+cetak("luas:", luas_persegi_panjang(p, l));
+
+buat nama: teks = "Nusantara";
+cetak("halo " + nama);
+
+// Coba aktifin baris di bawah ini satu-satu buat liat type checker
+// nolak sebelum sempat nge-print apa pun:
+//
+//   buat salah: angka = "bukan angka";
+//   cetak(luas_persegi_panjang("delapan", 5));

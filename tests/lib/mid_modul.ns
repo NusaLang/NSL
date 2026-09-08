@@ -1,0 +1,5 @@
+buat deep = impor("deep_modul.ns");
+
+fungsi wrap(arr) {
+    return deep.proses(arr);
+}

@@ -1,0 +1,18 @@
+buat M = impor("../lib/matematika.ns");
+cetak(M.PI);
+cetak(M.tambah(2, 3));
+cetak(M.kali(4, 5));
+cetak(M.pangkat(2, 10));
+
+buat T = impor("../lib/teks_util.ns");
+cetak(T.ulang("ab", 3));
+cetak(T.balik("Nusantara"));
+cetak(T.dua_pangkat_tiga);
+
+buat M2 = impor("../lib/matematika.ns");
+cetak(M2.naik());
+cetak(M2.naik());
+cetak(M.naik());
+
+buat E = impor("../../examples/modul_util.ns");
+cetak(tipe(E));

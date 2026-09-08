@@ -1,0 +1,2 @@
+nusa --vm: error: impor(): nggak bisa buka 'tests/cases/tidak_ada_file_ini.ns' (dari './tidak_ada_file_ini.ns')
+--- exit: 1

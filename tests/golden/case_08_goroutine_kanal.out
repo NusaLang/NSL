@@ -1,0 +1,13 @@
+total kuadrat 0..4: 30
+total kuadrat 0..19 lewat 4 worker: 2470
+waitgroup selesai
+total kuadrat 0..4 lewat waitgroup: 30
+pilih_kanal indeks: 1 nilai: duluan dari B
+panjang kanal: 2
+1
+2
+kanal ditutup
+teks
+[1, 2, 3]
+v
+--- exit: 0

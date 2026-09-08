@@ -1,0 +1,26 @@
+EMCC ?= emcc
+EMFLAGS := -std=c++17 -O2 -Iinclude -D__EMSCRIPTEN__ -fexceptions \
+           -sEXPORTED_FUNCTIONS="['_nusa_eval', '_malloc', '_free']" \
+           -sEXPORTED_RUNTIME_METHODS="['ccall', 'cwrap', 'UTF8ToString', 'stringToUTF8', 'allocateUTF8']" \
+           -sALLOW_MEMORY_GROWTH=1 \
+           -sMODULARIZE=1 \
+           -sEXPORT_NAME="NusantaraWasm"
+
+WASM_SRC := src/gc.cpp src/gil.cpp src/i18n.cpp src/interpreter.cpp src/jit.cpp \
+            src/lexer.cpp src/net.cpp src/parser.cpp src/plugin.cpp src/proc.cpp \
+            src/typechecker.cpp src/vm.cpp src/wasm_main.cpp
+
+OUT_JS := nusantara.js
+OUT_WASM := nusantara.wasm
+
+.PHONY: all clean
+
+all: $(OUT_JS)
+
+# Needs an activated Emscripten SDK on PATH (emsdk_env.sh) -- see
+# https://emscripten.org/docs/getting_started/downloads.html.
+$(OUT_JS): $(WASM_SRC)
+	$(EMCC) $(EMFLAGS) $(WASM_SRC) -o $(OUT_JS)
+
+clean:
+	rm -f $(OUT_JS) $(OUT_WASM)

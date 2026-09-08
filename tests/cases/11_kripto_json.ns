@@ -1,0 +1,27 @@
+cetak(base64_encode("Nusantara"));
+cetak(base64_decode(base64_encode("Nusantara")));
+cetak(base64_encode(""));
+cetak(sha256_hex("halo"));
+cetak(sha256_hex(""));
+cetak(hmac_sha256_hex("kunci", "pesan"));
+
+buat tok = jwt_buat(peta_baru(), "rahasia");
+cetak(tipe(tok));
+buat p = peta_baru();
+p["sub"] = "user1";
+p["n"] = 7;
+buat tok2 = jwt_buat(p, "rahasia");
+buat cek = jwt_verifikasi(tok2, "rahasia");
+cetak(cek["sub"]);
+cetak(cek["n"]);
+cetak(jwt_verifikasi(tok2, "salah"));
+
+buat obj = json_decode("{\"a\":1,\"b\":[1,2,3],\"c\":{\"d\":\"x\"},\"e\":null,\"f\":true}");
+cetak(obj["a"]);
+cetak(obj["b"]);
+cetak(obj["c"]["d"]);
+cetak(obj["e"]);
+cetak(obj["f"]);
+cetak(json_encode(obj["b"]));
+cetak(json_encode("kutip \" dan \\ backslash"));
+cetak(json_decode("[1,2,[3,4]]")[2][1]);

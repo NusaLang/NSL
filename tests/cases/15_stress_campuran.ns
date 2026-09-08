@@ -1,0 +1,50 @@
+fungsi acak_semu(s) { hasil (s * 1103515245 + 12345) % 2147483648; }
+buat s = 42;
+buat peta_besar = peta_baru();
+buat larik_besar = [];
+untuk (buat i = 0; i < 30000; i = i + 1) {
+    s = acak_semu(s);
+    buat k = "kunci_" + ke_teks(s % 5000);
+    peta_besar[k] = "nilai " + ke_teks(i) + " " + huruf_besar(k);
+    tambah(larik_besar, [i, k, peta_besar[k]]);
+}
+cetak(panjang(peta_kunci(peta_besar)));
+cetak(panjang(larik_besar));
+cetak(larik_besar[29999][1]);
+cetak(larik_besar[12345][2]);
+buat h = 0;
+untuk (buat i = 0; i < panjang(larik_besar); i = i + 1) {
+    h = (h + panjang(larik_besar[i][2]) * (i % 7)) % 1000000007;
+}
+cetak("hash:", h);
+gc_paksa();
+buat kunci = peta_kunci(peta_besar);
+buat total_len = 0;
+untuk (buat i = 0; i < panjang(kunci); i = i + 1) { total_len = total_len + panjang(peta_besar[kunci[i]]); }
+cetak("total_len:", total_len);
+fungsi bikin(n) { fungsi f(x) { hasil x * n + panjang("abc"); } hasil f; }
+buat fs = [];
+untuk (buat i = 0; i < 2000; i = i + 1) { tambah(fs, bikin(i)); }
+buat akum = 0;
+untuk (buat i = 0; i < 2000; i = i + 1) { akum = akum + fs[i](i); }
+cetak("akum:", akum);
+gc_paksa();
+buat ch = kanal_baru(50);
+fungsi worker(id) {
+    untuk (buat i = 0; i < 200; i = i + 1) {
+        kanal_kirim(ch, "w" + ke_teks(id) + "-" + ke_teks(i));
+    }
+}
+untuk (buat w = 0; w < 8; w = w + 1) { jalan(worker, w); }
+buat n = 0;
+buat cek = 0;
+untuk (buat i = 0; i < 1600; i = i + 1) {
+    buat msg = kanal_terima(ch);
+    n = n + 1;
+    cek = (cek + panjang(msg)) % 100000;
+}
+cetak("pesan:", n, "cek:", cek);
+buat json_str = json_encode(larik_besar[0]);
+cetak(json_str);
+cetak(json_encode(json_decode(json_str)));
+cetak(sha256_hex(gabung(kunci, "|")) == sha256_hex(gabung(peta_kunci(peta_besar), "|")));

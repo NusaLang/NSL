@@ -1,0 +1,9 @@
+plugins/*/*.so
+plugins/*/vendor/*.o
+.nusa-cache/
+/nusantara-plugins/
+/.nusa_lang
+/build-opt/
+/dist/
+nusantara.js
+nusantara.wasm

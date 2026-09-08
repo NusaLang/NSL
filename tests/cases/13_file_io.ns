@@ -1,0 +1,9 @@
+buat path = "/tmp/nusa_test_io.txt";
+tulis_file(path, "baris satu\nbaris dua\n");
+cetak(file_ada(path));
+buat isi = baca_file(path);
+cetak(isi);
+cetak(panjang(pisah(isi, "\n")));
+cetak(file_ada("/tmp/tidak_ada_nusa_xyz.txt"));
+tulis_file(path, "");
+cetak(panjang(baca_file(path)));

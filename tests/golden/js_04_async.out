@@ -1,0 +1,7 @@
+start
+got A B
+caught: boom
+Promise.all: [1,2,3]
+end
+run() finished
+--- exit: 0

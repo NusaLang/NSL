@@ -1,0 +1,83 @@
+coba {
+    lempar "kesalahan sederhana";
+} tangkap (e) {
+    cetak("tertangkap:", e);
+}
+
+coba {
+    cetak("tidak ada error");
+} tangkap (e) {
+    cetak("tidak boleh sampai sini");
+}
+
+coba {
+    lempar "dengan akhirnya";
+} tangkap (e) {
+    cetak("tangkap:", e);
+} akhirnya {
+    cetak("akhirnya jalan");
+}
+
+coba {
+    cetak("sukses");
+} tangkap (e) {
+    cetak("tidak sampai sini");
+} akhirnya {
+    cetak("akhirnya tetap jalan");
+}
+
+fungsi yang_lempar() {
+    lempar "dari dalam fungsi";
+}
+coba {
+    yang_lempar();
+} tangkap (e) {
+    cetak("dari fungsi:", e);
+}
+
+coba {
+    coba {
+        lempar "dalam";
+    } tangkap (e) {
+        cetak("inner:", e);
+        lempar "luar";
+    }
+} tangkap (e) {
+    cetak("outer:", e);
+}
+
+coba {
+    buat a = [1, 2, 3];
+    cetak(a[100]);
+} tangkap (e) {
+    cetak("index error tertangkap");
+}
+
+coba {
+    lempar 42;
+} tangkap (e) {
+    cetak("nilai angka:", e);
+    cetak("tipe:", tipe(e));
+}
+
+buat p = peta_baru();
+p["kode"] = 500;
+p["pesan"] = "gagal";
+coba {
+    lempar p;
+} tangkap (e) {
+    cetak("kode:", e["kode"], "pesan:", e["pesan"]);
+}
+
+fungsi aman_bagi(a, b) {
+    coba {
+        jika b == 0 { lempar "bagi nol"; }
+        hasil a / b;
+    } tangkap (e) {
+        hasil kosong;
+    }
+}
+cetak(aman_bagi(10, 2));
+cetak(aman_bagi(10, 0));
+
+cetak(json_decode_aman("{bukan json"));

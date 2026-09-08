@@ -1,0 +1,74 @@
+function tambah(a, b) {
+    return a + b;
+}
+
+fungsi kurang(a, b) {
+    hasil a - b;
+}
+
+let x = 10;
+buat y = 5;
+
+if (x > y) {
+    cetak("x lebih besar");
+} else {
+    cetak("y lebih besar");
+}
+
+jika (y > x) {
+    cetak("y lebih besar");
+} lain {
+    cetak("x lebih besar");
+}
+
+cetak(tambah(x, y));
+cetak(kurang(x, y));
+
+let i = 0;
+while (i < 3) {
+    cetak(i);
+    i += 1;
+}
+
+buat j = 0;
+selama (j < 3) {
+    cetak(j);
+    j += 1;
+}
+
+for (let k = 0; k < 3; k += 1) {
+    cetak(k);
+}
+
+untuk (buat m = 0; m < 3; m += 1) {
+    cetak(m);
+}
+
+cetak(true);
+cetak(benar);
+cetak(false);
+cetak(salah);
+cetak(null);
+cetak(kosong);
+
+try {
+    throw "oops";
+} catch (e) {
+    cetak(e);
+}
+
+coba {
+    lempar "oops2";
+} tangkap (e) {
+    cetak(e);
+}
+
+buat callback = function(v) {
+    hasil v * 2;
+};
+cetak(callback(21));
+
+buat callback2 = fungsi(v) {
+    return v * 3;
+};
+cetak(callback2(7));

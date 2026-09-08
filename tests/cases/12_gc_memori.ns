@@ -1,0 +1,31 @@
+fungsi bikin_sampah(n) {
+    untuk (buat i = 0; i < n; i = i + 1) {
+        buat a = [];
+        tambah(a, i);
+        buat m = peta_baru();
+        m["x"] = a;
+    }
+    hasil n;
+}
+cetak(bikin_sampah(20000));
+gc_paksa();
+cetak(tipe(gc_info()));
+
+fungsi siklus() {
+    buat a = [];
+    buat b = [];
+    tambah(a, b);
+    tambah(b, a);
+    hasil panjang(a);
+}
+untuk (buat i = 0; i < 5000; i = i + 1) { siklus(); }
+gc_paksa();
+cetak("siklus selesai");
+
+buat besar = [];
+untuk (buat i = 0; i < 50000; i = i + 1) { tambah(besar, i * 2); }
+cetak(panjang(besar));
+cetak(besar[49999]);
+buat jumlah = 0;
+untuk (buat i = 0; i < panjang(besar); i = i + 1) { jumlah = jumlah + besar[i]; }
+cetak(jumlah);
