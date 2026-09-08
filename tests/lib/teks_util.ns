@@ -1,0 +1,17 @@
+buat M = impor("./matematika.ns");
+buat dua_pangkat_tiga = M.pangkat(2, 3);
+
+fungsi ulang(s, n) {
+    buat r = "";
+    untuk (buat i = 0; i < n; i = i + 1) { r = r + s; }
+    hasil r;
+}
+
+fungsi balik(s) {
+    buat r = "";
+    untuk (buat i = panjang(s) - 1; i >= 0; i = i - 1) {
+        r = r + potong(s, i, i + 1);
+    }
+    hasil r;
+}
+

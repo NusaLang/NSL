@@ -1,0 +1,29 @@
+// Buktiin garbage collector: instance yang dibikin di dalam loop nggak
+// numpuk di memori walau loop-nya jalan ribuan kali. Bandingin
+// `total_alokasi` (naik terus, satu per instance) sama `hidup` (harusnya
+// tetep kecil & datar, bukan ikut naik). Pakai `kelas`, bukan closure
+// biasa -- closure/loop aritmatika murni lewat jalur VM/JIT yang nggak
+// nyentuh Environment sama sekali, jadi nggak kepake buat ngetes ini.
+
+cetak("sebelum loop:", gc_info());
+
+kelas PenghitungSesaat {
+    fungsi konstruktor(x) {
+        ini.x = x;
+    }
+    fungsi kuadrat() {
+        hasil ini.x * ini.x;
+    }
+}
+
+buat i = 0;
+selama i < 20000 {
+    buat p = PenghitungSesaat(i);
+    p.kuadrat();
+    i = i + 1;
+}
+
+cetak("sesudah loop:", gc_info());
+gc_paksa();
+cetak("(statement ini yang bikin collect di atas beneran kepakai)");
+cetak("sesudah gc_paksa:", gc_info());

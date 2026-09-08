@@ -1,0 +1,21 @@
+fungsi tambah(a, b) {
+    hasil a + b;
+}
+
+buat N = 2000000;
+buat t0 = waktu();
+buat sum = 0;
+untuk (buat i = 0; i < N; i = i + 1) {
+    sum = tambah(sum, i);
+}
+buat t1 = waktu();
+cetak("panggilan fungsi: " + ke_teks(N) + " iterasi dalam " + ke_teks(t1 - t0) + " detik");
+cetak("per panggilan: " + ke_teks((t1 - t0) / N * 1000000) + " us");
+
+buat s = "";
+buat t2 = waktu();
+untuk (buat j = 0; j < 200000; j = j + 1) {
+    s = "halo dunia nomor " + ke_teks(j);
+}
+buat t3 = waktu();
+cetak("concat string: 200000 iterasi dalam " + ke_teks(t3 - t2) + " detik");

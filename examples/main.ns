@@ -1,0 +1,6 @@
+// coba: nusa watch examples/main.ns
+buat util = impor("modul_util.ns");
+
+cetak(util.sapa("Nusantara"));
+cetak("2 + 3 =", util.tambah_dua(2, 3));
+cetak("versi modul:", util.versi);

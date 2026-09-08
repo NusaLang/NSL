@@ -1,0 +1,22 @@
+// Template string -- `teks ${ekspresi}` -- gula sintaksis buat
+// ke_teks()/+, di-desugar saat lexing (lihat README bagian "Template
+// string"). String biasa ("...") masih ada dan nggak berubah --
+// backtick itu sintaks tambahan, bukan pengganti.
+
+buat nama = "Nusantara";
+buat versi = 1;
+cetak(`halo, ${nama}! versi ${versi + 0.1}`);
+
+fungsi kuadrat(n) { hasil n * n; }
+cetak(`5 kuadrat = ${kuadrat(5)}`);
+
+buat daftar = ["a", "b", "c"];
+cetak(`gabungan: ${gabung(daftar, ", ")}`);
+
+// nested template + escape
+buat dalam = "isi";
+cetak(`luar: ${ `template ${dalam}` } -- literal backtick: \` dan dolar: \$`);
+
+// tanpa interpolasi sama sekali, dan string kosong -- keduanya valid
+cetak(`teks polos aja`);
+cetak(``);

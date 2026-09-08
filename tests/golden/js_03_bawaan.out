@@ -1,0 +1,10 @@
+Object.keys: ["z","a","m"]
+Object.values: [1,2,3]
+Object.entries: [["z",1],["a",2],["m",3]]
+map/filter/sort: [6,10,16,18]
+Math: 9 1 4 3
+String methods: HELLO WORLD abcabcabc ["a","b","c"]
+Map: 2 1 ["k1","k2"]
+Set: 3 [1,2,3]
+JSON parse/stringify roundtrip: {"nested":{"list":[1,2,3]},"ok":true}
+--- exit: 0

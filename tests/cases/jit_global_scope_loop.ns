@@ -1,0 +1,85 @@
+fungsi tambah(a, b) {
+    hasil a + b;
+}
+fungsi kurang(a, b) {
+    hasil a - b;
+}
+fungsi campuran(a, b) {
+    hasil a * 2 - b + 1;
+}
+
+buat sumA = 0;
+untuk (buat i = 0; i < 0; i = i + 1) {
+    sumA = tambah(sumA, i);
+}
+cetak("n=0 mulai=0 -> " + ke_teks(sumA));
+
+buat sumB = 1;
+untuk (buat i = 0; i < 1; i = i + 1) {
+    sumB = tambah(sumB, i);
+}
+cetak("n=1 mulai=1 -> " + ke_teks(sumB));
+
+buat sumC = -1;
+untuk (buat i = 0; i < 5; i = i + 1) {
+    sumC = tambah(sumC, i);
+}
+cetak("n=5 mulai=-1 -> " + ke_teks(sumC));
+
+buat sumD = 2.5;
+untuk (buat i = 0; i < 100; i = i + 1) {
+    sumD = tambah(sumD, i);
+}
+cetak("n=100 mulai=2.5 -> " + ke_teks(sumD));
+
+buat sumE = -1000000;
+untuk (buat i = 0; i < 100000; i = i + 1) {
+    sumE = tambah(sumE, i);
+}
+cetak("n=100000 mulai=-1000000 -> " + ke_teks(sumE));
+
+buat sumF = 0.0001;
+untuk (buat i = 0; i < 100000; i = i + 1) {
+    sumF = kurang(sumF, i);
+}
+cetak("kurang n=100000 mulai=0.0001 -> " + ke_teks(sumF));
+
+buat sumG = 0;
+untuk (buat i = 0; i < 100000; i = i + 1) {
+    sumG = campuran(sumG, i);
+}
+cetak("campuran n=100000 -> " + ke_teks(sumG));
+
+buat sumH = 0;
+untuk (buat i = 0; i < 100000; i = i + 1) {
+    sumH = sumH + i;
+}
+cetak("langsung n=100000 -> " + ke_teks(sumH));
+
+buat sumI = 0;
+untuk (buat i = 0; i < 100000; i = i + 1) {
+    sumI = sumI * 1.0000001 + i - 0.5;
+}
+cetak("langsungKali n=100000 -> " + ke_teks(sumI));
+
+buat sumJ = 0;
+buat batasGlobal = 100000;
+untuk (buat i = 0; i < batasGlobal; i = i + 1) {
+    sumJ = tambah(sumJ, i);
+}
+cetak("boundVar n=100000 -> " + ke_teks(sumJ));
+
+buat sumK = 0;
+untuk (buat i = 0; i < 3000000; i = i + 1) {
+    sumK = tambah(sumK, i);
+}
+cetak("besar sum=" + ke_teks(sumK));
+
+fungsi luar() {
+    buat s = 0;
+    untuk (buat i = 0; i < 50000; i = i + 1) {
+        s = tambah(s, i);
+    }
+    hasil s;
+}
+cetak("dalam fungsi (masih lokal) -> " + ke_teks(luar()));

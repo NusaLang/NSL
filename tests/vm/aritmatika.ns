@@ -1,0 +1,17 @@
+buat x = 7;
+buat y = 3;
+cetak(x + y);
+cetak(x - y);
+cetak(x * y);
+cetak(x / y);
+cetak(x % y);
+cetak(x < y);
+cetak(x == 7);
+cetak(!(x == y));
+buat i = 0;
+buat akum = 0;
+selama i < 100 { akum = akum + i * i; i = i + 1; }
+cetak(akum);
+fungsi kali3(n) { hasil n * 3; }
+fungsi terapkan(f, v) { hasil f(v); }
+cetak(terapkan(kali3, 14));

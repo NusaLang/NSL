@@ -1,0 +1,4 @@
+nusa: js error: Error: deliberate failure
+    at boom (tests/cases_js/06_error.js:2)
+    at <eval> (tests/cases_js/06_error.js:4)
+--- exit: 1

@@ -1,0 +1,85 @@
+fungsi ambil_koleksi(info) {
+    buat bagian = pisah(info, "koleksi=");
+    hasil ke_angka(bagian[panjang(bagian) - 1]);
+}
+
+fungsi kerja_berat(n) {
+    buat m = peta_baru();
+    m["v"] = n;
+    m["arr"] = [n, n + 1, n + 2];
+    hasil m["v"];
+}
+
+buat sampel = [];
+
+fungsi jalankan_lama(batas) {
+    buat total = 0;
+    buat i = 0;
+    selama i < batas {
+        total = total + kerja_berat(i);
+        jika i % 5000 == 0 {
+            tambah(sampel, ambil_koleksi(gc_info()));
+        }
+        i = i + 1;
+    }
+    hasil total;
+}
+
+buat total = jalankan_lama(60000);
+cetak("total:", total);
+
+buat naik = salah;
+buat k = 1;
+selama k < panjang(sampel) {
+    jika sampel[k] > sampel[k - 1] {
+        naik = benar;
+    }
+    k = k + 1;
+}
+cetak("koleksi bertambah SELAMA fungsi bersarang masih berjalan:", naik);
+
+buat sampel_gr = [];
+
+fungsi worker_goroutine(basis) {
+    buat total_worker = 0;
+    buat j = 0;
+    selama j < 300 {
+        total_worker = total_worker + kerja_berat(basis + j);
+        j = j + 1;
+    }
+    hasil total_worker;
+}
+
+fungsi jalankan_lama_dengan_goroutine(batas) {
+    buat wg = wg_baru();
+    buat i = 0;
+    selama i < batas {
+        jika i % 1000 == 0 {
+            wg_tambah(wg, 1);
+            jalan(fungsi() {
+                worker_goroutine(i);
+                wg_selesai(wg);
+            });
+        }
+        buat r = kerja_berat(i);
+        jika i % 2000 == 0 {
+            tambah(sampel_gr, ambil_koleksi(gc_info()));
+        }
+        i = i + 1;
+    }
+    wg_tunggu(wg);
+    hasil batas;
+}
+
+buat hasil2 = jalankan_lama_dengan_goroutine(12000);
+cetak("selesai goroutine:", hasil2);
+
+buat naik_gr = salah;
+buat k2 = 1;
+selama k2 < panjang(sampel_gr) {
+    jika sampel_gr[k2] > sampel_gr[k2 - 1] {
+        naik_gr = benar;
+    }
+    k2 = k2 + 1;
+}
+cetak("koleksi bertambah SELAMA fungsi dgn goroutine masih berjalan:", naik_gr);

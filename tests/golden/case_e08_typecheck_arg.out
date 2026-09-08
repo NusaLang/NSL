@@ -1,0 +1,3 @@
+nusantara: error: 1 error tipe ditemukan:
+  1. fungsi 'luas' argumen ke-1 diharap tipe angka, dapat teks (line 2, col 12)
+--- exit: 1

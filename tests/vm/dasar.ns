@@ -1,0 +1,14 @@
+fungsi tambah_dua(a, b) { hasil a + b; }
+buat s = 0;
+untuk (buat i = 0; i < 1000; i = i + 1) { s = tambah_dua(s, i); }
+cetak(s);
+buat a = [1,2,3,4,5];
+buat t = 0;
+untuk (buat i = 0; i < 5; i = i + 1) { t = t + a[i]; }
+cetak(t);
+cetak("halo " + "dunia");
+fungsi fib(n) { jika n < 2 { hasil n; } hasil fib(n-1) + fib(n-2); }
+cetak(fib(20));
+buat m = peta_baru();
+m["k"] = "v";
+cetak(m["k"]);

@@ -1,0 +1,3 @@
+nusantara: error: 1 error tipe ditemukan:
+  1. fungsi 'tambah' butuh 2 argumen, dipanggil dengan 3 (line 2, col 7)
+--- exit: 1

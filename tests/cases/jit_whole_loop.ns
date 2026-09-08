@@ -1,0 +1,74 @@
+fungsi tambah(a, b) {
+    hasil a + b;
+}
+fungsi kurang(a, b) {
+    hasil a - b;
+}
+fungsi campuran(a, b) {
+    hasil a * 2 - b + 1;
+}
+
+fungsi ujiPanggilan(n0, mulaiSum) {
+    buat sum = mulaiSum;
+    untuk (buat i = 0; i < n0; i = i + 1) {
+        sum = tambah(sum, i);
+    }
+    hasil sum;
+}
+
+fungsi ujiKurang(n0, mulaiSum) {
+    buat sum = mulaiSum;
+    untuk (buat i = 0; i < n0; i = i + 1) {
+        sum = kurang(sum, i);
+    }
+    hasil sum;
+}
+
+fungsi ujiCampuran(n0, mulaiSum) {
+    buat sum = mulaiSum;
+    untuk (buat i = 0; i < n0; i = i + 1) {
+        sum = campuran(sum, i);
+    }
+    hasil sum;
+}
+
+fungsi ujiLangsung(n0, mulaiSum) {
+    buat sum = mulaiSum;
+    untuk (buat i = 0; i < n0; i = i + 1) {
+        sum = sum + i;
+    }
+    hasil sum;
+}
+
+fungsi ujiLangsungKali(n0, mulaiSum) {
+    buat sum = mulaiSum;
+    untuk (buat i = 0; i < n0; i = i + 1) {
+        sum = sum * 1.0000001 + i - 0.5;
+    }
+    hasil sum;
+}
+
+fungsi ujiBoundVar(n0, mulaiSum) {
+    buat sum = mulaiSum;
+    buat batas = n0;
+    untuk (buat i = 0; i < batas; i = i + 1) {
+        sum = tambah(sum, i);
+    }
+    hasil sum;
+}
+
+buat ns = [0, 1, 2, 5, 100, 100000];
+buat mulai = [0, 1, -1, 2.5, -1000000, 0.0001];
+
+untuk (buat x = 0; x < panjang(ns); x = x + 1) {
+    untuk (buat y = 0; y < panjang(mulai); y = y + 1) {
+        buat n = ns[x];
+        buat m = mulai[y];
+        cetak("panggilan n=" + ke_teks(n) + " mulai=" + ke_teks(m) + " -> " + ke_teks(ujiPanggilan(n, m)));
+        cetak("kurang   n=" + ke_teks(n) + " mulai=" + ke_teks(m) + " -> " + ke_teks(ujiKurang(n, m)));
+        cetak("campuran n=" + ke_teks(n) + " mulai=" + ke_teks(m) + " -> " + ke_teks(ujiCampuran(n, m)));
+        cetak("langsung n=" + ke_teks(n) + " mulai=" + ke_teks(m) + " -> " + ke_teks(ujiLangsung(n, m)));
+        cetak("langsungKali n=" + ke_teks(n) + " mulai=" + ke_teks(m) + " -> " + ke_teks(ujiLangsungKali(n, m)));
+        cetak("boundVar n=" + ke_teks(n) + " mulai=" + ke_teks(m) + " -> " + ke_teks(ujiBoundVar(n, m)));
+    }
+}

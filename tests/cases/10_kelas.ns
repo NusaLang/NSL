@@ -1,0 +1,47 @@
+kelas Hewan {
+    fungsi konstruktor(nama) {
+        ini.nama = nama;
+    }
+    fungsi suara() {
+        hasil "...";
+    }
+    fungsi perkenalan() {
+        hasil ini.nama + " bilang " + ini.suara();
+    }
+}
+
+kelas Kucing turunan Hewan {
+    fungsi suara() {
+        hasil "meong";
+    }
+}
+
+kelas Anjing turunan Hewan {
+    fungsi suara() {
+        hasil "guk";
+    }
+    fungsi perkenalan() {
+        hasil "[anjing] " + induk.perkenalan();
+    }
+}
+
+buat h = Hewan("Generik");
+cetak(h.perkenalan());
+buat k = Kucing("Mimi");
+cetak(k.perkenalan());
+buat a = Anjing("Boni");
+cetak(a.perkenalan());
+cetak(tipe(k));
+
+bentuk Titik { x, y }
+buat t = Titik(3, 4);
+cetak(t.x);
+cetak(t.y);
+t.x = 30;
+cetak(t.x);
+cetak(tipe(t));
+
+jenis Warna { MERAH, HIJAU, BIRU }
+cetak(Warna.MERAH);
+cetak(Warna.HIJAU);
+cetak(Warna.BIRU);

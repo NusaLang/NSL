@@ -1,0 +1,11 @@
+larik: [5, 3, 8, 1, 9, 2]
+panjang: 6
+abis tambah: [5, 3, 8, 1, 9, 2, 100]
+abis hapus_akhir: 100 -> [5, 3, 8, 1, 9, 2]
+total (dengan skip & stop): 17
+NUSANTARA BAHASA PEMROGRAMAN
+nusantara bahasa pemrograman
+["Nusantara", "Bahasa", "Pemrograman"]
+Nusantara_Bahasa_Pemrograman
+Nusantara
+--- exit: 0

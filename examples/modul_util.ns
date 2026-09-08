@@ -1,0 +1,12 @@
+// Modul biasa -- semua `buat`/`fungsi` top-level di sini otomatis jadi
+// "export" begitu di-`impor()` dari file lain (lihat main.ns).
+
+fungsi tambah_dua(a, b) {
+    hasil a + b;
+}
+
+fungsi sapa(nama) {
+    hasil "Halo, " + nama + "! Salam dari modul_util.";
+}
+
+buat versi = "1.0";

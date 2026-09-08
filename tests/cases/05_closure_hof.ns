@@ -1,0 +1,82 @@
+fungsi buat_penambah(x) {
+    fungsi tambah_x(y) {
+        hasil x + y;
+    }
+    hasil tambah_x;
+}
+buat tambah10 = buat_penambah(10);
+buat tambah100 = buat_penambah(100);
+cetak(tambah10(7));
+cetak(tambah100(7));
+cetak(tambah10(tambah100(1)));
+
+fungsi penghitung() {
+    buat n = 0;
+    fungsi naik() {
+        n = n + 1;
+        hasil n;
+    }
+    hasil naik;
+}
+buat c1 = penghitung();
+buat c2 = penghitung();
+cetak(c1());
+cetak(c1());
+cetak(c1());
+cetak(c2());
+
+fungsi terapkan(f, nilai) {
+    hasil f(nilai);
+}
+fungsi kuadrat(n) { hasil n * n; }
+cetak(terapkan(kuadrat, 9));
+
+fungsi peta_larik(l, f) {
+    buat keluar = [];
+    untuk (buat i = 0; i < panjang(l); i = i + 1) {
+        tambah(keluar, f(l[i]));
+    }
+    hasil keluar;
+}
+cetak(peta_larik([1, 2, 3, 4], kuadrat));
+
+fungsi saring(l, f) {
+    buat keluar = [];
+    untuk (buat i = 0; i < panjang(l); i = i + 1) {
+        jika f(l[i]) {
+            tambah(keluar, l[i]);
+        }
+    }
+    hasil keluar;
+}
+fungsi genap(n) { hasil n % 2 == 0; }
+cetak(saring([1, 2, 3, 4, 5, 6], genap));
+
+fungsi lipat(l, awal, f) {
+    buat akum = awal;
+    untuk (buat i = 0; i < panjang(l); i = i + 1) {
+        akum = f(akum, l[i]);
+    }
+    hasil akum;
+}
+fungsi jumlahkan(a, b) { hasil a + b; }
+cetak(lipat([1, 2, 3, 4, 5], 0, jumlahkan));
+
+fungsi buat_pengali(k) {
+    fungsi kali(n) { hasil n * k; }
+    hasil kali;
+}
+buat pengali = [];
+untuk (buat i = 1; i <= 3; i = i + 1) {
+    tambah(pengali, buat_pengali(i));
+}
+cetak(pengali[0](10));
+cetak(pengali[1](10));
+cetak(pengali[2](10));
+
+fungsi komposisi(f, g) {
+    fungsi gabungan(x) { hasil f(g(x)); }
+    hasil gabungan;
+}
+buat kuadrat_lalu_tambah10 = komposisi(tambah10, kuadrat);
+cetak(kuadrat_lalu_tambah10(5));

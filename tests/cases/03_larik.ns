@@ -1,0 +1,47 @@
+buat a = [5, 3, 8, 1, 9, 2];
+cetak(a);
+cetak(panjang(a));
+cetak(a[0]);
+cetak(a[5]);
+a[0] = 50;
+cetak(a);
+
+tambah(a, 100);
+cetak(a);
+cetak(hapus_akhir(a));
+cetak(a);
+
+buat kosongan = [];
+cetak(kosongan);
+cetak(panjang(kosongan));
+tambah(kosongan, "x");
+tambah(kosongan, 1);
+tambah(kosongan, benar);
+tambah(kosongan, kosong);
+cetak(kosongan);
+
+buat bersarang = [[1, 2], [3, [4, 5]]];
+cetak(bersarang);
+cetak(bersarang[1][1][0]);
+
+buat ref = a;
+tambah(ref, 999);
+cetak(a);
+
+buat total = 0;
+untuk (buat i = 0; i < panjang(a); i = i + 1) {
+    jika a[i] > 8 {
+        lanjut;
+    }
+    jika a[i] == 2 {
+        berhenti;
+    }
+    total += a[i];
+}
+cetak("total:", total);
+
+buat n = 0;
+selama n < 3 {
+    cetak("selama", n);
+    n = n + 1;
+}

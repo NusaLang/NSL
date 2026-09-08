@@ -1,0 +1,40 @@
+// coba: ./nusantara run examples/stream_demo.ns & curl http://localhost:8099/stream
+fungsi handler(req) {
+    jika req.path != "/stream" {
+        buat resp = peta_baru();
+        resp["status"] = 404;
+        resp["tubuh"] = "coba /stream";
+        hasil resp;
+    }
+
+    cetak("klien konek dari", req.ip);
+    tcp_kirim(req.koneksi, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n");
+
+    // simulasi proses yang ngasih output lambat
+    buat proses = proc_stream_mulai("bash", ["-c", "for i in $(seq 1 15); do echo baris-$i; sleep 0.3; done"]);
+
+    buat dibatalkan = salah;
+    selama benar {
+        buat potongan = proc_stream_baca(proses.fd, 4096);
+        jika potongan == "" {
+            berhenti;  // proses selesai normal (EOF)
+        }
+        jika tcp_kirim(req.koneksi, potongan) < 0 {
+            cetak("klien putus -- membatalkan proses pid", proses.pid);
+            dibatalkan = benar;
+            berhenti;
+        }
+    }
+    proc_stream_tutup(proses.pid, proses.fd);
+    jika dibatalkan == salah {
+        tcp_tutup(req.koneksi);
+        cetak("stream selesai normal");
+    }
+
+    buat r = peta_baru();
+    r["_streamed"] = benar;
+    hasil r;
+}
+
+cetak("dengerin di :8099 -- coba curl http://localhost:8099/stream");
+http_dengar(8099, handler);

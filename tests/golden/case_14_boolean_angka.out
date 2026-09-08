@@ -1,0 +1,17 @@
+salah
+salah
+benar
+benar
+salah
+1
+0
+benar
+true
+[benar, salah, 1, 0, "benar"]
+benar salah true false
+ok-falsy
+ok-nol-truthy
+ok-kosong-falsy
+ok-string-kosong-truthy
+benar salah benar
+--- exit: 0

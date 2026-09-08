@@ -1,0 +1,49 @@
+fungsi tambah(a, b) {
+    hasil a + b;
+}
+fungsi kurang(a, b) {
+    hasil a - b;
+}
+fungsi kali(a, b, c) {
+    hasil a * b * c;
+}
+fungsi bagi(a, b) {
+    hasil a / b;
+}
+fungsi negasi(a) {
+    hasil -a;
+}
+fungsi campuran(a, b, c, d) {
+    hasil a + b * c - d / 2;
+}
+fungsi satuArg(x) {
+    hasil x * 2 - 1;
+}
+fungsi konstanta(a) {
+    hasil a + 3.14159265358979;
+}
+
+buat kasus = [0, 1, -1, 2.5, -2.5, 1000000, -1000000, 0.0000001, -0.0000001,
+              999999999999999, -999999999999999, 0.000000000001, 123456789.987654321];
+
+untuk (buat i = 0; i < panjang(kasus); i = i + 1) {
+    buat a = kasus[i];
+    untuk (buat j = 0; j < panjang(kasus); j = j + 1) {
+        buat b = kasus[j];
+        cetak("tambah " + ke_teks(a) + "," + ke_teks(b) + "=" + ke_teks(tambah(a, b)));
+        cetak("kurang " + ke_teks(a) + "," + ke_teks(b) + "=" + ke_teks(kurang(a, b)));
+        cetak("bagi " + ke_teks(a) + "," + ke_teks(b) + "=" + ke_teks(bagi(a, b)));
+        cetak("kali3 " + ke_teks(a) + "," + ke_teks(b) + "=" + ke_teks(kali(a, b, 2)));
+        cetak("campuran=" + ke_teks(campuran(a, b, 2, 4)));
+    }
+    cetak("negasi " + ke_teks(a) + "=" + ke_teks(negasi(a)));
+    cetak("satuArg " + ke_teks(a) + "=" + ke_teks(satuArg(a)));
+    cetak("konstanta " + ke_teks(a) + "=" + ke_teks(konstanta(a)));
+}
+
+cetak("non-numerik: " + tambah("halo ", "dunia"));
+
+fungsi tambah5(a, b, c, d, e) {
+    hasil a + b + c + d + e;
+}
+cetak("arity5 fallback: " + ke_teks(tambah5(1, 2, 3, 4, 5)));

@@ -1,0 +1,6 @@
+total kuadrat 0..4: 30
+total kuadrat 0..19 (lewat 4 worker): 2470
+WaitGroup: kelima goroutine udah selesai
+total kuadrat 0..4 (lewat WaitGroup): 30
+pilih_kanal: indeks 1 -> nilai: duluan dari B
+--- exit: 0

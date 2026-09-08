@@ -1,0 +1,11 @@
+// build dulu: make plugins
+buat p = muat_plugin("../plugins/hello/hello.so");
+
+cetak(p.sapa("Nusantara"));
+cetak("5 + 7 =", p.tambah(5, 7));
+
+// argumen/return plugin cuma boleh null/boolean/angka/teks
+buat hasil_null = p.tambah("bukan angka", 1);
+jika hasil_null == kosong {
+    cetak("argumen tipe salah -> plugin balikin kosong, sesuai kontrak");
+}

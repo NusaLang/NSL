@@ -1,0 +1,24 @@
+// build dulu: make plugins -- butuh internet, manggil https://httpbin.org beneran
+buat http = muat_plugin("http");
+
+// GET tanpa header custom -- header_json="{}" , tubuh=""
+buat r1 = json_decode(http.minta("GET", "https://httpbin.org", "/get", "{}", ""));
+cetak("GET status:", r1.status, "content-type:", r1.header["content-type"]);
+
+// GET dengan header dinamis
+buat header = peta_baru();
+header["X-Contoh"] = "nilai-apa-aja";
+buat r2 = json_decode(http.minta("GET", "https://httpbin.org", "/headers", json_encode(header), ""));
+buat body2 = json_decode(r2.tubuh);
+cetak("header keterima balik sama server:", body2.headers["X-Contoh"]);
+
+// POST dengan body JSON
+buat headerJson = peta_baru();
+headerJson["Content-Type"] = "application/json";
+buat r3 = json_decode(http.minta("POST", "https://httpbin.org", "/post", json_encode(headerJson), json_encode(["a", "b", "c"])));
+cetak("POST status:", r3.status);
+
+// request gagal (bukan HTTP error -- domain nggak ke-resolve dst) ->
+// ok: salah, bukan exception
+buat r4 = json_decode(http.minta("GET", "https://domain-yang-jelas-nggak-ada.invalid", "/", "{}", ""));
+cetak("domain nggak ada -> ok:", r4.ok, "error:", r4.error);

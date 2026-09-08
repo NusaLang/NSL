@@ -1,0 +1,91 @@
+fungsi kuadrat(n) {
+    hasil n * n;
+}
+
+// --- pola 1: fan-out -- banyak goroutine, satu channel hasil ---
+buat saluran = kanal_baru();
+
+fungsi kirim_kuadrat(n) {
+    kanal_kirim(saluran, kuadrat(n));
+}
+
+untuk (buat i = 0; i < 5; i = i + 1) {
+    jalan(kirim_kuadrat, i);
+}
+
+buat total = 0;
+untuk (buat i = 0; i < 5; i = i + 1) {
+    total = total + kanal_terima(saluran);
+}
+cetak("total kuadrat 0..4:", total);  // 0+1+4+9+16 = 30
+
+// --- pola 2: worker pool -- N worker narik job dari channel yang sama ---
+buat jobs = kanal_baru(10);   // buffered, kapasitas 10
+buat keluaran = kanal_baru();
+
+fungsi pekerja() {
+    buat jalan_terus = benar;
+    selama jalan_terus {
+        buat job = kanal_terima(jobs);
+        jika job == kosong {
+            jalan_terus = salah;  // sinyal berhenti
+        } lain {
+            kanal_kirim(keluaran, kuadrat(job));
+        }
+    }
+}
+
+buat n_worker = 4;
+untuk (buat w = 0; w < n_worker; w = w + 1) {
+    jalan(pekerja);
+}
+
+fungsi bagi_job() {
+    untuk (buat i = 0; i < 20; i = i + 1) {
+        kanal_kirim(jobs, i);
+    }
+    untuk (buat w = 0; w < n_worker; w = w + 1) {
+        kanal_kirim(jobs, kosong);  // beritahu tiap worker buat berhenti
+    }
+}
+jalan(bagi_job);
+
+buat total2 = 0;
+untuk (buat i = 0; i < 20; i = i + 1) {
+    total2 = total2 + kanal_terima(keluaran);
+}
+cetak("total kuadrat 0..19 (lewat 4 worker):", total2);
+
+// --- pola 3: WaitGroup -- nunggu N goroutine selesai tanpa channel ---
+buat wg = wg_baru();
+buat saluran3 = kanal_baru();
+
+fungsi kirim_dan_selesai(n) {
+    kanal_kirim(saluran3, kuadrat(n));
+    wg_selesai(wg);
+}
+
+wg_tambah(wg, 5);
+untuk (buat i = 0; i < 5; i = i + 1) {
+    jalan(kirim_dan_selesai, i);
+}
+wg_tunggu(wg);  // blok sampai kelima goroutine manggil wg_selesai
+cetak("WaitGroup: kelima goroutine udah selesai");
+
+buat total3 = 0;
+untuk (buat i = 0; i < 5; i = i + 1) {
+    total3 = total3 + kanal_terima(saluran3);
+}
+cetak("total kuadrat 0..4 (lewat WaitGroup):", total3);
+
+// --- pola 4: pilih_kanal (select) -- nunggu channel manapun yang siap duluan ---
+buat kanal_a = kanal_baru();
+buat kanal_b = kanal_baru();
+
+fungsi kirim_ke_b() {
+    kanal_kirim(kanal_b, "duluan dari B");
+}
+jalan(kirim_ke_b);
+
+buat r = pilih_kanal([kanal_a, kanal_b]);
+cetak("pilih_kanal: indeks", r.indeks, "-> nilai:", r.nilai);
