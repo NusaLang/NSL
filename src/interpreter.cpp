@@ -22,6 +22,7 @@ static const size_t kUkuranStackGoroutine = 512 * 1024;
 
 
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "base64.hpp"
 #include "gc.hpp"
@@ -277,7 +278,7 @@ bool isRegularFile(const std::string& path) {
 const std::vector<std::string>& builtinNames() {
     static const std::vector<std::string> names = {
         "cetak", "panjang", "tambah", "hapus_akhir", "potong", "gabung", "pisah",
-        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu",
+        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur",
         "base64_encode", "base64_decode",
         "baca_file", "tulis_file", "file_ada",
         "tcp_konek", "tcp_kirim", "tcp_terima", "tcp_tutup",
@@ -1101,6 +1102,19 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         return Value::fromNumber(secs);
     }
 
+    if (name == "tidur") {
+        need(1);
+        expectType(args[0], ValueType::Number);
+        long long ms = static_cast<long long>(args[0].number);
+        if (ms > 0) {
+            ValueVectorRootGuard argsRoot(args);
+            DepthResetGuard depthReset(exprDepth_);
+            GilRelease release;
+            std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        }
+        return Value::null();
+    }
+
     if (name == "base64_encode") {
         need(1);
         expectType(args[0], ValueType::String);
@@ -1863,20 +1877,42 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
 
 // ---- module system ----
 
+namespace {
+std::string tryModulesDirAt(const std::string& dir, const std::string& rawPath) {
+    std::string base = dir.empty() ? ("nusantara_modules/" + rawPath)
+                                    : (dir + "/nusantara_modules/" + rawPath);
+    if (isRegularFile(base)) return base;
+    if (std::ifstream(base + ".ns").good()) return base + ".ns";
+    if (std::ifstream(base + "/index.ns").good()) return base + "/index.ns";
+    return "";
+}
+
+std::string toAbsoluteDir(const std::string& dir) {
+    if (!dir.empty() && dir[0] == '/') return dir;
+    char buf[4096];
+    if (getcwd(buf, sizeof buf) == nullptr) return dir;
+    std::string cwd(buf);
+    if (dir.empty() || dir == ".") return cwd;
+    return cwd + "/" + dir;
+}
+}  // namespace
+
 Value Interpreter::doImport(const std::string& rawPath) {
     std::string path;
 
     bool isExplicitRelativeOrAbs = (!rawPath.empty() && (rawPath[0] == '/' || rawPath.rfind("./", 0) == 0 || rawPath.rfind("../", 0) == 0));
 
     if (!isExplicitRelativeOrAbs) {
-        std::string localPath = "nusantara_modules/" + rawPath;
-        if (isRegularFile(localPath)) {
-            path = localPath;
-        } else if (std::ifstream(localPath + ".ns").good()) {
-            path = localPath + ".ns";
-        } else if (std::ifstream(localPath + "/index.ns").good()) {
-            path = localPath + "/index.ns";
-        } else {
+        std::string dir = toAbsoluteDir(importDirStack_.empty() ? "." : importDirStack_.back());
+        while (true) {
+            std::string found = tryModulesDirAt(dir, rawPath);
+            if (!found.empty()) { path = found; break; }
+            if (dir.empty() || dir == "/") break;
+            std::string parent = dirName(dir);
+            if (parent == dir) break;
+            dir = parent;
+        }
+        if (path.empty()) {
             std::string globalDir = sysplugin::globalModulesDir();
             if (!globalDir.empty()) {
                 std::string gPath = globalDir + "/" + rawPath;
