@@ -34,6 +34,13 @@ public:
     // (a.other = b; b.other = a) would never free itself. Every instance's field
     // table is registered here; a collection clears the ones no root can reach.
     void trackInstance(const std::shared_ptr<std::unordered_map<std::string, Value>>& fields);
+    // Same for arrays and maps, but only once one of them has had a container stored into it
+    // (a cycle needs such a store), so plain data never pays for tracking.
+    void noteStore(const Value& container, const Value& stored) {
+        ValueType st = stored.type;
+        if (st != ValueType::Array && st != ValueType::Map && st != ValueType::Instance && st != ValueType::VmArray) return;
+        noteStoreSlow(container);
+    }
     void setGlobals(Environment* globals) { globals_ = globals; }
     // For environments that must outlive every scope guard (a VM module's globals,
     // which its closures reach only through a raw pointer).
@@ -153,6 +160,9 @@ private:
         return threadVec(valueVectorRootsByThread_, c);
     }
 
+    void noteStoreSlow(const Value& container);
+    void trackVector(const std::shared_ptr<std::vector<Value>>& v);
+    void trackMap(const std::shared_ptr<std::unordered_map<std::string, Value>>& m);
     void markValue(const Value& v);
     void markEnv(Environment* e);
     void markCell(Cell* c);
@@ -168,6 +178,10 @@ private:
     std::unordered_map<std::thread::id, std::vector<const std::vector<Value>*>> valueVectorRootsByThread_;
     std::vector<std::weak_ptr<std::unordered_map<std::string, Value>>> instances_;
     std::unordered_set<const void*> markedFields_;
+    std::vector<std::weak_ptr<std::vector<Value>>> vectors_;
+    std::vector<std::weak_ptr<std::unordered_map<std::string, Value>>> maps_;
+    std::unordered_set<const void*> markedVectors_;
+    std::unordered_set<const void*> trackedContainers_;
     size_t instancesSinceCollect_ = 0;
     size_t instanceThreshold_ = 8192;
     std::vector<const int*> threadDepths_;

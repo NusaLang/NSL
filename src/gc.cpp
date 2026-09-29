@@ -78,6 +78,27 @@ void GC::trackInstance(const std::shared_ptr<std::unordered_map<std::string, Val
     instancesSinceCollect_++;
 }
 
+void GC::noteStoreSlow(const Value& c) {
+    if (c.type == ValueType::Array) trackVector(c.arrayShared());
+    else if (c.type == ValueType::Map) trackMap(c.mapShared());
+    else if (c.type == ValueType::VmArray) {
+        VmArrayState* st = c.vmArray();
+        if (st && !st->numeric && st->boxed) trackVector(st->boxed);
+    }
+}
+
+void GC::trackVector(const std::shared_ptr<std::vector<Value>>& v) {
+    std::unique_lock<std::mutex> lock(gcMutex_, std::defer_lock);
+    if (GC::liveGoroutines.load(std::memory_order_seq_cst) != 0) lock.lock();
+    if (trackedContainers_.insert(v.get()).second) { vectors_.push_back(v); instancesSinceCollect_++; }
+}
+
+void GC::trackMap(const std::shared_ptr<std::unordered_map<std::string, Value>>& m) {
+    std::unique_lock<std::mutex> lock(gcMutex_, std::defer_lock);
+    if (GC::liveGoroutines.load(std::memory_order_seq_cst) != 0) lock.lock();
+    if (trackedContainers_.insert(m.get()).second) { maps_.push_back(m); instancesSinceCollect_++; }
+}
+
 void GC::registerThread(const int* depthPtr) {
     std::lock_guard<std::mutex> lock(gcMutex_);
     threadDepths_.push_back(depthPtr);
@@ -100,8 +121,10 @@ void GC::markValue(const Value& v) {
     if (v.type == ValueType::Fn && v.fn()) {
         markEnv(v.fn()->closure);
     } else if (v.type == ValueType::Array && v.array()) {
+        if (!markedVectors_.insert(v.array()).second) return;
         for (const Value& el : *v.array()) markValue(el);
     } else if (v.type == ValueType::Map && v.map()) {
+        if (!markedFields_.insert(v.map()).second) return;
         for (const auto& [key, val] : *v.map()) markValue(val);
     } else if (v.type == ValueType::Channel && v.channel()) {
         std::lock_guard<std::mutex> chanLock(v.channel()->mu);
@@ -124,7 +147,7 @@ void GC::markValue(const Value& v) {
         for (Cell* c : v.vmClosure()->upvalues) markCell(c);
     } else if (v.type == ValueType::VmArray && v.vmArray()) {
         VmArrayState* st = v.vmArray();
-        if (!st->numeric && st->boxed) {
+        if (!st->numeric && st->boxed && markedVectors_.insert(st->boxed.get()).second) {
             for (const Value& el : *st->boxed) markValue(el);
         }
     }
@@ -160,6 +183,7 @@ void GC::collectNow() {
     if (!allThreadsAtSafePointLocked()) return;
 
     markedFields_.clear();
+    markedVectors_.clear();
     for (auto& e : envs_) e->gcMarked_ = false;
     for (auto& c : cells_) c->gcMarked_ = false;
 
@@ -189,6 +213,7 @@ void GC::collectNow() {
     // Instances nothing reaches: take their fields out (breaking cycles) and let
     // them die after the lock is released.
     std::vector<std::unordered_map<std::string, Value>> deadFields;
+    std::vector<std::vector<Value>> deadVectors;
     {
         size_t keep = 0;
         for (size_t i = 0; i < instances_.size(); i++) {
@@ -202,8 +227,36 @@ void GC::collectNow() {
             }
         }
         instances_.resize(keep);
+        trackedContainers_.clear();
+        keep = 0;
+        for (size_t i = 0; i < maps_.size(); i++) {
+            auto m = maps_[i].lock();
+            if (!m) continue;
+            if (markedFields_.count(m.get())) {
+                trackedContainers_.insert(m.get());
+                maps_[keep++] = std::move(maps_[i]);
+            } else if (!m->empty()) {
+                deadFields.emplace_back(std::move(*m));
+                m->clear();
+            }
+        }
+        maps_.resize(keep);
+        keep = 0;
+        for (size_t i = 0; i < vectors_.size(); i++) {
+            auto v = vectors_[i].lock();
+            if (!v) continue;
+            if (markedVectors_.count(v.get())) {
+                trackedContainers_.insert(v.get());
+                vectors_[keep++] = std::move(vectors_[i]);
+            } else if (!v->empty()) {
+                deadVectors.emplace_back(std::move(*v));
+                v->clear();
+            }
+        }
+        vectors_.resize(keep);
+        keep = instances_.size();
         instancesSinceCollect_ = 0;
-        instanceThreshold_ = std::max<size_t>(8192, keep * 2);
+        instanceThreshold_ = std::max<size_t>(8192, (keep + maps_.size() + vectors_.size()) * 2);
         totalFreed_ += deadFields.size();
     }
 
@@ -230,4 +283,5 @@ void GC::collectNow() {
 #endif
     lock.unlock();
     deadFields.clear();
+    deadVectors.clear();
 }

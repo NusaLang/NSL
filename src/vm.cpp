@@ -2259,6 +2259,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                             st.boxed->resize(static_cast<size_t>(i) + 1, Value::null());
                         }
                         (*st.boxed)[static_cast<size_t>(i)] = val;
+                        GC::instance().noteStore(target, val);
                     }
                 } else if (target.type == ValueType::Array) {
                     if (idxv.type != ValueType::Number) throw VmRuntimeError("Index larik harus angka");
@@ -2270,10 +2271,12 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                         arr->resize(static_cast<size_t>(i) + 1, Value::null());
                     }
                     (*arr)[static_cast<size_t>(i)] = val;
+                    GC::instance().noteStore(target, val);
                 } else if (target.type == ValueType::Map) {
                     if (idxv.type != ValueType::String) throw VmRuntimeError("Index peta harus teks");
                     auto m = target.mapShared();
                     (*m)[idxv.str()] = val;
+                    GC::instance().noteStore(target, val);
                 } else if (target.type == ValueType::Instance) {
                     if (idxv.type != ValueType::String) throw VmRuntimeError("Kunci objek harus teks");
                     (*target.instance()->fields)[idxv.str()] = val;
@@ -2315,10 +2318,12 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                             st.nums.clear();
                         }
                         st.boxed->push_back(val);
+                        GC::instance().noteStore(target, val);
                     }
                     stack.push_back(Value::fromNumber(static_cast<double>(st.numeric ? st.nums.size() : st.boxed->size())));
                 } else if (target.type == ValueType::Array) {
                     target.array()->push_back(val);
+                    GC::instance().noteStore(target, val);
                     stack.push_back(Value::fromNumber(static_cast<double>(target.array()->size())));
                 } else {
                     throw VmRuntimeError("tambah(): butuh larik mode --vm");

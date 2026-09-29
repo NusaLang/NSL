@@ -720,6 +720,7 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
             ValueRootGuard idxGuard(idx);
             Value value = eval(node->value.get(), env);
             indexSet(target, idx, value);
+            GC::instance().noteStore(target, value);
             return value;
         }
         case ExprKind::FnExpr: {
@@ -934,17 +935,20 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
                     st->boxed->reserve(st->nums.size() + 1);
                     for (double d : st->nums) st->boxed->push_back(Value::fromNumber(d));
                     st->boxed->push_back(args[1]);
+                    GC::instance().noteStore(args[0], args[1]);
                     st->nums.clear();
                     st->nums.shrink_to_fit();
                     return Value::fromNumber(static_cast<double>(st->boxed->size()));
                 }
             } else {
                 st->boxed->push_back(args[1]);
+                GC::instance().noteStore(args[0], args[1]);
                 return Value::fromNumber(static_cast<double>(st->boxed->size()));
             }
         }
         expectType(args[0], ValueType::Array);
         args[0].array()->push_back(args[1]);
+        GC::instance().noteStore(args[0], args[1]);
         return Value::fromNumber(static_cast<double>(args[0].array()->size()));
     }
 
