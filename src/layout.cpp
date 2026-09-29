@@ -322,10 +322,53 @@ std::vector<Token> applyLayout(std::vector<Token> toks, const std::string& sourc
                 prevEndLine = lines.lineOf(std::max(toks[i].span.end - 1, toks[i].span.start));
                 continue;  // swallowed: emits nothing, opens no logical line
             }
+            if (t.type == TokenType::For && !blocks.back().isClass) {
+                // `for a, b in ...`: the targets outlive the loop (Python), so declare them like assignments.
+                size_t k = i + 1;
+                std::vector<const Token*> names;
+                while (k < toks.size() && toks[k].type == TokenType::Ident && toks[k].text != "in" && toks[k].text != "dalam") {
+                    names.push_back(&toks[k]);
+                    k++;
+                    if (k < toks.size() && toks[k].type == TokenType::Comma) k++;
+                    else break;
+                }
+                if (!names.empty() && k < toks.size() && toks[k].type == TokenType::Ident && (toks[k].text == "in" || toks[k].text == "dalam")) {
+                    Scope& sc = scopes.back();
+                    for (const Token* nt : names) {
+                        if (sc.names.count(nt->text) || sc.outer.count(nt->text)) continue;
+                        sc.names.insert(nt->text);
+                        if (curDepth() == sc.bodyDepth) {
+                            out.push_back(makeTok(TokenType::Let, "let", nt->span));
+                            out.push_back(makeTok(TokenType::Ident, nt->text, nt->span));
+                            out.push_back(makeTok(TokenType::Eq, "=", nt->span));
+                            out.push_back(makeTok(TokenType::Null_, "None", nt->span));
+                            out.push_back(makeTok(TokenType::Semi, ";", nt->span));
+                        } else {
+                            sc.hoisted.push_back({nt->text, nt->span});
+                        }
+                    }
+                    t.text = "for*";  // tells the parser the targets are already declared
+                }
+            }
             if (t.type == TokenType::Ident && i + 1 < toks.size() && toks[i + 1].type == TokenType::Eq && blocks.back().isClass) {
                 // class attribute `count = 0`: not a variable of the enclosing scope
             } else if (t.type == TokenType::Ident && i + 1 < toks.size() && toks[i + 1].type == TokenType::Eq) {
                 Scope& sc = scopes.back();
+                // chained `a = b = 5`: the later targets need declaring too, before the statement
+                for (size_t k = i + 2; k + 1 < toks.size() && toks[k].type == TokenType::Ident && toks[k + 1].type == TokenType::Eq; k += 2) {
+                    const Token& nt = toks[k];
+                    if (sc.names.count(nt.text) || sc.outer.count(nt.text)) continue;
+                    sc.names.insert(nt.text);
+                    if (curDepth() == sc.bodyDepth) {
+                        out.push_back(makeTok(TokenType::Let, "let", nt.span));
+                        out.push_back(makeTok(TokenType::Ident, nt.text, nt.span));
+                        out.push_back(makeTok(TokenType::Eq, "=", nt.span));
+                        out.push_back(makeTok(TokenType::Null_, "None", nt.span));
+                        out.push_back(makeTok(TokenType::Semi, ";", nt.span));
+                    } else {
+                        sc.hoisted.push_back({nt.text, nt.span});
+                    }
+                }
                 if (!sc.names.count(t.text) && !sc.outer.count(t.text)) {
                     sc.names.insert(t.text);
                     if (curDepth() == sc.bodyDepth) {
@@ -334,12 +377,15 @@ std::vector<Token> applyLayout(std::vector<Token> toks, const std::string& sourc
                         sc.hoisted.push_back({t.text, t.span});
                     }
                 }
-            } else if (t.type == TokenType::Ident && i + 1 < toks.size() && toks[i + 1].type == TokenType::Comma) {
-                // `a, b = ...`: declare the plain names on the left before the statement.
+            } else if ((t.type == TokenType::Ident && i + 1 < toks.size() && toks[i + 1].type == TokenType::Comma) ||
+                       (t.type == TokenType::Star && i + 2 < toks.size() && toks[i + 1].type == TokenType::Ident &&
+                        toks[i + 2].type == TokenType::Comma)) {
+                // `a, b = ...` / `*a, b = ...`: declare the plain names on the left before the statement.
                 std::vector<const Token*> names;
-                size_t k = i;
+                size_t k = t.type == TokenType::Star ? i + 1 : i;
                 bool ok = true;
                 while (k < toks.size()) {
+                    if (toks[k].type == TokenType::Star && k + 1 < toks.size()) k++;  // a, *rest = ...
                     if (toks[k].type != TokenType::Ident) { ok = false; break; }
                     names.push_back(&toks[k]);
                     if (k + 1 < toks.size() && toks[k + 1].type == TokenType::Comma) { k += 2; continue; }
@@ -366,11 +412,6 @@ std::vector<Token> applyLayout(std::vector<Token> toks, const std::string& sourc
             } else if ((t.type == TokenType::Fn || t.type == TokenType::Class) && i + 1 < toks.size() &&
                        toks[i + 1].type == TokenType::Ident) {
                 if (!(t.type == TokenType::Fn && blocks.back().isClass)) declare(toks[i + 1].text);
-            } else if (t.type == TokenType::Catch) {
-                for (size_t k = i + 1; k < toks.size() && k < i + 6; k++) {
-                    if (toks[k].type == TokenType::Colon || toks[k].type == TokenType::LBrace) break;
-                    if (toks[k].type == TokenType::Ident) declare(toks[k].text);
-                }
             } else if (t.type == TokenType::Ident &&
                        (t.text == "import" || t.text == "impor" || t.text == "from" || t.text == "dari")) {
                 // Names bound by an import statement: every identifier on the line
@@ -427,6 +468,7 @@ std::vector<Token> applyLayout(std::vector<Token> toks, const std::string& sourc
         out.push_back(t);
         lineOpen = true;
         prevEndLine = std::max(prevEndLine, el);
+        if (t.type == TokenType::Semi && depth == 0) atStmtStart = true;  // `a = 1; b = 2`
     }
     return out;
 }

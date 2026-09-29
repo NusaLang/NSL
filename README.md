@@ -96,7 +96,7 @@ def luas(p: angka, l: angka) -> angka:
 - **Blok berindentasi dengan `:`** — `if x:`, `elif`, `for i in range(n):`, `while c:`, `def f():`, `class A:`, `try:`/`except e:`/`finally:`, `with ... as f:`. Gaya kurung kurawal `{ }` tetap jalan (satu file memakai salah satunya).
 - **`;` tidak wajib.** Baris baru mengakhiri pernyataan, juga di gaya kurung kurawal.
 - **Deklarasi implisit:** `x = 1` cukup, tanpa `buat`. Nama baru di dalam blok tetap terlihat setelahnya (seperti Python); `global x` / `nonlocal x` untuk menulis ke luar fungsi.
-- **Penugasan beruntun dan unpacking:** `a, b = 1, 2`, `a, b = b, a`, `x[i], x[j] = x[j], x[i]`, `q, r = divmod(7, 2)`, `for i, x in enumerate(xs):`, `for k, v in d.items():`. Tuple `(a, b)` berupa larik.
+- **Penugasan beruntun dan unpacking:** `a = b = 0`, `a, *rest = xs`, `*init, last = xs`, `a, b = 1, 2`, `a, b = b, a`, `x[i], x[j] = x[j], x[i]`, `q, r = divmod(7, 2)`, `for i, x in enumerate(xs):`, `for k, v in d.items():`. Tuple `(a, b)` berupa larik.
 - **Parameter default dan argumen bernama:** `def f(a, b=1)`, `f(1, b=2)`, juga di metode, konstruktor `P(x=1)`, lambda, dan builtin (`print(a, b, sep="-", end="")`, `sorted(xs, key=len, reverse=True)`, `xs.sort(reverse=True)`, `max(xs, default=0)`, `"{a}".format(a=1)`). Nilai default dievaluasi tiap panggilan. Argumen yang dilewat bernilai `None`.
 - **Komprehensi:** `[x * 2 for x in xs if x > 0]`, `{k: v for k, v in pairs}`, bersarang (`for a in x for b in y`), dan generator sebagai argumen: `sum(x * x for x in xs)`.
 - **Literal peta:** `{"nama": "Rex"}`. **Peta menjaga urutan sisip** seperti `dict` Python; kunci non-teks dipakai sebagai teks (`d[1]` = `d["1"]`).
@@ -365,6 +365,7 @@ make tls-test                     # vektor kripto TLS (dari implementasi indepen
 - `angka` selalu `double` (bilangan bulat tepat sampai 2^53); tuple = larik; `set` = larik tanpa duplikat.
 - Satu GIL: goroutine tidak paralel untuk CPU murni.
 - Beda dari Python: `d[k]` pada kunci yang tidak ada mengembalikan `None` (bukan `KeyError`; pakai `d.get`); `Enum` tidak punya `.name/.value`; `import a.b` mengikat nama `b` (bukan `a`); alias di badan kelas (`baca = tulis`) belum jalan; `yield from` hanya sebagai pernyataan; generator yang tidak dihabiskan tidak menjalankan blok `finally`-nya saat dibuang; `asyncio`, `decimal`, `fractions`, `struct` belum ada.
+- Teks berbasis byte UTF-8: `len("é")` = 2 dan indeks/`upper()` pada huruf non-ASCII tidak seperti Python; nilai default mutabel (`b=[]`) dibuat baru tiap panggilan.
 - Pembagian dengan nol melempar `ZeroDivisionError` di VM dan interpreter, tetapi tidak di loop numerik hasil JIT.
 - Modul Go: lihat batasannya di bagian "Modul Go".
 

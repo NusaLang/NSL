@@ -139,8 +139,16 @@ StmtPtr Parser::statement() {
     else if (match(TokenType::Try)) result = tryStmt();
     else if (match(TokenType::Throw)) result = throwStmt();
     else if (match(TokenType::If)) result = ifStmt();
-    else if (match(TokenType::While)) result = whileStmt();
-    else if (match(TokenType::For)) result = forStmt();
+    else if (match(TokenType::While)) {
+        result = whileStmt();
+        if (check(TokenType::Else)) result = loopElse(std::move(result));
+    }
+    else if (match(TokenType::For)) {
+        loopVarDeclared_ = tokens_[pos_ - 1].text == "for*";
+        result = forStmt();
+        loopVarDeclared_ = false;
+        if (check(TokenType::Else)) result = loopElse(std::move(result));
+    }
     else if (match(TokenType::Return)) result = returnStmt();
     else if (match(TokenType::Break)) result = breakStmt();
     else if (match(TokenType::Continue)) result = continueStmt();
@@ -960,19 +968,82 @@ std::vector<std::string> Parser::forTargets() {
     return vars;
 }
 
+namespace {
+// break -> { flag = true; break } for the breaks that belong to this loop (not nested loops / functions).
+void flagBreaks(BlockStmt* b, const std::string& flag) {
+    if (!b) return;
+    for (auto& st : b->statements) {
+        switch (st->kind) {
+            case StmtKind::Break: {
+                std::vector<StmtPtr> two;
+                ExprPtr set = std::make_unique<AssignExpr>(flag, LiteralExpr::makeBool(true));
+                two.push_back(std::make_unique<ExprStmtNode>(std::move(set)));
+                two.push_back(std::make_unique<BreakStmt>());
+                st = std::make_unique<BlockStmt>(std::move(two));
+                break;
+            }
+            case StmtKind::If: {
+                auto* n = static_cast<IfStmt*>(st.get());
+                flagBreaks(n->thenBranch.get(), flag);
+                flagBreaks(n->elseBranch.get(), flag);
+                break;
+            }
+            case StmtKind::Block: flagBreaks(static_cast<BlockStmt*>(st.get()), flag); break;
+            case StmtKind::Try: {
+                auto* n = static_cast<TryStmt*>(st.get());
+                flagBreaks(n->tryBlock.get(), flag);
+                flagBreaks(n->catchBlock.get(), flag);
+                flagBreaks(n->finallyBlock.get(), flag);
+                break;
+            }
+            default: break;
+        }
+    }
+}
+
+void flagLoopBreaks(Stmt* st, const std::string& flag) {
+    if (st->kind == StmtKind::For) flagBreaks(static_cast<ForStmt*>(st)->body.get(), flag);
+    else if (st->kind == StmtKind::While) flagBreaks(static_cast<WhileStmt*>(st)->body.get(), flag);
+    else if (st->kind == StmtKind::Block) {
+        for (auto& c : static_cast<BlockStmt*>(st)->statements) flagLoopBreaks(c.get(), flag);
+    }
+}
+}  // namespace
+
+// `for/while ...: body else: alt` -- alt runs only when the loop ended without `break`.
+StmtPtr Parser::loopElse(StmtPtr loop) {
+    Span sp = loop->span;
+    advance();  // else
+    auto alt = block();
+    std::string flag = "__brk" + std::to_string(hiddenCounter_++);
+    flagLoopBreaks(loop.get(), flag);
+    std::vector<StmtPtr> outer;
+    outer.push_back(mkLet(flag, LiteralExpr::makeBool(false), sp));
+    outer.push_back(std::move(loop));
+    outer.push_back(std::make_unique<IfStmt>(std::make_unique<UnaryExpr>("!", mkIdent(flag, sp)), std::move(alt), nullptr));
+    StmtPtr blk = std::make_unique<BlockStmt>(std::move(outer));
+    blk->span = sp;
+    return blk;
+}
+
 StmtPtr Parser::forInStmt(Span sp) {
+    bool declared = loopVarDeclared_;
+    loopVarDeclared_ = false;  // the body (and any comprehension in it) must not see this flag
     std::vector<std::string> vars = forTargets();
     if (!matchWord("in", "dalam")) {
         throw ParseError(i18n::tr("'in' diharapkan setelah variabel 'for'", "Expected 'in' after the 'for' variable"), peek());
     }
     ExprPtr iter = expression();
     auto body = block();
+    loopVarDeclared_ = declared;
     return buildForIn(vars, std::move(iter), std::move(body), sp);
 }
 
 StmtPtr Parser::buildForIn(const std::vector<std::string>& vars, ExprPtr iter, std::unique_ptr<BlockStmt> body, Span sp) {
     const std::string& var = vars[0];
     int id = hiddenCounter_++;
+    bool declaredHere = loopVarDeclared_;
+    loopVarDeclared_ = false;  // only the outermost loop of this statement (not nested comprehension loops)
 
     // `for i in range(a, b[, literal step])` -> a plain counting loop, so it
     // stays on the fast (VM/JIT) path and allocates nothing.
@@ -1021,7 +1092,16 @@ StmtPtr Parser::buildForIn(const std::vector<std::string>& vars, ExprPtr iter, s
                 ExprPtr postAssign = std::make_unique<AssignExpr>(
                     var, mkBin("+", mkIdent(var, sp), std::move(stepExpr), sp));
                 postAssign->span = sp;
-                StmtPtr loop = std::make_unique<ForStmt>(mkLet(var, std::move(start), sp), std::move(cond),
+                StmtPtr initStmt;
+                if (declaredHere) {  // target already exists in the enclosing scope: assign, don't shadow
+                    ExprPtr as = std::make_unique<AssignExpr>(var, std::move(start));
+                    as->span = sp;
+                    initStmt = std::make_unique<ExprStmtNode>(std::move(as));
+                    initStmt->span = sp;
+                } else {
+                    initStmt = mkLet(var, std::move(start), sp);
+                }
+                StmtPtr loop = std::make_unique<ForStmt>(std::move(initStmt), std::move(cond),
                                                           std::move(postAssign), std::move(body));
                 loop->span = sp;
                 if (outer.empty()) return loop;
@@ -1047,8 +1127,16 @@ StmtPtr Parser::buildForIn(const std::vector<std::string>& vars, ExprPtr iter, s
     postAssign->span = sp;
     ExprPtr elem = std::make_unique<IndexExpr>(mkIdent(cVar, sp), mkIdent(iVar, sp));
     elem->span = sp;
+    auto bind = [&](const std::string& name, ExprPtr value) -> StmtPtr {
+        if (!declaredHere) return mkLet(name, std::move(value), sp);
+        ExprPtr as = std::make_unique<AssignExpr>(name, std::move(value));
+        as->span = sp;
+        StmtPtr st = std::make_unique<ExprStmtNode>(std::move(as));
+        st->span = sp;
+        return st;
+    };
     if (vars.size() == 1) {
-        body->statements.insert(body->statements.begin(), mkLet(var, std::move(elem), sp));
+        body->statements.insert(body->statements.begin(), bind(var, std::move(elem)));
     } else {
         // Unpack each element: let __eN = it[i]; let a = __eN[0]; let b = __eN[1] ...
         std::string eVar = "__e" + std::to_string(id);
@@ -1057,7 +1145,7 @@ StmtPtr Parser::buildForIn(const std::vector<std::string>& vars, ExprPtr iter, s
         for (size_t k = 0; k < vars.size(); k++) {
             ExprPtr part = std::make_unique<IndexExpr>(mkIdent(eVar, sp), mkNum(static_cast<double>(k), sp));
             part->span = sp;
-            pre.push_back(mkLet(vars[k], std::move(part), sp));
+            pre.push_back(bind(vars[k], std::move(part)));
         }
         body->statements.insert(body->statements.begin(), std::make_move_iterator(pre.begin()), std::make_move_iterator(pre.end()));
     }
@@ -1126,8 +1214,14 @@ std::unique_ptr<BlockStmt> Parser::block() {
 StmtPtr Parser::tupleAssign(ExprPtr first, Span sp) {
     std::vector<ExprPtr> targets;
     targets.push_back(std::move(first));
+    int starAt = leadingStar_ ? 0 : -1;
+    leadingStar_ = false;
     while (match(TokenType::Comma)) {
         if (check(TokenType::Eq)) break;
+        if (check(TokenType::Star)) {  // a, *rest = xs
+            advance();
+            starAt = static_cast<int>(targets.size());
+        }
         targets.push_back(logicOr());
     }
     expect(TokenType::Eq, i18n::tr("'=' diharapkan pada penugasan beruntun", "Expected '=' in tuple assignment"));
@@ -1143,10 +1237,30 @@ StmtPtr Parser::tupleAssign(ExprPtr first, Span sp) {
     std::string tmp = "__t" + std::to_string(hiddenCounter_++);
     ExprPtr source = literalTuple ? ExprPtr(std::make_unique<ArrayLitExpr>(std::move(rhs))) : std::move(rhs[0]);
     source->span = sp;
+    if (!literalTuple) {  // any iterable (generator, string, dict) unpacks: make it a list first
+        std::vector<ExprPtr> la;
+        la.push_back(std::move(source));
+        source = mkCall("list", std::move(la), sp);
+    }
     std::vector<StmtPtr> stmts;
     stmts.push_back(mkLet(tmp, std::move(source), sp));
     for (size_t k = 0; k < targets.size(); k++) {
-        ExprPtr val = std::make_unique<IndexExpr>(mkIdent(tmp, sp), mkNum(static_cast<double>(k), sp));
+        ExprPtr val;
+        int after = static_cast<int>(targets.size()) - 1 - static_cast<int>(k);
+        if (starAt >= 0 && static_cast<int>(k) == starAt) {  // xs[k : len(xs) - after]
+            std::vector<ExprPtr> la;
+            la.push_back(mkIdent(tmp, sp));
+            ExprPtr stop = mkBin("-", mkCall("panjang", std::move(la), sp), mkNum(after, sp), sp);
+            std::vector<ExprPtr> sa;
+            sa.push_back(mkIdent(tmp, sp));
+            sa.push_back(mkNum(static_cast<double>(k), sp));
+            sa.push_back(std::move(stop));
+            val = mkCall("__iris", std::move(sa), sp);
+        } else if (starAt >= 0 && static_cast<int>(k) > starAt) {  // counted from the end
+            val = std::make_unique<IndexExpr>(mkIdent(tmp, sp), mkNum(-static_cast<double>(after) - 1, sp));
+        } else {
+            val = std::make_unique<IndexExpr>(mkIdent(tmp, sp), mkNum(static_cast<double>(k), sp));
+        }
         val->span = sp;
         ExprPtr assign;
         if (targets[k]->kind == ExprKind::Identifier) {
@@ -1190,6 +1304,10 @@ StmtPtr Parser::exprStmt() {
         if (match(TokenType::Comma)) a.push_back(expression());
         expectEnd(i18n::tr("';' diharapkan setelah 'assert'", "Expected ';' after 'assert'"));
         return std::make_unique<ExprStmtNode>(mkCall("_assert", std::move(a), sp));
+    }
+    if (check(TokenType::Star) && peekAt(1).type == TokenType::Ident) {  // *init, last = xs
+        advance();
+        leadingStar_ = true;
     }
     ExprPtr expr = expression();
     if (check(TokenType::Comma) && (expr->kind == ExprKind::Identifier || expr->kind == ExprKind::Index)) {

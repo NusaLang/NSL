@@ -69,6 +69,9 @@ private:
     std::vector<std::string> usedExc_;            // exception class names this file mentions
     std::vector<std::string> declaredClasses_;    // classes this file defines itself
     StmtPtr classPre_;
+    bool leadingStar_ = false;
+    StmtPtr loopElse(StmtPtr loop);
+    bool loopVarDeclared_ = false;
     std::string lastParent_;
     std::vector<std::pair<std::string, bool>> lastAnnotated_;  // `name: T [= v]` fields of the class just parsed
     std::unordered_map<std::string, std::vector<std::pair<std::string, bool>>> dcFields_;

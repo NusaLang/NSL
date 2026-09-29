@@ -34,6 +34,7 @@ def fib(n):
     return n if n < 2 else fib(n - 1) + fib(n - 2)
 print(fib(30))
 print(fnmatch.fnmatch("foo.py", "*.py"), fnmatch.filter(["a.py", "b.txt"], "*.py"))
+shutil.rmtree("/tmp/nusa_lib_gl")
 os.makedirs("/tmp/nusa_lib_gl/sub")
 open("/tmp/nusa_lib_gl/a.txt", "w").write("A")
 open("/tmp/nusa_lib_gl/sub/b.txt", "w").write("BB")

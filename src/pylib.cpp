@@ -540,7 +540,7 @@ Value strMethod(const std::string& m, std::vector<Value>& a, const ValueMap* kw)
         const std::string& sub = argStr(1, m.c_str());
         size_t p = m == "rfind" ? s.rfind(sub) : s.find(sub);
         if (p == std::string::npos) {
-            if (m == "index") fail("index(): tidak ditemukan");
+            if (m == "index") fail("ValueError: substring not found");
             return Value::fromNumber(-1);
         }
         return Value::fromNumber(static_cast<double>(p));
@@ -715,14 +715,14 @@ Value listMethod(const std::string& m, std::vector<Value>& a, const ValueMap* kw
     if (m == "remove") {
         auto& v = mutElems(self);
         for (size_t i = 0; i < v.size(); i++) if (valuesDeepEqual(v[i], a.at(1))) { v.erase(v.begin() + static_cast<long>(i)); return Value::null(); }
-        fail("remove(): nilai tidak ada di larik");
+        fail("ValueError: list.remove(x): x not in list");
     }
     if (m == "pop") {
         auto& v = mutElems(self);
-        if (v.empty()) fail("pop(): larik kosong");
+        if (v.empty()) fail("IndexError: pop from empty list");
         long long i = a.size() > 1 ? static_cast<long long>(numArg(a[1], "pop")) : -1;
         if (i < 0) i += static_cast<long long>(v.size());
-        if (i < 0 || i >= static_cast<long long>(v.size())) fail("pop(): indeks di luar jangkauan");
+        if (i < 0 || i >= static_cast<long long>(v.size())) fail("IndexError: pop index out of range");
         Value out = v[static_cast<size_t>(i)];
         v.erase(v.begin() + i);
         return out;
@@ -736,7 +736,7 @@ Value listMethod(const std::string& m, std::vector<Value>& a, const ValueMap* kw
                 n++;
             }
         }
-        if (m == "index") fail("index(): nilai tidak ada di larik");
+        if (m == "index") fail("ValueError: value is not in list");
         return Value::fromNumber(n);
     }
     if (m == "sort") {
@@ -854,9 +854,25 @@ Value call(const std::string& name, std::vector<Value>& a, const ValueMap* kw, c
     }
     if (name == "sum") {
         needArgs(a, 1, 2, "sum");
-        double total = a.size() > 1 ? numArg(a[1], "sum") : 0;
-        if (const Value* st = kwGet(kw, "start")) total = numArg(*st, "sum");
-        for (const Value& v : elems(a[0], "sum")) total += numArg(v, "sum");
+        std::vector<Value> sumArgs = a;
+        if (const Value* st = kwGet(kw, "start")) { if (sumArgs.size() < 2) sumArgs.push_back(*st); else sumArgs[1] = *st; }
+        const std::vector<Value>& a = sumArgs;
+        double total = a.size() > 1 && (a[1].type == ValueType::Number || a[1].type == ValueType::Bool) ? a[1].number : 0;
+        std::vector<Value> items = elems(a[0], "sum");
+        bool generic = a.size() > 1 && a[1].type != ValueType::Number;
+        for (const Value& v : items) if (v.type != ValueType::Number && v.type != ValueType::Bool) generic = true;
+        if (generic) {  // objects with __add__, lists (sum(xs, [])): fold with +
+            Value acc = a.size() > 1 ? a[1] : Value::fromNumber(0);
+            for (const Value& v : items) {
+                if (isSeq(acc) && isSeq(v)) { std::vector<Value> x = elems(acc), y = elems(v); x.insert(x.end(), y.begin(), y.end()); acc = mkArr(std::move(x)); continue; }
+                Value r;
+                if (instanceOpHook() && instanceOpHook()("__add__", acc, v, r)) { acc = r; continue; }
+                if (acc.type == ValueType::Number && v.type == ValueType::Number) { acc = Value::fromNumber(acc.number + v.number); continue; }
+                fail("TypeError: sum(): tipe tidak bisa dijumlahkan");
+            }
+            return acc;
+        }
+        for (const Value& v : items) total += numArg(v, "sum");
         return Value::fromNumber(total);
     }
     if (name == "round") {

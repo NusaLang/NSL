@@ -1726,6 +1726,11 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
             case Op::Pop: stack.pop_back(); break;
             case Op::Neg: {
                 Value v = pop();
+                if (v.type == ValueType::Instance && instanceOpHook()) {
+                    Value r;
+                    syncTop();
+                    if (instanceOpHook()("__neg__", v, Value::null(), r)) { stack.push_back(std::move(r)); break; }
+                }
                 if (v.type != ValueType::Number) throw VmRuntimeError("Operand '-' harus angka");
                 stack.push_back(Value::fromNumber(-v.number));
                 break;
@@ -1754,7 +1759,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                     stack.push_back(Value::fromString(a.str() + b.str()));
                 } else {
                     Value r;
-                    if (a.type == ValueType::Instance && instanceOpHook() && (syncTop(), instanceOpHook()("__add__", a, b, r))) {
+                    if ((a.type == ValueType::Instance || b.type == ValueType::Instance) && instanceOpHook() && (syncTop(), instanceOpHook()("__add__", a, b, r))) {
                         stack.push_back(std::move(r));
                         break;
                     }
@@ -1811,7 +1816,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                         }
                         break;
                     }
-                    if (a.type == ValueType::Instance && instanceOpHook()) {
+                    if ((a.type == ValueType::Instance || b.type == ValueType::Instance) && instanceOpHook()) {
                         const char* dn = op == Op::Sub ? "__sub__" : op == Op::Mul ? "__mul__" : op == Op::Div ? "__truediv__" : "__mod__";
                         Value r;
                         syncTop();

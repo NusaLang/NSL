@@ -394,8 +394,19 @@ Interpreter::Interpreter(std::string entryDir) {
         return false;
     };
     instanceOpHook() = [this](const char* dunder, const Value& a, const Value& b, Value& out) {
-        std::vector<Value> args{b};
-        if (callInstMethod(this, a, dunder, args, &out)) return true;
+        std::vector<Value> args;
+        if (std::string(dunder) != "__neg__") args.push_back(b);
+        if (a.type == ValueType::Instance && callInstMethod(this, a, dunder, args, &out)) return true;
+        // 1 + obj: try obj.__radd__(1) and friends
+        static const std::pair<const char*, const char*> rops[] = {
+            {"__add__", "__radd__"}, {"__sub__", "__rsub__"}, {"__mul__", "__rmul__"},
+            {"__truediv__", "__rtruediv__"}, {"__mod__", "__rmod__"}};
+        for (const auto& [from, to] : rops) {
+            if (std::string(dunder) == from && b.type == ValueType::Instance) {
+                std::vector<Value> rargs{a};
+                if (callInstMethod(this, b, to, rargs, &out)) return true;
+            }
+        }
         // comparisons fall back to the reflected operation on the right operand: a > b == b < a
         static const std::pair<const char*, const char*> reflected[] = {
             {"__gt__", "__lt__"}, {"__lt__", "__gt__"}, {"__ge__", "__le__"}, {"__le__", "__ge__"}};
@@ -700,6 +711,10 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
             auto* node = static_cast<const UnaryExpr*>(expr);
             Value val = eval(node->operand.get(), env);
             if (node->op == "-") {
+                if (val.type == ValueType::Instance) {
+                    Value r;
+                    if (instanceOpHook()("__neg__", val, Value::null(), r)) return r;
+                }
                 if (val.type != ValueType::Number) {
                     throw RuntimeError(i18n::tr("Operand '-' harus angka", "Operand of '-' must be a number"));
                 }
@@ -744,7 +759,7 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
                 if (left.type == ValueType::String && right.type == ValueType::String) {
                     return Value::fromString(left.str() + right.str());
                 }
-                if (left.type == ValueType::Instance) {
+                if (left.type == ValueType::Instance || right.type == ValueType::Instance) {
                     Value r;
                     if (instanceOpHook()("__add__", left, right, r)) return r;
                 }
@@ -799,7 +814,7 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
                         throw RuntimeError(e.what());
                     }
                 }
-                if (left.type == ValueType::Instance) {
+                if (left.type == ValueType::Instance || right.type == ValueType::Instance) {
                     Value r;
                     const char* dn = op == "-" ? "__sub__" : op == "*" ? "__mul__" : op == "/" ? "__truediv__" : "__mod__";
                     if (instanceOpHook()(dn, left, right, r)) return r;
@@ -1785,6 +1800,13 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         // What kind of error a thrown non-object is: a plain string counts as Exception; the interpreter's
         // own errors ({pesan: "..."}) are told apart by their message.
         auto classify = [](const Value& v) -> std::string {
+            if (v.type == ValueType::String) {  // "StopIteration" / "ValueError: msg" raised as plain text
+                const std::string& t = v.str();
+                size_t colon = t.find(':');
+                std::string head = colon == std::string::npos ? t : t.substr(0, colon);
+                if (head == "BaseException" || parents.count(head)) return head;
+                return "Exception";
+            }
             if (v.type != ValueType::Map) return "Exception";
             auto it = v.map()->find("pesan");
             if (it == v.map()->end() || it->second.type != ValueType::String) return "Exception";
