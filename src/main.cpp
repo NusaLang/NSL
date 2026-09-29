@@ -75,6 +75,22 @@ bool hasExtension(const std::string& path, const std::string& ext) {
     return path.size() >= ext.size() && path.compare(path.size() - ext.size(), ext.size(), ext) == 0;
 }
 
+// Escape hatch to the tree-walking interpreter (the reference implementation,
+// and the only engine with Environment garbage collection): a `nusa:tree-walker`
+// comment in the first lines of a script, or NUSA_NO_VM=1 for everything.
+bool wantsTreeWalker(const std::string& source) {
+    if (std::getenv("NUSA_NO_VM")) return true;
+    size_t pos = 0;
+    for (int line = 0; line < 10 && pos < source.size(); line++) {
+        size_t eol = source.find('\n', pos);
+        std::string text = source.substr(pos, eol == std::string::npos ? std::string::npos : eol - pos);
+        if ((text.rfind("//", 0) == 0 || text.rfind("#", 0) == 0) && text.find("nusa:tree-walker") != std::string::npos) return true;
+        if (eol == std::string::npos) break;
+        pos = eol + 1;
+    }
+    return false;
+}
+
 int runFile(const std::string& path) {
     if (hasExtension(path, ".js")) {
         return jsrt::runJsFile(path);
@@ -173,7 +189,7 @@ int runFile(const std::string& path) {
         std::string fname = (lastSlash == std::string::npos) ? path : path.substr(lastSlash + 1);
         std::string cachePath = cacheDir + "/_" + fname + ".bin";
         
-        std::unique_ptr<VmProgram> vmProgram = vmDeserialize(cachePath, finalHash);
+        std::unique_ptr<VmProgram> vmProgram = wantsTreeWalker(source) ? nullptr : vmDeserialize(cachePath, finalHash);
         if (vmProgram) {
             // Cache hit: bytecode came from disk without the native-code JIT
             // attachment (vmSerialize never writes it) -- re-derive it here.
@@ -193,6 +209,7 @@ int runFile(const std::string& path) {
         }
 
         try {
+            if (wantsTreeWalker(source)) throw VmCompileError("dipaksa tree-walker (nusa:tree-walker / NUSA_NO_VM)");
             vmProgram = vmCompile(*program);
             mkdir(cacheDir.c_str(), 0755);
             vmSerialize(*vmProgram, cachePath, finalHash);

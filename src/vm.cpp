@@ -141,6 +141,52 @@ void collectIdentifiersInStmt(const Stmt* s, std::unordered_set<std::string>& ou
 }
 
 void findCapturedNames(const std::vector<StmtPtr>& statements, std::unordered_set<std::string>& out);
+void findCapturedNames(const BlockStmt* body, std::unordered_set<std::string>& out);
+
+// Anonymous functions hide inside expressions: everything they mention may be a
+// captured variable of the function around them.
+void findCapturedInExpr(const Expr* e, std::unordered_set<std::string>& out) {
+    if (!e) return;
+    switch (e->kind) {
+        case ExprKind::Literal: case ExprKind::Identifier: return;
+        case ExprKind::Unary: findCapturedInExpr(static_cast<const UnaryExpr*>(e)->operand.get(), out); return;
+        case ExprKind::Binary: {
+            auto* n = static_cast<const BinaryExpr*>(e);
+            findCapturedInExpr(n->left.get(), out);
+            findCapturedInExpr(n->right.get(), out);
+            return;
+        }
+        case ExprKind::Assign: findCapturedInExpr(static_cast<const AssignExpr*>(e)->value.get(), out); return;
+        case ExprKind::Call: {
+            auto* n = static_cast<const CallExpr*>(e);
+            findCapturedInExpr(n->callee.get(), out);
+            for (auto& a : n->args) findCapturedInExpr(a.get(), out);
+            return;
+        }
+        case ExprKind::ArrayLit:
+            for (auto& el : static_cast<const ArrayLitExpr*>(e)->elements) findCapturedInExpr(el.get(), out);
+            return;
+        case ExprKind::Index: {
+            auto* n = static_cast<const IndexExpr*>(e);
+            findCapturedInExpr(n->target.get(), out);
+            findCapturedInExpr(n->index.get(), out);
+            return;
+        }
+        case ExprKind::IndexAssign: {
+            auto* n = static_cast<const IndexAssignExpr*>(e);
+            findCapturedInExpr(n->target.get(), out);
+            findCapturedInExpr(n->index.get(), out);
+            findCapturedInExpr(n->value.get(), out);
+            return;
+        }
+        case ExprKind::FnExpr: {
+            auto* n = static_cast<const FnExprNode*>(e);
+            collectIdentifiersInBlock(n->decl->body.get(), out);
+            findCapturedNames(n->decl->body.get(), out);
+            return;
+        }
+    }
+}
 
 void findCapturedNames(const BlockStmt* body, std::unordered_set<std::string>& out) {
     if (!body) return;
@@ -159,12 +205,30 @@ void findCapturedNames(const std::vector<StmtPtr>& statements, std::unordered_se
             case StmtKind::Block: findCapturedNames(static_cast<const BlockStmt*>(st.get()), out); break;
             case StmtKind::If: {
                 auto* n = static_cast<const IfStmt*>(st.get());
+                findCapturedInExpr(n->condition.get(), out);
                 findCapturedNames(n->thenBranch.get(), out);
                 findCapturedNames(n->elseBranch.get(), out);
                 break;
             }
-            case StmtKind::While: findCapturedNames(static_cast<const WhileStmt*>(st.get())->body.get(), out); break;
-            case StmtKind::For: findCapturedNames(static_cast<const ForStmt*>(st.get())->body.get(), out); break;
+            case StmtKind::While: {
+                auto* n = static_cast<const WhileStmt*>(st.get());
+                findCapturedInExpr(n->condition.get(), out);
+                findCapturedNames(n->body.get(), out);
+                break;
+            }
+            case StmtKind::For: {
+                auto* n = static_cast<const ForStmt*>(st.get());
+                if (n->init && n->init->kind == StmtKind::Let) findCapturedInExpr(static_cast<const LetStmt*>(n->init.get())->value.get(), out);
+                if (n->init && n->init->kind == StmtKind::ExprStmt) findCapturedInExpr(static_cast<const ExprStmtNode*>(n->init.get())->expr.get(), out);
+                findCapturedInExpr(n->condition.get(), out);
+                findCapturedInExpr(n->post.get(), out);
+                findCapturedNames(n->body.get(), out);
+                break;
+            }
+            case StmtKind::Let: findCapturedInExpr(static_cast<const LetStmt*>(st.get())->value.get(), out); break;
+            case StmtKind::ExprStmt: findCapturedInExpr(static_cast<const ExprStmtNode*>(st.get())->expr.get(), out); break;
+            case StmtKind::Return: findCapturedInExpr(static_cast<const ReturnStmt*>(st.get())->value.get(), out); break;
+            case StmtKind::Throw: findCapturedInExpr(static_cast<const ThrowStmt*>(st.get())->value.get(), out); break;
             case StmtKind::Try: {
                 auto* n = static_cast<const TryStmt*>(st.get());
                 findCapturedNames(n->tryBlock.get(), out);
@@ -325,7 +389,17 @@ public:
     }
 
     void compileIdentifierGet(const std::string& name) {
-        if (name == "induk") throw VmCompileError("induk belum didukung mode --vm");
+        if (name == "induk") {
+            // `induk` = this instance seen as the declaring class's parent; only
+            // meaningful in a method, where `ini` is a plain local.
+            int ini = current->resolveLocal("ini");
+            if (ini == -1) throw VmCompileError("induk di luar metode belum didukung mode --vm");
+            const Local& il = current->locals[static_cast<size_t>(ini)];
+            current->emitOp(il.boxed ? Op::GetBoxedLocal : Op::GetLocal);
+            current->emitU16(static_cast<uint16_t>(il.slot));
+            current->emitOp(Op::MakeSuper);
+            return;
+        }
         int local = current->resolveLocal(name);
         if (local != -1) {
             const Local& l = current->locals[static_cast<size_t>(local)];
@@ -596,8 +670,19 @@ public:
                 current->emitOp(Op::SetIndex);
                 return;
             }
-            case ExprKind::FnExpr:
-                throw VmCompileError("fungsi anonim belum didukung mode --vm");
+            case ExprKind::FnExpr: {
+                auto* n = static_cast<const FnExprNode*>(e);
+                VmFunction* f = newFunction("");  // anonymous: traces print it as ''
+                FnCompiler* declaring = current;
+                compileFunctionBody(n->decl.get(), f);
+                declaring->emitOp(Op::MakeClosure);
+                declaring->emitU16(static_cast<uint16_t>(indexOfFunction(f)));
+                for (auto& uv : f->upvalues) {
+                    declaring->emitByte(uv.isLocal ? 1 : 0);
+                    declaring->emitU16(static_cast<uint16_t>(uv.index));
+                }
+                return;
+            }
         }
     }
 
@@ -732,6 +817,20 @@ public:
         }
         program.nativeLoops.push_back(desc);
         return static_cast<int>(program.nativeLoops.size()) - 1;
+    }
+
+    // Binds the value on top of the stack to a declared name: a global at the
+    // script's top level, a local everywhere else.
+    void defineDeclared(const std::string& name, bool topLevel) {
+        if (topLevel && current == topCompiler) {
+            current->emitOp(Op::DefineGlobal);
+            current->emitU16(static_cast<uint16_t>(current->addConstant(Value::fromString(name))));
+        } else {
+            int li = current->addLocal(name);
+            const Local& l = current->locals[static_cast<size_t>(li)];
+            current->emitOp(l.boxed ? Op::DefineBoxedLocal : Op::DefineLocal);
+            current->emitU16(static_cast<uint16_t>(l.slot));
+        }
     }
 
     // ---- coba / tangkap / akhir ----
@@ -888,6 +987,24 @@ public:
                 current->emitU16(static_cast<uint16_t>(current->addConstant(Value::fromString(n->name))));
                 return;
             }
+            case StmtKind::StructDecl: {
+                auto* n = static_cast<const StructDeclStmt*>(s);
+                current->emitOp(Op::MakeStruct);
+                current->emitU16(static_cast<uint16_t>(current->addConstant(Value::fromString(n->name))));
+                current->emitU16(static_cast<uint16_t>(n->fields.size()));
+                for (auto& f : n->fields) current->emitU16(static_cast<uint16_t>(current->addConstant(Value::fromString(f))));
+                defineDeclared(n->name, topLevel);
+                return;
+            }
+            case StmtKind::EnumDecl: {
+                auto* n = static_cast<const EnumDeclStmt*>(s);
+                current->emitOp(Op::MakeEnum);
+                current->emitU16(static_cast<uint16_t>(current->addConstant(Value::fromString(n->name))));
+                current->emitU16(static_cast<uint16_t>(n->variants.size()));
+                for (auto& v : n->variants) current->emitU16(static_cast<uint16_t>(current->addConstant(Value::fromString(v))));
+                defineDeclared(n->name, topLevel);
+                return;
+            }
             case StmtKind::Block: {
                 auto* n = static_cast<const BlockStmt*>(s);
                 current->beginScope();
@@ -989,10 +1106,6 @@ public:
                 current->emitOp(Op::Pop);
                 return;
             }
-            case StmtKind::StructDecl:
-                throw VmCompileError("bentuk belum didukung mode --vm");
-            case StmtKind::EnumDecl:
-                throw VmCompileError("jenis belum didukung mode --vm");
             case StmtKind::Try:
                 compileTry(static_cast<const TryStmt*>(s));
                 return;
@@ -1451,7 +1564,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
             g_unwoundFn.clear();
         }
         if (routeException(isThrown ? thrownVal : errorMap(err.what()))) return true;
-        if (!fn->name.empty() && fn->name[0] != '<') {
+        if (fn->name != "<script>") {
             size_t dot = fn->name.find_last_of('.');
             g_unwoundFn = dot == std::string::npos ? fn->name : fn->name.substr(dot + 1);
         }
@@ -1898,6 +2011,45 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 stack.push_back(callMethodSlow(target, fn->constants[nameIdx], args, ctx));
                 break;
             }
+            case Op::MakeStruct: {
+                uint16_t nameIdx = readU16();
+                uint16_t count = readU16();
+                auto info = std::make_shared<ClassInfo>();
+                info->name = fn->constants[nameIdx].str();
+                info->isStruct = true;
+                for (uint16_t i = 0; i < count; i++) info->structFields.push_back(fn->constants[readU16()].str());
+                stack.push_back(Value::fromClass(info));
+                break;
+            }
+            case Op::MakeEnum: {
+                uint16_t nameIdx = readU16();
+                uint16_t count = readU16();
+                auto info = std::make_shared<ClassInfo>();
+                info->name = fn->constants[nameIdx].str();
+                info->isEnum = true;
+                auto ns = std::make_shared<std::unordered_map<std::string, Value>>();
+                for (uint16_t i = 0; i < count; i++) {
+                    const std::string& variant = fn->constants[readU16()].str();
+                    auto state = std::make_shared<InstanceState>();
+                    state->classInfo = info;
+                    state->fields = std::make_shared<std::unordered_map<std::string, Value>>();
+                    (*state->fields)["nama"] = Value::fromString(variant);
+                    (*ns)[variant] = Value::fromInstance(state);
+                }
+                stack.push_back(Value::fromMap(ns));
+                break;
+            }
+            case Op::MakeSuper: {
+                Value self = pop();
+                if (self.type != ValueType::Instance || !closure || !closure->owner || !closure->owner->parent) {
+                    throw VmRuntimeError("Undefined variable 'induk'");
+                }
+                auto view = std::make_shared<InstanceState>();
+                view->classInfo = closure->owner->parent;
+                view->fields = self.instance()->fields;  // same field table: the parent's methods see the object
+                stack.push_back(Value::fromInstance(view));
+                break;
+            }
             case Op::MakeClass: {
                 uint16_t nameIdx = readU16();
                 uint16_t count = readU16();
@@ -1915,6 +2067,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                     uint16_t mFunc = readU16();
                     auto vc = std::make_shared<VmClosure>();
                     vc->function = (*ctx.functions)[mFunc].get();
+                    vc->owner = info.get();
                     info->vmMethods[fn->constants[mName].str()] = Value::fromVmClosure(vc);
                 }
                 stack.push_back(Value::fromClass(info));
@@ -2434,7 +2587,7 @@ int vmRun(VmProgram& program, Interpreter* interpreter) {
 namespace {
 
 constexpr uint32_t kCacheMagic = 0x4E534256; // "NSBV"
-constexpr uint32_t kCacheVersion = 5;  // 5: + MakeClass, BinLK, BinLL, GetField, SetField, CallMethodK, Throw, handlers, lines
+constexpr uint32_t kCacheVersion = 6;  // 6: + MakeClass, BinLK, BinLL, GetField, SetField, CallMethodK, Throw, handlers, lines, MakeStruct, MakeEnum, MakeSuper
 
 void writeU32(std::ofstream& f, uint32_t v) { f.write(reinterpret_cast<const char*>(&v), sizeof(v)); }
 void writeI32(std::ofstream& f, int32_t v) { f.write(reinterpret_cast<const char*>(&v), sizeof(v)); }

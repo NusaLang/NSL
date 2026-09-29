@@ -69,6 +69,9 @@ enum class Op : uint8_t {
     SetField,  // nameConst16: obj.name = value
     CallMethodK,  // nameConst16 argc8: obj.name(args), name known at compile time
     Throw,        // pops a value and throws it (lempar / re-throw after finally)
+    MakeStruct,   // name16 count16 field16*: pushes a struct class
+    MakeEnum,     // name16 count16 variant16*: pushes the enum's name->value map
+    MakeSuper,    // pops an instance, pushes the same fields seen as the owner's parent class
 };
 
 struct NativeLoopDesc {
@@ -161,6 +164,9 @@ struct Cell;
 struct VmClosure {
     const VmFunction* function = nullptr;
     std::vector<Cell*> upvalues;
+    // For a method: the class that declared it (owned by that class's vmMethods
+    // table, so it outlives the closure). `induk` resolves through it.
+    ClassInfo* owner = nullptr;
 };
 
 struct VmProgram {

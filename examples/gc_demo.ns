@@ -1,10 +1,9 @@
 // Buktiin garbage collector: instance yang dibikin di dalam loop nggak
 // numpuk di memori walau loop-nya jalan ribuan kali. Bandingin
 // `total_alokasi` (naik terus, satu per instance) sama `hidup` (harusnya
-// tetep kecil & datar, bukan ikut naik). Program yang bisa dikompilasi VM
-// lewat jalur VM/JIT yang nggak nyentuh Environment sama sekali, jadi
-// nggak kepake buat ngetes ini. `coba`/`tangkap` di akhir file (belum didukung
-// VM) sengaja dipasang biar seluruh program jatuh ke tree-walker.
+// tetep kecil & datar, bukan ikut naik). VM nggak punya Environment sama
+// sekali, jadi demo ini dipaksa jalan di tree-walker lewat pragma di bawah.
+// nusa:tree-walker
 
 cetak("sebelum loop:", gc_info());
 
@@ -28,7 +27,3 @@ cetak("sesudah loop:", gc_info());
 gc_paksa();
 cetak("(statement ini yang bikin collect di atas beneran kepakai)");
 cetak("sesudah gc_paksa:", gc_info());
-
-coba {
-} tangkap (e) {
-}

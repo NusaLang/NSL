@@ -780,6 +780,23 @@ ExprPtr Parser::primary() {
             return e;
         }
         case TokenType::Ident: {
+            if (isWord(tok, "lambda") && (peekAt(1).type == TokenType::Ident || peekAt(1).type == TokenType::Colon)) {
+                // Python: lambda a, b: <expr>
+                advance();
+                std::vector<std::string> params;
+                while (!check(TokenType::Colon)) {
+                    params.push_back(expect(TokenType::Ident, i18n::tr("Nama parameter diharapkan", "Expected parameter name")).text);
+                    if (!match(TokenType::Comma)) break;
+                }
+                expect(TokenType::Colon, i18n::tr("':' diharapkan setelah parameter lambda", "Expected ':' after lambda parameters"));
+                ExprPtr body = assignment();
+                std::vector<StmtPtr> stmts;
+                stmts.push_back(std::make_unique<ReturnStmt>(std::move(body)));
+                auto decl = std::make_unique<FnDeclStmt>("", std::move(params), std::make_unique<BlockStmt>(std::move(stmts)));
+                ExprPtr e = std::make_unique<FnExprNode>(std::move(decl));
+                e->span = start;
+                return e;
+            }
             advance();
             ExprPtr e = std::make_unique<IdentifierExpr>(tok.text);
             e->span = start;
