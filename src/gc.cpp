@@ -37,6 +37,13 @@ Environment* GC::alloc(Environment* parent) {
     return envs_.back().get();
 }
 
+GC::VmFrameRoots** GC::vmHeadSlow() {
+    std::lock_guard<std::mutex> lock(gcMutex_);
+    VmFrameRoots**& slot = vmHeads_[std::this_thread::get_id()];
+    if (!slot) slot = new VmFrameRoots*(nullptr);
+    return slot;
+}
+
 Cell* GC::allocCell(Value v) {
     if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) {
         cells_.push_back(std::make_unique<Cell>(Cell{std::move(v), false}));
@@ -136,12 +143,12 @@ void GC::collectNow() {
     for (const auto& [tid, stack] : rootsByThread_) {
         for (Environment* root : stack) markEnv(root);
     }
-    for (const auto& [tid, frames] : vmRootsByThread_) {
-        for (const VmFrameRoots& fr : frames) {
-            if (fr.stack) for (const Value& v : *fr.stack) markValue(v);
-            if (fr.locals) for (const Value& v : *fr.locals) markValue(v);
-            if (fr.boxedLocals) {
-                for (Cell* cell : *fr.boxedLocals) markCell(cell);
+    for (const auto& [tid, head] : vmHeads_) {
+        for (const VmFrameRoots* fr = *head; fr; fr = fr->prev) {
+            if (fr->stack) for (const Value& v : *fr->stack) markValue(v);
+            if (fr->locals) for (const Value& v : *fr->locals) markValue(v);
+            if (fr->boxedLocals) {
+                for (Cell* cell : *fr->boxedLocals) markCell(cell);
             }
         }
     }

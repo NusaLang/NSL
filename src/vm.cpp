@@ -942,8 +942,11 @@ struct VmContext {
     uint32_t gcTick = 0;  // calls + backward jumps since start, across frames
 };
 
+// Shared empty table for frames without boxed locals (never written).
+std::vector<Cell*> g_noBoxed;
+
 Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
-               std::vector<Cell*> boxedLocals, VmContext& ctx);
+               std::vector<Cell*>& boxedLocals, VmContext& ctx);
 
 // Bounds-checks a new frame's locals region at `base` and nulls it (slots
 // above a live stack hold stale types).
@@ -974,7 +977,7 @@ Value callVmWithSelf(VmClosure* cl, const Value& self, std::vector<Value>& args,
     Value selfCopy = self;
     placeParam(base, boxed, fn->paramSlots[0], std::move(selfCopy));
     for (size_t i = 0; i < args.size(); i++) placeParam(base, boxed, fn->paramSlots[i + 1], std::move(args[i]));
-    return runFrame(fn, cl, base, std::move(boxed), ctx);
+    return runFrame(fn, cl, base, boxed, ctx);
 }
 
 // `KelasX(args)`: mirrors Interpreter::callValue's Class branch, but runs a
@@ -1082,11 +1085,11 @@ Value callValue(const Value& callee, std::vector<Value>& args, VmContext& ctx) {
         if (ps.boxed) boxedLocals[static_cast<size_t>(ps.slot)] = GC::instance().allocCell(std::move(args[i]));
         else base[ps.slot] = std::move(args[i]);
     }
-    return runFrame(fn, closure, base, std::move(boxedLocals), ctx);
+    return runFrame(fn, closure, base, boxedLocals, ctx);
 }
 
 Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
-               std::vector<Cell*> boxedLocals, VmContext& ctx) {
+               std::vector<Cell*>& boxedLocals, VmContext& ctx) {
     if (++ctx.depth > 3000) {
         ctx.depth--;
         throw VmRuntimeError("rekursi kelewat dalam mode --vm");
@@ -1113,7 +1116,8 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
 
     // Roots this frame's stack/locals/boxedLocals for its whole lifetime --
     // see GC::pushVmRoots in gc.hpp.
-    VmRootGuard vmRootGuard(GC::VmFrameRoots{&stack, &locals, &boxedLocals});
+    GC::VmFrameRoots frameRoots{&stack, &locals, &boxedLocals};
+    VmRootGuard vmRootGuard(frameRoots);
 
     auto readByte = [&]() __attribute__((always_inline)) -> uint8_t { return code[ip++]; };
     auto readU16 = [&]() __attribute__((always_inline)) -> uint16_t {
@@ -1422,7 +1426,9 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                         if (target->arity == argCount) {
                             Value* base = stack.data + stack.len;
                             initFrameLocals(base, target, ctx);
-                            std::vector<Cell*> calleeBoxed(static_cast<size_t>(target->numBoxedLocals));
+                            std::vector<Cell*> calleeBoxedStore;
+                            if (target->numBoxedLocals) calleeBoxedStore.assign(static_cast<size_t>(target->numBoxedLocals), nullptr);
+                            std::vector<Cell*>& calleeBoxed = target->numBoxedLocals ? calleeBoxedStore : g_noBoxed;
                             Value* argv = stack.data + (stack.len - argCount);
                             for (int i = 0; i < argCount; i++) {
                                 const ParamSlot& ps = target->paramSlots[static_cast<size_t>(i)];
@@ -1431,7 +1437,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                             }
                             stack.len -= argCount;  // moved-from: null refs
                             // The callee Value stays on the stack, keeping its closure alive.
-                            Value result = runFrame(target, callee, base, std::move(calleeBoxed), ctx);
+                            Value result = runFrame(target, callee, base, calleeBoxed, ctx);
                             stack.pop_back();
                             stack.push_back(std::move(result));
                             break;
@@ -1463,7 +1469,9 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                             const VmFunction* target = callee->function;
                             Value* base = stack.data + stack.len;
                             initFrameLocals(base, target, ctx);
-                            std::vector<Cell*> calleeBoxed(static_cast<size_t>(target->numBoxedLocals));
+                            std::vector<Cell*> calleeBoxedStore;
+                            if (target->numBoxedLocals) calleeBoxedStore.assign(static_cast<size_t>(target->numBoxedLocals), nullptr);
+                            std::vector<Cell*>& calleeBoxed = target->numBoxedLocals ? calleeBoxedStore : g_noBoxed;
                             Value* argv = stack.data + (stack.len - argCount);
                             placeParam(base, calleeBoxed, target->paramSlots[0], std::move(targetSlot));
                             targetSlot.type = ValueType::Null;  // moved-from: keep GC scans of this slot valid
@@ -1471,7 +1479,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                                 placeParam(base, calleeBoxed, target->paramSlots[static_cast<size_t>(i) + 1], std::move(argv[i]));
                             }
                             stack.len -= argCount;  // moved-from: null refs
-                            Value result = runFrame(target, callee, base, std::move(calleeBoxed), ctx);
+                            Value result = runFrame(target, callee, base, calleeBoxed, ctx);
                             stack.pop_back();  // method name
                             stack.pop_back();  // moved-from receiver
                             stack.push_back(std::move(result));
@@ -1933,7 +1941,7 @@ int vmRun(VmProgram& program, Interpreter* interpreter) {
     try {
         Value* topBase = ctx.arena->top;
         initFrameLocals(topBase, program.topLevel, ctx);
-        Value result = runFrame(program.topLevel, &topClosure, topBase, std::move(boxedLocals), ctx);
+        Value result = runFrame(program.topLevel, &topClosure, topBase, boxedLocals, ctx);
         (void)result;
         return 0;
     } catch (const VmCompileError& e) {

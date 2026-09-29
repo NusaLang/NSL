@@ -42,13 +42,25 @@ public:
 
     // Same as pushRoot/popRoot, for a VM runFrame()'s stack/locals/
     // boxedLocals (registered for the frame's duration via VmRootGuard).
+    // Frames form an intrusive per-thread list (innermost first) that lives on
+    // the C++ stack, so registering a frame is two pointer writes. The head
+    // cell is heap-allocated once per thread and never freed: the GC may still
+    // walk it after the thread exits (the list is empty by then).
     struct VmFrameRoots {
         const ValueWindow* stack = nullptr;
         const ValueWindow* locals = nullptr;
         const std::vector<Cell*>* boxedLocals = nullptr;
+        VmFrameRoots* prev = nullptr;
     };
-    void pushVmRoots(const VmFrameRoots& roots) { push(vmRoots(), roots); }
-    void popVmRoots() { pop(vmRoots()); }
+    void pushVmRoots(VmFrameRoots& roots) {
+        VmFrameRoots*& head = vmHead();
+        roots.prev = head;
+        head = &roots;
+    }
+    void popVmRoots() {
+        VmFrameRoots*& head = vmHead();
+        head = head->prev;
+    }
 
     // RAII-rooting for a raw C++ local mid-eval (e.g. `callee` in
     // `f(a(), b())` while `b()` still evaluates) -- lets exprDepth_
@@ -109,10 +121,12 @@ private:
         static thread_local std::vector<Environment*>* c = nullptr;
         return threadVec(rootsByThread_, c);
     }
-    std::vector<VmFrameRoots>& vmRoots() {
-        static thread_local std::vector<VmFrameRoots>* c = nullptr;
-        return threadVec(vmRootsByThread_, c);
+    VmFrameRoots*& vmHead() {
+        static thread_local VmFrameRoots** cache = nullptr;
+        if (!cache) cache = vmHeadSlow();
+        return *cache;
     }
+    VmFrameRoots** vmHeadSlow();
     std::vector<const Value*>& valueRoots() {
         static thread_local std::vector<const Value*>* c = nullptr;
         return threadVec(valueRootsByThread_, c);
@@ -132,7 +146,7 @@ private:
     std::vector<std::unique_ptr<Environment>> envs_;
     std::vector<std::unique_ptr<Cell>> cells_;
     std::unordered_map<std::thread::id, std::vector<Environment*>> rootsByThread_;
-    std::unordered_map<std::thread::id, std::vector<VmFrameRoots>> vmRootsByThread_;
+    std::unordered_map<std::thread::id, VmFrameRoots**> vmHeads_;
     std::unordered_map<std::thread::id, std::vector<const Value*>> valueRootsByThread_;
     std::unordered_map<std::thread::id, std::vector<const std::vector<Value>*>> valueVectorRootsByThread_;
     std::vector<const int*> threadDepths_;
@@ -157,7 +171,7 @@ struct GcRootGuard {
 
 // RAII equivalent of GcRootGuard for one active VM call frame.
 struct VmRootGuard {
-    explicit VmRootGuard(const GC::VmFrameRoots& roots) { GC::instance().pushVmRoots(roots); }
+    explicit VmRootGuard(GC::VmFrameRoots& roots) { GC::instance().pushVmRoots(roots); }
     ~VmRootGuard() { GC::instance().popVmRoots(); }
     VmRootGuard(const VmRootGuard&) = delete;
     VmRootGuard& operator=(const VmRootGuard&) = delete;
