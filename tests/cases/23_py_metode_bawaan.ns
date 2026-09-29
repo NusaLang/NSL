@@ -11,8 +11,10 @@ m = new_map()
 m["x"] = 1
 m["y"] = 2
 print(len(m.keys()))
+jumlah = 0
 for k in m:
-    print(k)
+    jumlah += m[k]
+print(jumlah)
 def uji():
     ys = [1, 2, 3]
     ys.append(4)
