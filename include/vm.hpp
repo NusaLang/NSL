@@ -113,6 +113,11 @@ struct VmFunction {
     // (tryCompileNativeFunc). callValue() dispatches straight to it only
     // when every argument at the call site is still Number-typed.
     void* nativeCode = nullptr;
+
+    // Per-constant cache of globals-table slots for GetGlobal, filled lazily
+    // (see Op::GetGlobal). Only used while the globals Environment has
+    // stable slot addresses.
+    mutable std::vector<Value*> globalSlots;
 };
 
 // GC-tracked one-Value box (gc.hpp), used for every VM boxed local slot

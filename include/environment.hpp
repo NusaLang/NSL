@@ -107,6 +107,10 @@ public:
         else { for (const auto& e : small_) f(e.value); }
     }
 
+    // True once slot addresses returned by find() can't move any more
+    // (hash-map mode; entries are never erased).
+    bool stableSlots() const { return large_; }
+
     Environment* parent() const { return parent_; }
     // Used by the module system (`impor`) to snapshot a loaded module's
     // top-level bindings into an exported Map value.

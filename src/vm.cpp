@@ -1117,7 +1117,14 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, std::vector<Value> loca
             case Op::GetGlobal: {
                 uint16_t idx = readU16();
                 const std::string& name = fn->constants[idx].str();
-                Value* slot = ctx.globals ? ctx.globals->find(name) : nullptr;
+                Value* slot = nullptr;
+                if (ctx.globals && ctx.globals->stableSlots()) {
+                    if (fn->globalSlots.size() != fn->constants.size()) fn->globalSlots.assign(fn->constants.size(), nullptr);
+                    slot = fn->globalSlots[idx];
+                    if (!slot) slot = fn->globalSlots[idx] = ctx.globals->find(name);
+                } else if (ctx.globals) {
+                    slot = ctx.globals->find(name);
+                }
                 if (!slot) throw VmRuntimeError("Undefined variable '" + name + "'");
                 stack.push_back(*slot);
                 break;
