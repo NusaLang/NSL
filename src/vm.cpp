@@ -279,6 +279,7 @@ public:
     std::vector<LoopCtx> loops;
     std::vector<TryFrame> tryStack;
     std::unordered_set<std::string> capturedNames;
+    bool isGen = false;  // body of a generator (`def` with yield): `__y(v)` compiles to Op::Yield
     int nextUnboxedSlot = 0;
     int nextBoxedSlot = 0;
 
@@ -583,6 +584,11 @@ public:
                         current->emitByte(static_cast<uint8_t>(n->args.size()));
                         return;
                     }
+                    if (id->name == "__y" && current->isGen && n->args.size() == 1) {
+                        compileExpr(n->args[0].get());
+                        current->emitOp(Op::Yield);
+                        return;
+                    }
                     if ((id->name == "panjang" || id->name == "length") && !isUserFn(id->name)) {
                         if (n->args.size() != 1) throw VmCompileError(id->name + "() butuh 1 argumen mode --vm");
                         compileExpr(n->args[0].get());
@@ -721,7 +727,8 @@ public:
         fn->restIndex = decl->restIndex;
         fn->kwIndex = decl->kwIndex;
         if (decl->minArgs >= 0) fn->minArity = decl->minArgs + (isMethod ? 1 : 0);
-        if (!isMethod && !decl->variadic()) {
+        fc.isGen = !isMethod && decl->params.size() == 1 && decl->params[0] == "__y";
+        if (!isMethod && !decl->variadic() && !fc.isGen) {
             JitFuncResult jf = jitDisabled() ? JitFuncResult{} : tryCompileNativeFunc(decl);
             if (jf.ok) {
                 fn->nativeCode = jf.code;
@@ -1344,8 +1351,20 @@ struct VmContext {
 // Shared empty table for frames without boxed locals (never written).
 std::vector<Cell*> g_noBoxed;
 
+// A generator's saved frame between two resumptions (see vmGenResume).
+struct GenState {
+    Value closure;  // the VmFn whose body runs
+    bool fresh = true, running = false, done = false, yielded = false;
+    std::vector<Value> saved;  // locals, then the operand stack
+    size_t nLocals = 0;
+    std::vector<Cell*> boxed;
+    size_t ip = 0, yieldOp = 0;
+    int kind = 1;
+    Value sent;
+};
+
 Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
-               std::vector<Cell*>& boxedLocals, VmContext& ctx);
+               std::vector<Cell*>& boxedLocals, VmContext& ctx, GenState* gen = nullptr);
 
 // Bounds-checks a new frame's locals region at `base` and nulls it (slots
 // above a live stack hold stale types).
@@ -1556,7 +1575,7 @@ Value callMethodSlow(Value& target, const Value& idxv, std::vector<Value>& args,
 }
 
 Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
-               std::vector<Cell*>& boxedLocals, VmContext& ctx) {
+               std::vector<Cell*>& boxedLocals, VmContext& ctx, GenState* gen) {
     if (++ctx.depth > 3000) {
         ctx.depth--;
         throw VmRuntimeError("rekursi kelewat dalam mode --vm");
@@ -1667,8 +1686,21 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
         return false;
     };
 
+    bool pendingThrow = false;
+    Value thrownVal;
+    if (gen && !gen->fresh) {  // resuming a suspended generator: put its frame back
+        for (size_t i = gen->nLocals; i < gen->saved.size(); i++) stack.push_back(std::move(gen->saved[i]));
+        ip = gen->ip;
+        if (gen->kind == 2) { pendingThrow = true; thrownVal = gen->sent; }
+        else stack.push_back(gen->sent);
+    }
     for (;;) {
     try {
+    if (pendingThrow) {  // gen.throw(): raise at the yield point so its handlers apply
+        pendingThrow = false;
+        opStart = gen->yieldOp;
+        throw VmThrown(std::move(thrownVal));
+    }
     while (true) {
         opStart = ip;
         Op op = static_cast<Op>(readByte());
@@ -2658,6 +2690,20 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 Value v = pop();
                 throw VmThrown(std::move(v));
             }
+            case Op::Yield: {
+                if (!gen) throw VmRuntimeError("yield di luar generator");
+                Value v = pop();
+                gen->saved.clear();
+                gen->saved.reserve(locals.len + stack.len);
+                for (size_t i = 0; i < locals.len; i++) gen->saved.push_back(std::move(locals.data[i]));
+                for (size_t i = 0; i < stack.len; i++) gen->saved.push_back(std::move(stack.data[i]));
+                gen->nLocals = locals.len;
+                gen->boxed = boxedLocals;
+                gen->ip = ip;
+                gen->yieldOp = opStart;
+                gen->yielded = true;
+                return v;
+            }
         }
     }
     } catch (const VmThrown& e) {
@@ -2763,6 +2809,98 @@ Value vmCallMethod(Value& target, const std::string& name, std::vector<Value>& a
     }
 }
 
+bool vmIsGenFn(const Value& fn) {
+    if (fn.type != ValueType::VmFn || !fn.vmClosure()) return false;
+    const auto& names = fn.vmClosure()->function->paramNames;
+    return names.size() == 1 && names[0] == "__y";
+}
+
+Value vmGenNew(const Value& closure) {
+    auto* g = new GenState;
+    g->closure = closure;
+    auto nf = std::make_shared<NativeFunction>();
+    nf->name = "__gen";
+    nf->fnPtr = g;
+    nf->onRelease = [g]() { delete g; };
+    nf->trace = [g](const std::function<void(const Value&)>& markV, const std::function<void(void*)>& markC) {
+        markV(g->closure);
+        markV(g->sent);
+        for (const Value& v : g->saved) markV(v);
+        for (Cell* c : g->boxed) markC(c);
+    };
+    return Value::fromNative(nf);
+}
+
+static GenState* genOf(const Value& handle) {
+    if (handle.type != ValueType::Native || !handle.native() || handle.native()->name != "__gen") {
+        throw RuntimeError("bukan generator");
+    }
+    return static_cast<GenState*>(handle.native()->fnPtr);
+}
+
+void vmGenClose(const Value& handle) {
+    GenState* g = genOf(handle);
+    if (g->running) return;
+    g->done = true;
+    g->saved.clear();
+    g->boxed.clear();
+}
+
+Value vmGenResume(const Value& handle, int kind, const Value& sent, bool* ok) {
+    GenState* g = genOf(handle);
+    *ok = false;
+    if (g->done) return Value::null();
+    if (g->running) throw RuntimeError("generator sedang berjalan");
+    if (g->fresh && kind == 2) {
+        g->done = true;
+        throw ThrownValue(sent);
+    }
+    ActiveVmState* st = g_activeVm.load(std::memory_order_acquire);
+    if (!st) throw RuntimeError("Generator VM butuh program VM yang lagi jalan");
+    VmContext ctx;
+    ctx.functions = st->functions;
+    ctx.nativeLoops = st->nativeLoops;
+    ctx.globals = st->globals;
+    ctx.interpreter = vmActiveInterpreter();
+    VmClosure* cl = g->closure.vmClosure();
+    const VmFunction* fn = cl->function;
+    Value* base = ctx.arena->top;
+    initFrameLocals(base, fn, ctx);
+    std::vector<Cell*> boxed(static_cast<size_t>(fn->numBoxedLocals));
+    g->kind = kind;
+    g->sent = sent;
+    if (g->fresh) {
+        placeParam(base, boxed, fn->paramSlots[0], Value::null());
+    } else {
+        boxed = g->boxed;
+        for (size_t i = 0; i < g->nLocals; i++) base[i] = std::move(g->saved[i]);
+    }
+    g->running = true;
+    g->yielded = false;
+    Value r;
+    try {
+        r = runFrame(fn, cl, base, boxed, ctx, g);
+    } catch (...) {
+        g->running = false;
+        g->fresh = false;
+        g->done = true;
+        g->saved.clear();
+        g->boxed.clear();
+        throw;
+    }
+    g->running = false;
+    g->fresh = false;
+    g->sent = Value::null();
+    if (g->yielded) {
+        *ok = true;
+        return r;
+    }
+    g->done = true;
+    g->saved.clear();
+    g->boxed.clear();
+    return Value::null();
+}
+
 void vmRunModule(VmProgram& program, Environment* moduleGlobals, Interpreter* interpreter) {
     if (!program.topLevel) return;
     vmBind(program, moduleGlobals);
@@ -2823,7 +2961,7 @@ int vmRun(VmProgram& program, Interpreter* interpreter) {
 namespace {
 
 constexpr uint32_t kCacheMagic = 0x4E534256; // "NSBV"
-constexpr uint32_t kCacheVersion = 10;  // 6: + MakeClass, BinLK, BinLL, GetField, SetField, CallMethodK, Throw, handlers, lines, MakeStruct, MakeEnum, MakeSuper
+constexpr uint32_t kCacheVersion = 11;  // 6: + MakeClass, BinLK, BinLL, GetField, SetField, CallMethodK, Throw, handlers, lines, MakeStruct, MakeEnum, MakeSuper
 
 void writeU32(std::ofstream& f, uint32_t v) { f.write(reinterpret_cast<const char*>(&v), sizeof(v)); }
 void writeI32(std::ofstream& f, int32_t v) { f.write(reinterpret_cast<const char*>(&v), sizeof(v)); }

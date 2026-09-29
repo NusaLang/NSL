@@ -91,6 +91,9 @@ StmtPtr Parser::statement() {
     else if (check(TokenType::At)) {
         result = decoratedStmt();
     }
+    else if (isWord(peek(), "yield") && isWord(peekAt(1), "from", "dari")) {
+        result = yieldFromStmt(start);
+    }
     else if (isWord(peek(), "with", "dengan") && peekAt(1).type != TokenType::Eq && peekAt(1).type != TokenType::LParen) {
         advance();
         result = withStmt();
@@ -871,13 +874,7 @@ ExprPtr Parser::parseSingleExpression() {
     return expr;
 }
 
-ExprPtr Parser::expression() {
-    if (check(TokenType::Ident) && peek().text == "yield" && peekAt(1).type != TokenType::Eq &&
-        peekAt(1).type != TokenType::Dot) {
-        return yieldExpr();
-    }
-    return assignment();
-}
+ExprPtr Parser::expression() { return assignment(); }
 
 void Parser::injectGeneratorRuntime(Program& program) {
         Span sp{};
@@ -888,8 +885,27 @@ void Parser::injectGeneratorRuntime(Program& program) {
             get->span = sp;
             return get;
         };
-        program.statements.insert(program.statements.begin(), mkLet("_yf", pick("yf"), sp));
         program.statements.insert(program.statements.begin(), mkLet("_mkgen", pick("mk"), sp));
+}
+
+// yield from it  ->  for __yv in it: __y(__yv)
+StmtPtr Parser::yieldFromStmt(Span start) {
+    advance();
+    advance();
+    usesGen_ = true;
+    if (!yieldStack_.empty()) yieldStack_.back() = true;
+    ExprPtr it = expression();
+    expectEnd(i18n::tr("';' diharapkan setelah 'yield from'", "Expected ';' after 'yield from'"));
+    std::string v = "__yv" + std::to_string(hiddenCounter_++);
+    std::vector<ExprPtr> ya;
+    ya.push_back(mkIdent(v, start));
+    std::vector<StmtPtr> bodyStmts;
+    StmtPtr call = std::make_unique<ExprStmtNode>(mkCall("__y", std::move(ya), start));
+    call->span = start;
+    bodyStmts.push_back(std::move(call));
+    auto body = std::make_unique<BlockStmt>(std::move(bodyStmts));
+    body->span = start;
+    return buildForIn({v}, std::move(it), std::move(body), start);
 }
 
 // `yield v` / `yield from it` / bare `yield`: calls to the generator's own `__y` callback.
@@ -899,10 +915,7 @@ ExprPtr Parser::yieldExpr() {
     if (!yieldStack_.empty()) yieldStack_.back() = true;
     std::vector<ExprPtr> a;
     if (isWord(peek(), "from", "dari")) {
-        advance();
-        a.push_back(mkIdent("__y", sp));
-        a.push_back(expression());
-        return mkCall("_yf", std::move(a), sp);
+        throw ParseError(i18n::tr("'yield from' cuma boleh sebagai pernyataan sendiri", "'yield from' is only allowed as a statement"), peek());
     }
     ExprPtr v;
     TokenType t = peek().type;
@@ -929,6 +942,10 @@ ExprPtr Parser::yieldExpr() {
 
 ExprPtr Parser::assignment() {
     Span start = peek().span;
+    if (check(TokenType::Ident) && peek().text == "yield" && peekAt(1).type != TokenType::Eq &&
+        peekAt(1).type != TokenType::Dot) {
+        return yieldExpr();
+    }
     ExprPtr expr = logicOr();
 
     // Python conditional expression: `a if cond else b` (the `if` must be on the same line).

@@ -290,7 +290,7 @@ bool isRegularFile(const std::string& path) {
 const std::vector<std::string>& builtinNames() {
     static const std::vector<std::string> names = {
         "cetak", "panjang", "tambah", "hapus_akhir", "potong", "gabung", "pisah",
-        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "iter", "next", "pegang", "_peta", "_in", "_callkw", "_callkwm", "_close", "_go",
+        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "iter", "next", "_gennew", "_genresume", "_genclose", "_isvmgen", "pegang", "_peta", "_in", "_callkw", "_callkwm", "_close", "_go",
         "base64_encode", "base64_decode",
         "baca_file", "tulis_file", "file_ada",
         "tcp_konek", "tcp_kirim", "tcp_terima", "tcp_tutup",
@@ -1535,6 +1535,28 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         return m;
     }
 
+    if (name == "_isvmgen") {
+        need(1);
+        return Value::fromBool(vmIsGenFn(args[0]));
+    }
+    if (name == "_gennew") {
+        need(1);
+        return vmGenNew(args[0]);
+    }
+    if (name == "_genclose") {
+        need(1);
+        vmGenClose(args[0]);
+        return Value::null();
+    }
+    if (name == "_genresume") {  // (handle, kind, sent) -> [ok, value]
+        need(3);
+        bool ok = false;
+        Value v = vmGenResume(args[0], static_cast<int>(args[1].number), args[2], &ok);
+        auto pair = std::make_shared<std::vector<Value>>();
+        pair->push_back(Value::fromBool(ok));
+        if (ok) pair->push_back(std::move(v));
+        return Value::fromArray(pair);
+    }
     if (name == "iter") {
         need(1);
         Value r;

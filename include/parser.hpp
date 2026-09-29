@@ -63,6 +63,7 @@ private:
     std::vector<bool> yieldStack_;  // per enclosing function: did its body contain `yield`?
     bool usesGen_ = false;          // any generator in this file -> import the __gen runtime
     ExprPtr yieldExpr();
+    StmtPtr yieldFromStmt(Span start);
     void injectGeneratorRuntime(Program& program);
     // Extra statements a single source statement expands into (`from m import a, b`);
     // parse() and block() splice them in right after the statement that made them.

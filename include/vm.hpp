@@ -72,6 +72,7 @@ enum class Op : uint8_t {
     MakeStruct,   // name16 count16 field16*: pushes a struct class
     MakeEnum,     // name16 count16 variant16*: pushes the enum's name->value map
     MakeSuper,    // pops an instance, pushes the same fields seen as the owner's parent class
+    Yield,        // pops a value, suspends the generator frame and hands the value to the consumer
 };
 
 struct NativeLoopDesc {
@@ -221,6 +222,15 @@ private:
         return "Error dilempar: " + v.stringify();
     }
 };
+
+// Native generators (a `def` with `yield`): the frame is saved on `yield` and resumed on demand,
+// so a generator costs no thread. `handle` comes from vmGenNew.
+bool vmIsGenFn(const Value& fn);
+Value vmGenNew(const Value& closure);
+// kind 1: resume with `sent` as the yield's value; 2: resume by raising `sent` at the yield.
+// Returns the yielded value with *ok = true, or *ok = false once the generator has finished.
+Value vmGenResume(const Value& handle, int kind, const Value& sent, bool* ok);
+void vmGenClose(const Value& handle);
 
 int vmRun(VmProgram& program, class Interpreter* interpreter = nullptr);
 

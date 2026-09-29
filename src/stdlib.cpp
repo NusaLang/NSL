@@ -503,6 +503,24 @@ class Generator(Iter):
     def __iter__(self):
         return self
 
+class VmGenerator(Iter):
+    def __init__(self, body):
+        self._h = _gennew(body)
+    def _nx(self):
+        return _genresume(self._h, 1, None)
+    def send(self, v):
+        r = _genresume(self._h, 1, v)
+        if r[0]:
+            return r[1]
+        raise "StopIteration"
+    def throw_(self, err):
+        r = _genresume(self._h, 2, err)
+        if r[0]:
+            return r[1]
+        raise "StopIteration"
+    def close(self):
+        _genclose(self._h)
+
 class ListIter(Iter):
     def __init__(self, items):
         self._items = items
@@ -556,10 +574,9 @@ class NextIter(Iter):
 def adapt(obj):
     return NextIter(obj)
 def mk(body):
+    if _isvmgen(body):
+        return VmGenerator(body)
     return Generator(body)
-def yf(y, it):
-    for v in it:
-        y(v)
 def listiter(items):
     return ListIter(items)
 def calliter(fn, sentinel):

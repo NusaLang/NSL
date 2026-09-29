@@ -143,6 +143,8 @@ void GC::markValue(const Value& v) {
         for (ClassInfo* c = v.instance()->classInfo.get(); c; c = c->parent.get()) {
             for (const auto& [name, fn] : c->methods) markEnv(fn->closure);
         }
+    } else if (v.type == ValueType::Native && v.native() && v.native()->trace) {
+        v.native()->trace([this](const Value& x) { markValue(x); }, [this](void* c) { markCell(static_cast<Cell*>(c)); });
     } else if (v.type == ValueType::VmFn && v.vmClosure()) {
         for (Cell* c : v.vmClosure()->upvalues) markCell(c);
     } else if (v.type == ValueType::VmArray && v.vmArray()) {

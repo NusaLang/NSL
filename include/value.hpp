@@ -54,6 +54,8 @@ struct NativeFunction {
     // Runs when the last reference goes away (pegang(): frees a Go handle once the
     // NSL object wrapping it is garbage).
     std::function<void()> onRelease;
+    // Values / boxed cells this handle keeps alive (a suspended generator's frame); the GC calls it.
+    std::function<void(const std::function<void(const Value&)>&, const std::function<void(void*)>&)> trace;
     NativeFunction() = default;
     NativeFunction(const NativeFunction&) = delete;
     NativeFunction& operator=(const NativeFunction&) = delete;
