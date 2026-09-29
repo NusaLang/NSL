@@ -43,6 +43,15 @@ private:
     StmtPtr ifStmt();
     StmtPtr whileStmt();
     StmtPtr forStmt();
+    StmtPtr forInStmt(Span start);  // Python-style `for x in <iterable>`
+    StmtPtr importStmt();           // `import a.b [as c]`
+    StmtPtr fromImportStmt();       // `from a.b import x [as y], ...`
+    bool isWord(const Token& t, const char* a, const char* b = nullptr) const;
+    bool matchWord(const char* a, const char* b = nullptr);
+    int hiddenCounter_ = 0;
+    // Extra statements a single source statement expands into (`from m import a, b`);
+    // parse() and block() splice them in right after the statement that made them.
+    std::vector<StmtPtr> pendingStmts_;
     StmtPtr returnStmt();
     StmtPtr breakStmt();
     StmtPtr continueStmt();

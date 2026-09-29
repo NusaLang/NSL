@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "i18n.hpp"
 #include "lexer.hpp"  // for Span
 #include "value.hpp"
 
@@ -54,6 +55,26 @@ private:
     size_t totalFrames_ = 0;
     Span span_{};
     bool located_ = false;
+};
+
+// A `lempar`-thrown value travelling as a RuntimeError, so both the
+// tree-walker and the VM can catch it and hand the original value to `tangkap`.
+inline std::string thrownValueMessage(const Value& v) {
+    if (v.type == ValueType::Map) {
+        auto it = v.map()->find("pesan");
+        if (it != v.map()->end() && it->second.type == ValueType::String) return it->second.str();
+    }
+    if (v.type == ValueType::String) return v.str();
+    return i18n::tr("Error dilempar: ", "Thrown error: ") + v.stringify();
+}
+
+class ThrownValue : public RuntimeError {
+public:
+    explicit ThrownValue(Value v) : RuntimeError(thrownValueMessage(v)), value_(std::move(v)) {}
+    const Value& value() const { return value_; }
+
+private:
+    Value value_;
 };
 
 class GC;

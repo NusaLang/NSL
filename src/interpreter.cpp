@@ -1,4 +1,5 @@
 #include "interpreter.hpp"
+#include "methods.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -49,23 +50,6 @@ namespace {
 enum : int { kPendNone = 0, kPendReturn, kPendBreak, kPendContinue };
 static thread_local int g_pending = kPendNone;
 static thread_local Value g_retVal;
-
-std::string thrownValueMessage(const Value& v) {
-    if (v.type == ValueType::Map) {
-        auto it = v.map()->find("pesan");
-        if (it != v.map()->end() && it->second.type == ValueType::String) return it->second.str();
-    }
-    if (v.type == ValueType::String) return v.str();
-    return i18n::tr("Error dilempar: ", "Thrown error: ") + v.stringify();
-}
-
-class ThrownValue : public RuntimeError {
-public:
-    explicit ThrownValue(Value v) : RuntimeError(thrownValueMessage(v)), value_(std::move(v)) {}
-    const Value& value() const { return value_; }
-private:
-    Value value_;
-};
 
 // RAII tracker for Interpreter::exprDepth_ -- see interpreter.hpp and
 // gc.hpp for why the GC needs to know whether we're mid-expression.
@@ -295,6 +279,7 @@ const std::vector<std::string>& builtinNames() {
         "gc_info", "gc_paksa", "impor",
         "byte_di", "teks_dari",
         "elemen", "teks", "baca_input", "input",
+        "rentang", "__iter",
     };
     return names;
 }
@@ -322,6 +307,8 @@ const std::vector<std::pair<std::string, std::string>>& builtinAliases() {
         {"jwt_create", "jwt_buat"}, {"jwt_verify", "jwt_verifikasi"},
         {"select", "pilih_kanal"},
         {"load_plugin", "muat_plugin"},
+        {"len", "panjang"}, {"str", "ke_teks"}, {"float", "ke_angka"}, {"int", "ke_angka"},
+        {"append", "tambah"}, {"range", "rentang"},
     };
     return aliases;
 }
@@ -693,7 +680,21 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
                     Value fieldVal = fit != target.instance()->fields->end() ? fit->second : Value::null();
                     return callValue(fieldVal, args, node->span);
                 }
-                Value callee = indexGet(target, eval(idxNode->index.get(), env));
+                Value keyVal = eval(idxNode->index.get(), env);
+                ValueRootGuard keyGuard(keyVal);
+                if (keyVal.type == ValueType::String) {
+                    bool receiverLast = false;
+                    if (const char* builtin = builtinMethodName(target, keyVal.str(), &receiverLast)) {
+                        std::vector<Value> args;
+                        args.reserve(node->args.size() + 1);
+                        ValueVectorRootGuard argsGuard(args);
+                        if (!receiverLast) args.push_back(target);
+                        for (const auto& a : node->args) args.push_back(eval(a.get(), env));
+                        if (receiverLast) args.push_back(target);  // sep.join(list) == gabung(list, sep)
+                        return callBuiltin(builtin, args);
+                    }
+                }
+                Value callee = indexGet(target, keyVal);
                 ValueRootGuard calleeGuard(callee);
                 std::vector<Value> args;
                 args.reserve(node->args.size());
@@ -1584,6 +1585,41 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         return Value::fromString(std::string(1, static_cast<char>(static_cast<unsigned char>(b))));
     }
 
+    // range(stop) / range(start, stop[, step]) as an array of numbers. The
+    // parser turns `for i in range(...)` into a counting loop, so this is
+    // only for range() used as a plain value.
+    if (name == "rentang") {
+        if (args.empty() || args.size() > 3) {
+            throw RuntimeError(i18n::tr("rentang() butuh 1 sampai 3 argumen", "range() expects 1 to 3 arguments"));
+        }
+        for (const auto& a : args) expectType(a, ValueType::Number);
+        double start = args.size() >= 2 ? args[0].number : 0.0;
+        double stop = args.size() >= 2 ? args[1].number : args[0].number;
+        double step = args.size() == 3 ? args[2].number : 1.0;
+        if (step == 0) throw RuntimeError(i18n::tr("rentang(): langkah nggak boleh 0", "range(): step must not be 0"));
+        auto out = std::make_shared<std::vector<Value>>();
+        for (double v = start; step > 0 ? v < stop : v > stop; v += step) {
+            out->push_back(Value::fromNumber(v));
+            if (out->size() > 100000000) throw RuntimeError(i18n::tr("rentang(): kegedean", "range(): too large"));
+        }
+        return Value::fromArray(out);
+    }
+
+    // What `for x in <expr>` walks: arrays and strings as they are, maps as
+    // their key list.
+    if (name == "__iter") {
+        need(1);
+        const Value& v = args[0];
+        if (v.type == ValueType::Array || v.type == ValueType::VmArray || v.type == ValueType::String) return v;
+        if (v.type == ValueType::Map) {
+            auto keys = std::make_shared<std::vector<Value>>();
+            for (const auto& [k, val] : *v.map()) keys->push_back(Value::fromString(k));
+            return Value::fromArray(keys);
+        }
+        throw RuntimeError(i18n::tr("Nilai bertipe '", "A value of type '") + std::string(v.typeName()) +
+                            i18n::tr("' nggak bisa diiterasi", "' can't be iterated"));
+    }
+
     if (name == "peta_kunci") {
         need(1);
         expectType(args[0], ValueType::Map);
@@ -1894,13 +1930,19 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
 // ---- module system ----
 
 namespace {
-std::string tryModulesDirAt(const std::string& dir, const std::string& rawPath) {
-    std::string base = dir.empty() ? ("nusantara_modules/" + rawPath)
-                                    : (dir + "/nusantara_modules/" + rawPath);
+// `base` as a module: the file itself, base.ns, or a package directory with
+// __init__.ns (Python) / index.ns (older nusantara_modules layout).
+std::string resolveModuleAt(const std::string& base) {
     if (isRegularFile(base)) return base;
     if (std::ifstream(base + ".ns").good()) return base + ".ns";
+    if (std::ifstream(base + "/__init__.ns").good()) return base + "/__init__.ns";
     if (std::ifstream(base + "/index.ns").good()) return base + "/index.ns";
     return "";
+}
+
+std::string tryModulesDirAt(const std::string& dir, const std::string& rawPath) {
+    return resolveModuleAt(dir.empty() ? ("nusantara_modules/" + rawPath)
+                                        : (dir + "/nusantara_modules/" + rawPath));
 }
 
 std::string toAbsoluteDir(const std::string& dir) {
@@ -1920,7 +1962,9 @@ Value Interpreter::doImport(const std::string& rawPath) {
 
     if (!isExplicitRelativeOrAbs) {
         std::string dir = toAbsoluteDir(importDirStack_.empty() ? "." : importDirStack_.back());
-        while (true) {
+        // Python-style: a sibling module or package next to the importing file wins.
+        path = resolveModuleAt(dir + "/" + rawPath);
+        while (path.empty()) {
             std::string found = tryModulesDirAt(dir, rawPath);
             if (!found.empty()) { path = found; break; }
             if (dir.empty() || dir == "/") break;
@@ -1930,12 +1974,7 @@ Value Interpreter::doImport(const std::string& rawPath) {
         }
         if (path.empty()) {
             std::string globalDir = sysplugin::globalModulesDir();
-            if (!globalDir.empty()) {
-                std::string gPath = globalDir + "/" + rawPath;
-                if (isRegularFile(gPath)) path = gPath;
-                else if (std::ifstream(gPath + ".ns").good()) path = gPath + ".ns";
-                else if (std::ifstream(gPath + "/index.ns").good()) path = gPath + "/index.ns";
-            }
+            if (!globalDir.empty()) path = resolveModuleAt(globalDir + "/" + rawPath);
         }
     }
 

@@ -1,0 +1,50 @@
+# program gaya Python
+def fib(n):
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+total = 0
+for i in range(10):
+    total += fib(i)
+print("total:", total)
+
+class Hewan:
+    def __init__(self, nama, kaki):
+        self.nama = nama
+        self.kaki = kaki
+
+    def info(self):
+        return self.nama + ":" + str(self.kaki)
+
+class Anjing(Hewan):
+    def bicara(self):
+        return self.nama + " menggonggong"
+
+a = Anjing("Rex", 4)
+print(a.info())
+print(a.bicara())
+
+for ch in "abc":
+    print(ch)
+
+def hitung(xs):
+    s = 0
+    for x in xs:
+        if x % 2 == 0:
+            s += x
+        elif x == 3:
+            s += 100
+        else:
+            pass
+    return s
+
+print(hitung([1, 2, 3, 4, 5, 6]))
+n = 3
+while n > 0 and not n == 99:
+    n -= 1
+print(n)
+try:
+    raise "boom"
+except e:
+    print("kena:", e)

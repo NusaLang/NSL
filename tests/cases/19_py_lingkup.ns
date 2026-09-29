@@ -1,0 +1,39 @@
+counter = 0
+def naik():
+    global counter
+    counter += 1
+    return counter
+
+naik()
+naik()
+print("counter:", counter)
+
+def cari(xs, target):
+    for x in xs:
+        if x == target:
+            ketemu = True
+            break
+    else_flag = 1
+    return ketemu
+
+print(cari([1, 2, 3], 2))
+
+def luar():
+    total = 0
+    def dalam(k):
+        return k * 2
+    for i in range(1, 4):
+        total = total + dalam(i)
+    return total
+print(luar())
+
+if counter == 2: print("dua")
+else: print("bukan dua")
+
+def cepat(x): return x + 1
+print(cepat(41))
+
+x = [1,
+     2,
+     3]
+print(len(x))

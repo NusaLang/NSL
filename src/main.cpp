@@ -210,7 +210,8 @@ int runFile(const std::string& path) {
                 return 1;
             }
         } catch (const VmCompileError& e) {
-            // fallback to tree-walking
+            // Fall back to the (much slower) tree-walking interpreter.
+            if (std::getenv("NUSA_VM_DEBUG")) std::cerr << "[vm] fallback ke tree-walker: " << e.what() << "\n";
         }
 
         Interpreter interpreter(dirOf(path));

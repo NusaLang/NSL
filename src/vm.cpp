@@ -15,7 +15,18 @@
 #include "gil.hpp"
 #include "i18n.hpp"
 #include "interpreter.hpp"
+#include "methods.hpp"
 #include "jit.hpp"
+
+// Name of the function whose frame an in-flight error just left; the caller's
+// handler turns it into a "di dalam fungsi" trace line.
+static thread_local std::string g_unwoundFn;
+
+// An interpreter error surfacing inside the VM keeps a thrown value intact.
+[[noreturn]] static void rethrowAsVm(const RuntimeError& e) {
+    if (auto* tv = dynamic_cast<const ThrownValue*>(&e)) throw VmThrown(tv->value());
+    throw VmRuntimeError(e.what());
+}
 
 void ValueWindow::overflow() { throw VmRuntimeError("rekursi kelewat dalam mode --vm"); }
 
@@ -178,6 +189,17 @@ struct LoopCtx {
     std::vector<int> continueJumps;
 };
 
+// A `coba` statement being compiled. While it is on FnCompiler::tryStack, code
+// emitted is protected by its handler; `ranges` are the closed protected
+// stretches (split around inline copies of `akhir` blocks, which must not be
+// caught by the statement they belong to).
+struct TryFrame {
+    uint32_t curStart = 0;
+    std::vector<std::pair<uint32_t, uint32_t>> ranges;
+    const BlockStmt* finallyBlock = nullptr;
+    size_t loopDepth = 0;  // loops.size() when the statement began
+};
+
 class FnCompiler {
 public:
     FnCompiler(FnCompiler* enclosing_, VmFunction* fn_) : enclosing(enclosing_), fn(fn_) {}
@@ -187,6 +209,7 @@ public:
     std::vector<Local> locals;
     int scopeDepth = 0;
     std::vector<LoopCtx> loops;
+    std::vector<TryFrame> tryStack;
     std::unordered_set<std::string> capturedNames;
     int nextUnboxedSlot = 0;
     int nextBoxedSlot = 0;
@@ -230,8 +253,16 @@ public:
         while (!locals.empty() && locals.back().depth > scopeDepth) locals.pop_back();
     }
 
+    uint32_t lastOp = 0;  // ip of the most recently emitted opcode
+    void markLine(const Span& sp) {
+        if (sp.line > 0) fn->lines.push_back({lastOp, sp.line, sp.column});
+    }
+
     void emitByte(uint8_t b) { fn->code.push_back(b); }
-    void emitOp(Op op) { emitByte(static_cast<uint8_t>(op)); }
+    void emitOp(Op op) {
+        lastOp = static_cast<uint32_t>(fn->code.size());
+        emitByte(static_cast<uint8_t>(op));
+    }
     void emitU16(uint16_t v) {
         emitByte(static_cast<uint8_t>(v & 0xFF));
         emitByte(static_cast<uint8_t>((v >> 8) & 0xFF));
@@ -381,7 +412,15 @@ public:
         return true;
     }
 
+    // The op a node ends with is the one that can fail, so it carries the node's
+    // position (innermost node first, like the tree-walker's error locations).
     void compileExpr(const Expr* e) {
+        size_t before = current->fn->code.size();
+        compileExprInner(e);
+        if (current->fn->code.size() != before) current->markLine(e->span);
+    }
+
+    void compileExprInner(const Expr* e) {
         switch (e->kind) {
             case ExprKind::Literal: {
                 auto* n = static_cast<const LiteralExpr*>(e);
@@ -695,6 +734,114 @@ public:
         return static_cast<int>(program.nativeLoops.size()) - 1;
     }
 
+    // ---- coba / tangkap / akhir ----
+    uint32_t here() const { return static_cast<uint32_t>(current->fn->code.size()); }
+
+    static void closeRange(TryFrame& f, uint32_t at) {
+        if (at > f.curStart) f.ranges.push_back({f.curStart, at});
+    }
+
+    // Index of the first active try statement that began inside the innermost loop.
+    size_t firstTryInsideLoop() const {
+        auto& ts = current->tryStack;
+        size_t j = 0;
+        while (j < ts.size() && ts[j].loopDepth < current->loops.size()) j++;
+        return j;
+    }
+
+    void compileFinallyCopy(const BlockStmt* block) {
+        current->beginScope();
+        compileBlock(block);
+        current->endScope();
+    }
+
+    // For a return/break/continue that leaves try statements tryStack[fromIndex..]:
+    // run their `akhir` blocks, innermost first, right here. The copies sit outside
+    // the ranges of the statements being left (an exception in `akhir` must not be
+    // caught by its own `coba`), but inside those of the ones that stay active.
+    void emitInlineFinallies(size_t fromIndex) {
+        auto& ts = current->tryStack;
+        if (fromIndex >= ts.size()) return;
+        bool any = false;
+        for (size_t k = fromIndex; k < ts.size(); k++) any = any || ts[k].finallyBlock != nullptr;
+        if (!any) return;
+        std::vector<TryFrame> leaving(std::make_move_iterator(ts.begin() + static_cast<std::ptrdiff_t>(fromIndex)),
+                                      std::make_move_iterator(ts.end()));
+        ts.erase(ts.begin() + static_cast<std::ptrdiff_t>(fromIndex), ts.end());
+        for (auto& f : leaving) closeRange(f, here());
+        for (size_t k = leaving.size(); k-- > 0;) {
+            if (leaving[k].finallyBlock) compileFinallyCopy(leaving[k].finallyBlock);
+        }
+        for (auto& f : leaving) {
+            f.curStart = here();
+            ts.push_back(std::move(f));
+        }
+    }
+
+    void compileTry(const TryStmt* n) {
+        FnCompiler& fc = *current;
+        bool hasFinally = n->finallyBlock != nullptr;
+
+        // -- body, protected by the `tangkap` handler --
+        TryFrame body;
+        body.curStart = here();
+        body.finallyBlock = n->finallyBlock.get();
+        body.loopDepth = fc.loops.size();
+        fc.tryStack.push_back(std::move(body));
+        fc.beginScope();
+        compileBlock(n->tryBlock.get());
+        fc.endScope();
+        closeRange(fc.tryStack.back(), here());
+        TryFrame bodyDone = std::move(fc.tryStack.back());
+        fc.tryStack.pop_back();
+
+        // normal exit: finally, then skip the handler
+        if (hasFinally) compileFinallyCopy(n->finallyBlock.get());
+        int jumpEnd = fc.emitJump(Op::Jump);
+
+        // -- `tangkap`: the thrown value is on the stack --
+        uint32_t catchIp = here();
+        for (auto& r : bodyDone.ranges) fc.fn->handlers.push_back({r.first, r.second, catchIp});
+
+        if (hasFinally) {
+            TryFrame cf;
+            cf.curStart = here();
+            cf.finallyBlock = n->finallyBlock.get();
+            cf.loopDepth = fc.loops.size();
+            fc.tryStack.push_back(std::move(cf));
+        }
+        fc.beginScope();
+        int li = fc.addLocal(n->catchVar);
+        const Local& l = fc.locals[static_cast<size_t>(li)];
+        fc.emitOp(l.boxed ? Op::DefineBoxedLocal : Op::DefineLocal);
+        fc.emitU16(static_cast<uint16_t>(l.slot));
+        compileBlock(n->catchBlock.get());
+        fc.endScope();
+
+        if (hasFinally) {
+            closeRange(fc.tryStack.back(), here());
+            TryFrame catchDone = std::move(fc.tryStack.back());
+            fc.tryStack.pop_back();
+            compileFinallyCopy(n->finallyBlock.get());  // catch finished normally
+            int jumpEnd2 = fc.emitJump(Op::Jump);
+            // `tangkap` itself threw: run `akhir`, then keep propagating.
+            uint32_t rethrowIp = here();
+            for (auto& r : catchDone.ranges) fc.fn->handlers.push_back({r.first, r.second, rethrowIp});
+            fc.beginScope();
+            int ti = fc.addLocal("$exc");
+            const Local& tl = fc.locals[static_cast<size_t>(ti)];
+            fc.emitOp(Op::DefineLocal);
+            fc.emitU16(static_cast<uint16_t>(tl.slot));
+            compileFinallyCopy(n->finallyBlock.get());
+            fc.emitOp(Op::GetLocal);
+            fc.emitU16(static_cast<uint16_t>(tl.slot));
+            fc.emitOp(Op::Throw);
+            fc.endScope();
+            fc.patchJump(jumpEnd2);
+        }
+        fc.patchJump(jumpEnd);
+    }
+
     void compileStmt(const Stmt* s, bool topLevel) {
         switch (s->kind) {
             case StmtKind::Let: {
@@ -817,22 +964,21 @@ public:
             }
             case StmtKind::Return: {
                 auto* n = static_cast<const ReturnStmt*>(s);
-                if (n->value) {
-                    compileExpr(n->value.get());
-                    current->emitOp(Op::Return);
-                } else {
-                    current->emitOp(Op::ReturnNull);
-                }
+                if (n->value) compileExpr(n->value.get());
+                emitInlineFinallies(0);  // leaving every enclosing `coba ... akhir`
+                current->emitOp(n->value ? Op::Return : Op::ReturnNull);
                 return;
             }
             case StmtKind::Break: {
                 if (current->loops.empty()) throw VmCompileError("'berhenti' di luar loop");
+                emitInlineFinallies(firstTryInsideLoop());
                 int j = current->emitJump(Op::Jump);
                 current->loops.back().breakJumps.push_back(j);
                 return;
             }
             case StmtKind::Continue: {
                 if (current->loops.empty()) throw VmCompileError("'lanjut' di luar loop");
+                emitInlineFinallies(firstTryInsideLoop());
                 int j = current->emitJump(Op::Jump);
                 current->loops.back().continueJumps.push_back(j);
                 return;
@@ -848,9 +994,13 @@ public:
             case StmtKind::EnumDecl:
                 throw VmCompileError("jenis belum didukung mode --vm");
             case StmtKind::Try:
-                throw VmCompileError("coba/tangkap belum didukung mode --vm");
+                compileTry(static_cast<const TryStmt*>(s));
+                return;
             case StmtKind::Throw:
-                throw VmCompileError("lempar belum didukung mode --vm");
+                compileExpr(static_cast<const ThrowStmt*>(s)->value.get());
+                current->emitOp(Op::Throw);
+                current->markLine(s->span);
+                return;
         }
     }
 
@@ -1059,7 +1209,7 @@ Value vmConstruct(const Value& callee, std::vector<Value>& args, VmContext& ctx)
         try {
             return ctx.interpreter->callValue(callee, args, Span{0, 0, 0});
         } catch (const RuntimeError& e) {
-            throw VmRuntimeError(e.what());
+            rethrowAsVm(e);
         }
     };
     if (ci->isStruct || ci->isEnum) return viaInterpreter();
@@ -1081,7 +1231,7 @@ Value vmConstruct(const Value& callee, std::vector<Value>& args, VmContext& ctx)
             try {
                 ctx.interpreter->callFunction(f, args, Span{0, 0, 0}, &inst, owner);
             } catch (const RuntimeError& e) {
-                throw VmRuntimeError(e.what());
+                rethrowAsVm(e);
             }
             return inst;
         }
@@ -1100,7 +1250,7 @@ Value callValue(const Value& callee, std::vector<Value>& args, VmContext& ctx) {
         try {
             return ctx.interpreter->callValue(callee, args, Span{0, 0, 0});
         } catch (const RuntimeError& e) {
-            throw VmRuntimeError(e.what());
+            rethrowAsVm(e);
         }
     }
     VmClosure* closure = callee.vmClosure();
@@ -1173,12 +1323,25 @@ Value callMethodSlow(Value& target, const Value& idxv, std::vector<Value>& args,
             try {
                 return ctx.interpreter->callFunction(method, args, Span{0, 0, 0}, &target, owner);
             } catch (const RuntimeError& e) {
-                throw VmRuntimeError(e.what());
+                rethrowAsVm(e);
             }
         }
         auto fit = target.instance()->fields->find(idxv.str());
         Value fieldVal = fit != target.instance()->fields->end() ? fit->second : Value::null();
         return callValue(fieldVal, args, ctx);
+    }
+    if (idxv.type == ValueType::String) {
+        bool receiverLast = false;
+        if (const char* builtin = builtinMethodName(target, idxv.str(), &receiverLast)) {
+            if (!ctx.interpreter) throw VmRuntimeError("Method bawaan butuh interpreter context");
+            if (receiverLast) args.push_back(target);  // sep.join(list) == gabung(list, sep)
+            else args.insert(args.begin(), target);
+            try {
+                return ctx.interpreter->callBuiltin(builtin, args);
+            } catch (const RuntimeError& e) {
+                rethrowAsVm(e);
+            }
+        }
     }
     Value callee = vmGetIndex(target, idxv);
     return callValue(callee, args, ctx);
@@ -1247,7 +1410,58 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
 
     // The VM loop otherwise has no GC safepoint at all (unlike execBlock's
     // per-statement check) -- see ctx.gcTick at Op::Call / Op::Loop.
+    // Exception routing: an error raised while running an instruction covered by
+    // one of this function's handlers resumes at the handler with the thrown
+    // value on an empty operand stack (statements never run with values pending).
+    size_t opStart = 0;  // start of the instruction being executed
+    auto routeException = [&](Value thrown) -> bool {
+        if (fn->handlers.empty()) return false;
+        uint32_t at = static_cast<uint32_t>(opStart);
+        for (const VmHandler& h : fn->handlers) {
+            if (h.start <= at && at < h.end) {
+                stack.resize(0);
+                stack.push_back(std::move(thrown));
+                ip = h.target;
+                return true;
+            }
+        }
+        return false;
+    };
+    auto errorMap = [](const char* what) {
+        auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+        (*m)["pesan"] = Value::fromString(what);
+        return Value::fromMap(m);
+    };
+
+    // Errors leave a frame as RuntimeError/ThrownValue carrying the source
+    // position and a "di dalam fungsi ..." frame per VM call they crossed --
+    // the same text the tree-walker produces, so `tangkap` and the top-level
+    // report look identical whichever engine ran the code.
+    auto locate = [&]() {
+        for (const VmLine& l : fn->lines) {
+            if (l.ip == opStart) return Span{0, 0, l.line, l.col};
+        }
+        return Span{0, 0, 0, 0};
+    };
+    auto unwind = [&](auto& err, bool isThrown, const Value& thrownVal) -> bool {
+        Span here = locate();
+        if (here.line > 0) err.attachLocation(here);
+        if (!g_unwoundFn.empty()) {  // came out of a callee frame: record that call
+            err.addFrame(g_unwoundFn, here);
+            g_unwoundFn.clear();
+        }
+        if (routeException(isThrown ? thrownVal : errorMap(err.what()))) return true;
+        if (!fn->name.empty() && fn->name[0] != '<') {
+            size_t dot = fn->name.find_last_of('.');
+            g_unwoundFn = dot == std::string::npos ? fn->name : fn->name.substr(dot + 1);
+        }
+        return false;
+    };
+
+    for (;;) {
+    try {
     while (true) {
+        opStart = ip;
         Op op = static_cast<Op>(readByte());
     redispatch:
         switch (op) {
@@ -1628,6 +1842,17 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 uint16_t nameIdx = readU16();
                 uint8_t argCount = readByte();
                 if ((++ctx.gcTick & 0x3F) == 0) GC::instance().collectIfNeeded();
+                // `xs.append(v)` on an array is exactly Op::Push ([array][value] on the stack).
+                if (argCount == 1 && stack.len >= 2) {
+                    ValueType tt = stack.data[stack.len - 2].type;
+                    if (tt == ValueType::VmArray || tt == ValueType::Array) {
+                        const std::string& nm = fn->constants[nameIdx].str();
+                        if (nm == "append" || nm == "tambah") {
+                            op = Op::Push;
+                            goto redispatch;
+                        }
+                    }
+                }
                 // Stack is [obj][args...]; same direct-frame fast path as
                 // CallMethod, with the method found via a per-site class cache.
                 if (stack.len >= static_cast<size_t>(argCount) + 1) {
@@ -1743,7 +1968,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 try {
                     stack.push_back(ctx.interpreter->doImport(val.str()));
                 } catch (const RuntimeError& e) {
-                    throw VmRuntimeError(e.what());
+                    rethrowAsVm(e);
                 }
                 break;
             }
@@ -2115,7 +2340,25 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
             case Op::ReturnNull: {
                 return Value::null();
             }
+            case Op::Throw: {
+                Value v = pop();
+                throw VmThrown(std::move(v));
+            }
         }
+    }
+    } catch (const VmThrown& e) {
+        ThrownValue tv(e.value);
+        if (!unwind(tv, true, tv.value())) throw tv;
+    } catch (const VmRuntimeError& e) {
+        RuntimeError re(e.what());
+        if (!unwind(re, false, Value{})) throw re;
+    } catch (const ThrownValue& e) {
+        ThrownValue tv(e);
+        if (!unwind(tv, true, tv.value())) throw tv;
+    } catch (const RuntimeError& e) {
+        RuntimeError re(e);
+        if (!unwind(re, false, Value{})) throw re;
+    }
     }
 }
 
@@ -2144,6 +2387,8 @@ Value vmCallValue(const Value& callee, std::vector<Value>& args, Interpreter* in
     ctx.interpreter = interpreter;
     try {
         return callValue(callee, args, ctx);
+    } catch (const VmThrown& t) {
+        throw ThrownValue(t.value);
     } catch (const VmRuntimeError& e) {
         throw RuntimeError(e.what());
     } catch (const VmCompileError& e) {
@@ -2189,7 +2434,7 @@ int vmRun(VmProgram& program, Interpreter* interpreter) {
 namespace {
 
 constexpr uint32_t kCacheMagic = 0x4E534256; // "NSBV"
-constexpr uint32_t kCacheVersion = 3;  // 3: + MakeClass, BinLK, BinLL, GetField, SetField, CallMethodK
+constexpr uint32_t kCacheVersion = 5;  // 5: + MakeClass, BinLK, BinLL, GetField, SetField, CallMethodK, Throw, handlers, lines
 
 void writeU32(std::ofstream& f, uint32_t v) { f.write(reinterpret_cast<const char*>(&v), sizeof(v)); }
 void writeI32(std::ofstream& f, int32_t v) { f.write(reinterpret_cast<const char*>(&v), sizeof(v)); }
@@ -2239,6 +2484,18 @@ void writeFunction(std::ofstream& f, const VmFunction& fn) {
         writeU8(f, uv.isLocal ? 1 : 0);
         writeI32(f, uv.index);
     }
+    writeU32(f, static_cast<uint32_t>(fn.handlers.size()));
+    for (const auto& h : fn.handlers) {
+        writeU32(f, h.start);
+        writeU32(f, h.end);
+        writeU32(f, h.target);
+    }
+    writeU32(f, static_cast<uint32_t>(fn.lines.size()));
+    for (const auto& l : fn.lines) {
+        writeU32(f, l.ip);
+        writeI32(f, l.line);
+        writeI32(f, l.col);
+    }
 }
 
 bool readFunction(std::ifstream& f, VmFunction& fn) {
@@ -2286,6 +2543,18 @@ bool readFunction(std::ifstream& f, VmFunction& fn) {
         if (!readU8(f, isLocal)) return false;
         uv.isLocal = isLocal != 0;
         if (!readI32(f, uv.index)) return false;
+    }
+    uint32_t nHandlers = 0;
+    if (!readU32(f, nHandlers)) return false;
+    fn.handlers.resize(nHandlers);
+    for (auto& h : fn.handlers) {
+        if (!readU32(f, h.start) || !readU32(f, h.end) || !readU32(f, h.target)) return false;
+    }
+    uint32_t nLines = 0;
+    if (!readU32(f, nLines)) return false;
+    fn.lines.resize(nLines);
+    for (auto& l : fn.lines) {
+        if (!readU32(f, l.ip) || !readI32(f, l.line) || !readI32(f, l.col)) return false;
     }
     return true;
 }

@@ -68,6 +68,7 @@ enum class Op : uint8_t {
     GetField,  // nameConst16: obj.name
     SetField,  // nameConst16: obj.name = value
     CallMethodK,  // nameConst16 argc8: obj.name(args), name known at compile time
+    Throw,        // pops a value and throws it (lempar / re-throw after finally)
 };
 
 struct NativeLoopDesc {
@@ -95,6 +96,22 @@ struct NativeLoopDesc {
     std::string boundGlobalName;
 };
 
+// One protected range of bytecode: an exception raised while executing an
+// instruction that starts in [start, end) continues at `target` with the
+// thrown value pushed on an otherwise empty operand stack.
+struct VmHandler {
+    uint32_t start = 0;
+    uint32_t end = 0;
+    uint32_t target = 0;
+};
+
+// Source position of the instruction starting at `ip`, for error messages.
+struct VmLine {
+    uint32_t ip = 0;
+    int32_t line = 0;
+    int32_t col = 0;
+};
+
 struct UpvalueDesc {
     bool isLocal;
     int index;
@@ -114,6 +131,8 @@ struct VmFunction {
     std::vector<uint8_t> code;
     std::vector<Value> constants;
     std::vector<UpvalueDesc> upvalues;
+    std::vector<VmHandler> handlers;  // innermost first
+    std::vector<VmLine> lines;        // ascending ip; first match wins (innermost node)
 
     // Set at compile time when eligible for the narrow function-call JIT
     // (tryCompileNativeFunc). callValue() dispatches straight to it only
@@ -163,6 +182,23 @@ std::unique_ptr<VmProgram> vmCompile(const Program& program);
 class VmRuntimeError : public std::runtime_error {
 public:
     explicit VmRuntimeError(const std::string& msg) : std::runtime_error(msg) {}
+};
+
+// `lempar <value>`: any value can be thrown, and `tangkap` receives it as is.
+class VmThrown : public VmRuntimeError {
+public:
+    explicit VmThrown(Value v) : VmRuntimeError(describe(v)), value(std::move(v)) {}
+    Value value;
+
+private:
+    static std::string describe(const Value& v) {
+        if (v.type == ValueType::String) return v.str();
+        if (v.type == ValueType::Map) {
+            auto it = v.map()->find("pesan");
+            if (it != v.map()->end() && it->second.type == ValueType::String) return it->second.str();
+        }
+        return "Error dilempar: " + v.stringify();
+    }
 };
 
 int vmRun(VmProgram& program, class Interpreter* interpreter = nullptr);

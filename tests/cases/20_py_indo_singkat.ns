@@ -1,0 +1,43 @@
+# gaya Indonesia singkat
+fung kuadrat(n):
+    kem n * n
+
+fung klasifikasi(n):
+    jk n < 0:
+        kem "negatif"
+    lj n == 0:
+        kem "nol"
+    lain:
+        kem "positif"
+
+total = 0
+untuk i dalam rentang(1, 6):
+    total += kuadrat(i)
+cetak(total)
+cetak(klasifikasi(-3), klasifikasi(0), klasifikasi(7))
+
+k = 0
+slm Benar:
+    k += 1
+    jk k >= 5:
+        henti
+cetak(k)
+
+bentuk Titik:
+    x: angka
+    y: angka
+
+jenis Warna:
+    Merah
+    Hijau
+
+p = Titik(3, 4)
+cetak(p.x + p.y)
+cetak(Warna.Hijau.nama)
+
+coba:
+    lempar "oops"
+tangkap e:
+    cetak("tangkap:", e)
+akhir:
+    cetak("beres")

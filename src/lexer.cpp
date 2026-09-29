@@ -1,4 +1,6 @@
 #include "lexer.hpp"
+
+#include "layout.hpp"
 #include <cctype>
 #include <cerrno>
 #include <cstdlib>
@@ -39,6 +41,23 @@ const std::unordered_map<std::string, TokenType> kKeywords = {
     {"tangkap", TokenType::Catch},   {"catch", TokenType::Catch},
     {"akhirnya", TokenType::Finally},{"finally", TokenType::Finally},
     {"lempar", TokenType::Throw},    {"throw", TokenType::Throw},
+    // Python-style spellings, and short Indonesian ones. `elif`/`lj` are
+    // special-cased in readIdent's caller: they expand to `else if`.
+    {"def", TokenType::Fn},          {"fung", TokenType::Fn},
+    {"jk", TokenType::If},
+    {"slm", TokenType::While},
+    {"kem", TokenType::Return},
+    {"henti", TokenType::Break},
+    {"True", TokenType::True_},      {"Benar", TokenType::True_},
+    {"False", TokenType::False_},    {"Salah", TokenType::False_},
+    {"None", TokenType::Null_},      {"Kosong", TokenType::Null_},
+    {"self", TokenType::This},
+    {"except", TokenType::Catch},
+    {"akhir", TokenType::Finally},
+    {"raise", TokenType::Throw},
+    // `not` binds looser than comparison (unlike `!`); the parser tells the
+    // two apart by token text.
+    {"not", TokenType::Not},         {"bukan", TokenType::Not},
 };
 }  // namespace
 
@@ -71,7 +90,7 @@ void Lexer::skipWhitespaceAndComments() {
         char ch = peek();
         if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n') {
             advance();
-        } else if (ch == '/' && peek(1) == '/') {
+        } else if ((ch == '/' && peek(1) == '/') || ch == '#') {
             while (pos_ < source_.size() && peek() != '\n') advance();
         } else {
             break;
@@ -94,7 +113,14 @@ std::vector<Token> Lexer::nextTokens() {
     if (std::isdigit(static_cast<unsigned char>(ch))) {
         return {readNumber(start, line, col)};
     } else if (std::isalpha(static_cast<unsigned char>(ch)) || ch == '_') {
-        return {readIdent(start, line, col)};
+        Token id = readIdent(start, line, col);
+        if (id.text == "elif" || id.text == "lj") {
+            Token els = id, iff = id;
+            els.type = TokenType::Else;
+            iff.type = TokenType::If;
+            return {els, iff};
+        }
+        return {id};
     } else if (ch == '"') {
         return {readString(start, line, col)};
     } else if (ch == '`') {
@@ -112,7 +138,7 @@ std::vector<Token> Lexer::tokenize() {
         for (auto& t : next) tokens.push_back(std::move(t));
         if (sawEof) break;
     }
-    return tokens;
+    return applyLayout(std::move(tokens), source_);
 }
 
 Token Lexer::readNumber(size_t start, int line, int col) {

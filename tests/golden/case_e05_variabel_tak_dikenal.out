@@ -1,2 +1,2 @@
-nusa --vm: error: Undefined variable 'belum_pernah_ada'
+nusantara: error: Undefined variable 'belum_pernah_ada' (line 1, col 7)
 --- exit: 1

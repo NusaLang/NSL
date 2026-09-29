@@ -1,0 +1,20 @@
+xs = []
+xs.append(3)
+xs.append(4)
+print(xs, len(xs))
+print(xs.pop(), len(xs))
+s = "Halo Dunia"
+print(s.upper(), s.lower())
+parts = "a,b,c".split(",")
+print(len(parts), "-".join(parts))
+m = new_map()
+m["x"] = 1
+m["y"] = 2
+print(len(m.keys()))
+for k in m:
+    print(k)
+def uji():
+    ys = [1, 2, 3]
+    ys.append(4)
+    return "+".join(["a", "b"]) + str(len(ys))
+print(uji())

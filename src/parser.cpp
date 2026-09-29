@@ -1,5 +1,7 @@
 #include "parser.hpp"
 
+#include <functional>
+
 #include "i18n.hpp"
 
 namespace {
@@ -52,6 +54,8 @@ std::unique_ptr<Program> Parser::parse() {
     auto program = std::make_unique<Program>();
     while (!atEnd()) {
         program->statements.push_back(statement());
+        for (auto& extra : pendingStmts_) program->statements.push_back(std::move(extra));
+        pendingStmts_.clear();
     }
     return program;
 }
@@ -61,7 +65,20 @@ StmtPtr Parser::statement() {
     // statement kind gets a location for free -- see Stmt::span.
     Span start = peek().span;
     StmtPtr result;
-    if (match(TokenType::Let)) result = letStmt();
+    if (isWord(peek(), "pass") && peekAt(1).type == TokenType::Semi) {
+        advance();
+        advance();
+        result = std::make_unique<BlockStmt>(std::vector<StmtPtr>{});
+    }
+    else if (isWord(peek(), "import", "impor") && (peekAt(1).type == TokenType::Ident || peekAt(1).type == TokenType::String)) {
+        advance();
+        result = importStmt();
+    }
+    else if (isWord(peek(), "from", "dari") && peekAt(1).type == TokenType::Ident) {
+        advance();
+        result = fromImportStmt();
+    }
+    else if (match(TokenType::Let)) result = letStmt();
     else if (match(TokenType::Fn)) result = fnDecl();
     else if (match(TokenType::Class)) result = classDecl();
     else if (match(TokenType::Struct)) result = structDecl();
@@ -78,6 +95,107 @@ StmtPtr Parser::statement() {
     else result = exprStmt();
     result->span = start;
     return result;
+}
+
+bool Parser::isWord(const Token& t, const char* a, const char* b) const {
+    return t.type == TokenType::Ident && (t.text == a || (b && t.text == b));
+}
+
+bool Parser::matchWord(const char* a, const char* b) {
+    if (isWord(peek(), a, b)) {
+        advance();
+        return true;
+    }
+    return false;
+}
+
+namespace {
+ExprPtr mkIdent(const std::string& name, Span sp) {
+    ExprPtr e = std::make_unique<IdentifierExpr>(name);
+    e->span = sp;
+    return e;
+}
+ExprPtr mkCall(const std::string& fn, std::vector<ExprPtr> args, Span sp) {
+    ExprPtr e = std::make_unique<CallExpr>(mkIdent(fn, sp), std::move(args));
+    e->span = sp;
+    return e;
+}
+ExprPtr mkBin(const std::string& op, ExprPtr l, ExprPtr r, Span sp) {
+    ExprPtr e = std::make_unique<BinaryExpr>(op, std::move(l), std::move(r));
+    e->span = sp;
+    return e;
+}
+ExprPtr mkNum(double n, Span sp) {
+    ExprPtr e = LiteralExpr::makeNumber(n);
+    e->span = sp;
+    return e;
+}
+StmtPtr mkLet(const std::string& name, ExprPtr value, Span sp) {
+    StmtPtr s = std::make_unique<LetStmt>(name, std::move(value), "");
+    s->span = sp;
+    return s;
+}
+}  // namespace
+
+// Dotted module path `a.b.c` -> "a/b/c" (the form impor() resolves).
+static std::string readModulePath(Parser& p, std::function<const Token&()> peekFn,
+                                  std::function<const Token&()> advanceFn) {
+    (void)p;
+    std::string path = advanceFn().text;
+    while (peekFn().type == TokenType::Dot) {
+        advanceFn();
+        path += "/" + advanceFn().text;
+    }
+    return path;
+}
+
+StmtPtr Parser::importStmt() {
+    Span sp = peek().span;
+    // `import "path"` keeps working for string paths; `import a.b` is the
+    // Python form. Either way it is `buat <name> = impor("<path>")`.
+    std::string path, name;
+    if (check(TokenType::String)) {
+        path = advance().str;
+        name = path;
+        size_t slash = name.find_last_of('/');
+        if (slash != std::string::npos) name = name.substr(slash + 1);
+        size_t dot = name.find('.');
+        if (dot != std::string::npos) name = name.substr(0, dot);
+    } else {
+        path = readModulePath(*this, [&]() -> const Token& { return peek(); }, [&]() -> const Token& { return advance(); });
+        name = path.substr(path.find_last_of('/') == std::string::npos ? 0 : path.find_last_of('/') + 1);
+    }
+    if (matchWord("as", "sbg")) name = expect(TokenType::Ident, i18n::tr("Nama alias diharapkan setelah 'as'", "Expected alias after 'as'")).text;
+    expect(TokenType::Semi, i18n::tr("';' diharapkan setelah 'import'", "Expected ';' after import"));
+    std::vector<ExprPtr> args;
+    args.push_back(LiteralExpr::makeString(path));
+    return mkLet(name, mkCall("impor", std::move(args), sp), sp);
+}
+
+StmtPtr Parser::fromImportStmt() {
+    Span sp = peek().span;
+    std::string path = readModulePath(*this, [&]() -> const Token& { return peek(); }, [&]() -> const Token& { return advance(); });
+    if (!matchWord("import", "impor")) {
+        throw ParseError(i18n::tr("'import' diharapkan setelah nama modul", "Expected 'import' after module name"), peek());
+    }
+    // One module load, then one binding per imported name.
+    std::vector<StmtPtr> out;
+    std::string modVar = "__mod" + std::to_string(hiddenCounter_++);
+    std::vector<ExprPtr> args;
+    args.push_back(LiteralExpr::makeString(path));
+    out.push_back(mkLet(modVar, mkCall("impor", std::move(args), sp), sp));
+    do {
+        std::string field = expect(TokenType::Ident, i18n::tr("Nama diharapkan setelah 'import'", "Expected a name after 'import'")).text;
+        std::string alias = field;
+        if (matchWord("as", "sbg")) alias = expect(TokenType::Ident, i18n::tr("Nama alias diharapkan setelah 'as'", "Expected alias after 'as'")).text;
+        ExprPtr get = std::make_unique<IndexExpr>(mkIdent(modVar, sp), LiteralExpr::makeString(field));
+        get->span = sp;
+        out.push_back(mkLet(alias, std::move(get), sp));
+    } while (match(TokenType::Comma));
+    expect(TokenType::Semi, i18n::tr("';' diharapkan setelah 'import'", "Expected ';' after import"));
+    StmtPtr first = std::move(out.front());
+    for (size_t i = 1; i < out.size(); i++) pendingStmts_.push_back(std::move(out[i]));
+    return first;
 }
 
 StmtPtr Parser::letStmt() {
@@ -101,6 +219,12 @@ std::unique_ptr<FnDeclStmt> Parser::fnDeclBody(std::string name) {
     expect(TokenType::LParen, i18n::tr("'(' diharapkan setelah nama fungsi", "Expected '(' after function name"));
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
+    // Python-style explicit receiver: `def m(self, x)` -- the instance is
+    // already bound as `ini`, so `self` is not a real parameter.
+    if (check(TokenType::This)) {
+        advance();
+        match(TokenType::Comma);
+    }
     if (!check(TokenType::RParen)) {
         params.push_back(expect(TokenType::Ident, i18n::tr("Nama parameter diharapkan", "Expected parameter name")).text);
         paramTypes.push_back(match(TokenType::Colon)
@@ -128,12 +252,24 @@ StmtPtr Parser::classDecl() {
     std::string parentName;
     if (match(TokenType::Extends)) {
         parentName = expect(TokenType::Ident, i18n::tr("Nama kelas induk diharapkan", "Expected parent class name")).text;
+    } else if (match(TokenType::LParen)) {  // Python: class A(B):
+        if (!check(TokenType::RParen)) {
+            parentName = expect(TokenType::Ident, i18n::tr("Nama kelas induk diharapkan", "Expected parent class name")).text;
+        }
+        expect(TokenType::RParen, i18n::tr("')' diharapkan setelah kelas induk", "Expected ')' after parent class"));
     }
     expect(TokenType::LBrace, i18n::tr("'{' diharapkan setelah nama kelas", "Expected '{' after class name"));
     std::vector<std::unique_ptr<FnDeclStmt>> methods;
     while (!check(TokenType::RBrace) && !atEnd()) {
+        if (isWord(peek(), "pass") && peekAt(1).type == TokenType::Semi) {  // empty class body
+            advance();
+            advance();
+            continue;
+        }
         expect(TokenType::Fn, i18n::tr("Cuma deklarasi fungsi yang boleh di dalam kelas", "Only function declarations are allowed inside a class"));
         StmtPtr m = fnDecl();
+        auto* fnNode = static_cast<FnDeclStmt*>(m.get());
+        if (fnNode->name == "__init__") fnNode->name = "konstruktor";
         methods.push_back(std::unique_ptr<FnDeclStmt>(static_cast<FnDeclStmt*>(m.release())));
     }
     expect(TokenType::RBrace, i18n::tr("'}' diharapkan setelah isi kelas", "Expected '}' after class body"));
@@ -179,9 +315,14 @@ StmtPtr Parser::enumDecl() {
 StmtPtr Parser::tryStmt() {
     auto tryBlock = block();
     expect(TokenType::Catch, i18n::tr("'tangkap' diharapkan setelah blok 'coba'", "Expected 'tangkap' after 'coba' block"));
-    expect(TokenType::LParen, i18n::tr("'(' diharapkan setelah 'tangkap'", "Expected '(' after 'tangkap'"));
-    std::string catchVar = expect(TokenType::Ident, i18n::tr("Nama variabel diharapkan di 'tangkap'", "Expected variable name in 'tangkap'")).text;
-    expect(TokenType::RParen, i18n::tr("')' diharapkan setelah variabel 'tangkap'", "Expected ')' after 'tangkap' variable"));
+    std::string catchVar = "_e";
+    if (match(TokenType::LParen)) {
+        catchVar = expect(TokenType::Ident, i18n::tr("Nama variabel diharapkan di 'tangkap'", "Expected variable name in 'tangkap'")).text;
+        expect(TokenType::RParen, i18n::tr("')' diharapkan setelah variabel 'tangkap'", "Expected ')' after 'tangkap' variable"));
+    } else if (check(TokenType::Ident)) {  // Python: `except e:` / `except Err as e:`
+        catchVar = advance().text;
+        if (matchWord("as", "sbg")) catchVar = expect(TokenType::Ident, i18n::tr("Nama variabel diharapkan setelah 'as'", "Expected variable name after 'as'")).text;
+    }
     auto catchBlock = block();
     std::unique_ptr<BlockStmt> finallyBlock;
     if (match(TokenType::Finally)) {
@@ -230,7 +371,119 @@ StmtPtr Parser::forClauseInit() {
     return std::make_unique<ExprStmtNode>(std::move(e));
 }
 
+// Value of a numeric literal, allowing a leading unary minus.
+static bool literalNumber(const Expr* e, double* out) {
+    if (e->kind == ExprKind::Literal) {
+        auto* lit = static_cast<const LiteralExpr*>(e);
+        if (lit->litKind != LiteralExpr::Kind::Number) return false;
+        *out = lit->number;
+        return true;
+    }
+    if (e->kind == ExprKind::Unary) {
+        auto* u = static_cast<const UnaryExpr*>(e);
+        double inner;
+        if (u->op == "-" && literalNumber(u->operand.get(), &inner)) {
+            *out = -inner;
+            return true;
+        }
+    }
+    return false;
+}
+
+StmtPtr Parser::forInStmt(Span sp) {
+    std::string var = expect(TokenType::Ident, i18n::tr("Nama variabel diharapkan setelah 'for'", "Expected variable name after 'for'")).text;
+    if (!matchWord("in", "dalam")) {
+        throw ParseError(i18n::tr("'in' diharapkan setelah variabel 'for'", "Expected 'in' after the 'for' variable"), peek());
+    }
+    ExprPtr iter = expression();
+    auto body = block();
+    int id = hiddenCounter_++;
+
+    // `for i in range(a, b[, literal step])` -> a plain counting loop, so it
+    // stays on the fast (VM/JIT) path and allocates nothing.
+    if (iter->kind == ExprKind::Call) {
+        auto* c = static_cast<CallExpr*>(iter.get());
+        if (c->callee->kind == ExprKind::Identifier) {
+            const std::string& fname = static_cast<IdentifierExpr*>(c->callee.get())->name;
+            size_t n = c->args.size();
+            double step = 1;
+            bool ok = (fname == "range" || fname == "rentang") && n >= 1 && n <= 3;
+            bool dynamicStep = false;  // `range(a, b, k)` with a non-literal k
+            if (ok && n == 3 && !(literalNumber(c->args[2].get(), &step) && step != 0)) {
+                dynamicStep = true;
+            }
+            if (ok) {
+                ExprPtr start = n >= 2 ? std::move(c->args[0]) : mkNum(0, sp);
+                ExprPtr stop = n >= 2 ? std::move(c->args[1]) : std::move(c->args[0]);
+                std::vector<StmtPtr> outer;
+                ExprPtr stopRef;
+                double lit;
+                if (literalNumber(stop.get(), &lit)) {
+                    stopRef = mkNum(lit, sp);
+                } else {
+                    // Python evaluates the bound once, not on every iteration.
+                    std::string hidden = "__stop" + std::to_string(id);
+                    outer.push_back(mkLet(hidden, std::move(stop), sp));
+                    stopRef = mkIdent(hidden, sp);
+                }
+                ExprPtr cond, stepExpr;
+                if (dynamicStep) {
+                    // Direction is only known at run time: (k > 0 and v < stop) or (k < 0 and v > stop).
+                    std::string stepVar = "__step" + std::to_string(id);
+                    outer.push_back(mkLet(stepVar, std::move(c->args[2]), sp));
+                    std::string stopVar = "__lim" + std::to_string(id);
+                    outer.push_back(mkLet(stopVar, std::move(stopRef), sp));
+                    ExprPtr up = mkBin("&&", mkBin(">", mkIdent(stepVar, sp), mkNum(0, sp), sp),
+                                       mkBin("<", mkIdent(var, sp), mkIdent(stopVar, sp), sp), sp);
+                    ExprPtr down = mkBin("&&", mkBin("<", mkIdent(stepVar, sp), mkNum(0, sp), sp),
+                                         mkBin(">", mkIdent(var, sp), mkIdent(stopVar, sp), sp), sp);
+                    cond = mkBin("||", std::move(up), std::move(down), sp);
+                    stepExpr = mkIdent(stepVar, sp);
+                } else {
+                    cond = mkBin(step > 0 ? "<" : ">", mkIdent(var, sp), std::move(stopRef), sp);
+                    stepExpr = mkNum(step, sp);
+                }
+                ExprPtr postAssign = std::make_unique<AssignExpr>(
+                    var, mkBin("+", mkIdent(var, sp), std::move(stepExpr), sp));
+                postAssign->span = sp;
+                StmtPtr loop = std::make_unique<ForStmt>(mkLet(var, std::move(start), sp), std::move(cond),
+                                                          std::move(postAssign), std::move(body));
+                loop->span = sp;
+                if (outer.empty()) return loop;
+                outer.push_back(std::move(loop));
+                StmtPtr blk = std::make_unique<BlockStmt>(std::move(outer));
+                blk->span = sp;
+                return blk;
+            }
+        }
+    }
+
+    // General case: iterate a snapshot array (`__iter` turns strings, maps
+    // and arrays into something indexable).
+    std::string cVar = "__it" + std::to_string(id), iVar = "__ix" + std::to_string(id);
+    std::vector<StmtPtr> outer;
+    std::vector<ExprPtr> iterArgs;
+    iterArgs.push_back(std::move(iter));
+    outer.push_back(mkLet(cVar, mkCall("__iter", std::move(iterArgs), sp), sp));
+    std::vector<ExprPtr> lenArgs;
+    lenArgs.push_back(mkIdent(cVar, sp));
+    ExprPtr cond = mkBin("<", mkIdent(iVar, sp), mkCall("panjang", std::move(lenArgs), sp), sp);
+    ExprPtr postAssign = std::make_unique<AssignExpr>(iVar, mkBin("+", mkIdent(iVar, sp), mkNum(1, sp), sp));
+    postAssign->span = sp;
+    ExprPtr elem = std::make_unique<IndexExpr>(mkIdent(cVar, sp), mkIdent(iVar, sp));
+    elem->span = sp;
+    body->statements.insert(body->statements.begin(), mkLet(var, std::move(elem), sp));
+    StmtPtr loop = std::make_unique<ForStmt>(mkLet(iVar, mkNum(0, sp), sp), std::move(cond),
+                                              std::move(postAssign), std::move(body));
+    loop->span = sp;
+    outer.push_back(std::move(loop));
+    StmtPtr blk = std::make_unique<BlockStmt>(std::move(outer));
+    blk->span = sp;
+    return blk;
+}
+
 StmtPtr Parser::forStmt() {
+    if (!check(TokenType::LParen)) return forInStmt(peek().span);
     expect(TokenType::LParen, i18n::tr("'(' diharapkan setelah 'untuk'", "Expected '(' after 'untuk'"));
 
     StmtPtr init;
@@ -273,6 +526,8 @@ std::unique_ptr<BlockStmt> Parser::block() {
     std::vector<StmtPtr> statements;
     while (!check(TokenType::RBrace) && !atEnd()) {
         statements.push_back(statement());
+        for (auto& extra : pendingStmts_) statements.push_back(std::move(extra));
+        pendingStmts_.clear();
     }
     expect(TokenType::RBrace, i18n::tr("'}' diharapkan", "Expected '}'"));
     return std::make_unique<BlockStmt>(std::move(statements));
@@ -357,7 +612,7 @@ ExprPtr Parser::assignment() {
 ExprPtr Parser::logicOr() {
     Span start = peek().span;
     ExprPtr expr = logicAnd();
-    while (match(TokenType::Or)) {
+    while (match(TokenType::Or) || matchWord("or", "atau")) {
         ExprPtr right = logicAnd();
         expr = std::make_unique<BinaryExpr>("||", std::move(expr), std::move(right));
         expr->span = start;
@@ -368,7 +623,7 @@ ExprPtr Parser::logicOr() {
 ExprPtr Parser::logicAnd() {
     Span start = peek().span;
     ExprPtr expr = equality();
-    while (match(TokenType::And)) {
+    while (match(TokenType::And) || matchWord("and", "dan")) {
         ExprPtr right = equality();
         expr = std::make_unique<BinaryExpr>("&&", std::move(expr), std::move(right));
         expr->span = start;
@@ -426,6 +681,14 @@ ExprPtr Parser::factor() {
 
 ExprPtr Parser::unary() {
     Span start = peek().span;
+    if (check(TokenType::Not) && (peek().text == "not" || peek().text == "bukan")) {
+        // Python `not`: binds looser than comparison (`not a == b` is `!(a == b)`).
+        advance();
+        ExprPtr operand = equality();
+        ExprPtr result = std::make_unique<UnaryExpr>("!", std::move(operand));
+        result->span = start;
+        return result;
+    }
     if (check(TokenType::Minus) || check(TokenType::Not)) {
         std::string op = advance().text;
         ExprPtr operand = unary();
@@ -464,7 +727,10 @@ ExprPtr Parser::call() {
             // lookups all just work without any extra interpreter code.
             advance();
             std::string field;
-            if (!peek().text.empty() && peek().type != TokenType::Semi && peek().type != TokenType::RParen && peek().type != TokenType::RBrace && peek().type != TokenType::RBracket) {
+            if (peek().text == "__init__") {
+                advance();
+                field = "konstruktor";
+            } else if (!peek().text.empty() && peek().type != TokenType::Semi && peek().type != TokenType::RParen && peek().type != TokenType::RBrace && peek().type != TokenType::RBracket) {
                 field = advance().text;
             } else {
                 field = expect(TokenType::Ident, i18n::tr("Nama field diharapkan setelah '.'", "Expected field name after '.'")).text;
@@ -527,6 +793,10 @@ ExprPtr Parser::primary() {
         }
         case TokenType::Super: {
             advance();
+            if (check(TokenType::LParen) && peekAt(1).type == TokenType::RParen) {  // Python: super()
+                advance();
+                advance();
+            }
             ExprPtr e = std::make_unique<IdentifierExpr>("induk");
             e->span = start;
             return e;
