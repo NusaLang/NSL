@@ -45,6 +45,8 @@
 
 #define NUSA_VERSION "0.0.1"
 
+int runUpdate(const std::string& currentVersion);  // src/update.cpp
+
 namespace {
 
 // Reports the four exception types the lexer/parser/interpreter throw,
@@ -940,82 +942,72 @@ bool collectFilesRecursive(const std::string& baseDir, const std::string& relPre
     return ok;
 }
 
-void printUsage() {
+void printUsage(std::ostream& out = std::cerr) {
     if (i18n::isEn()) {
-        std::cerr <<
-            "nusa " NUSA_VERSION " -- Nusantara (.ns) toolchain\n"
+        out <<
+            "Nusantara is a Python-style programming language (Indonesian or English keywords)\n"
+            "that runs on its own bytecode VM.\n"
             "\n"
-            "Usage: nusa [options] [file.ns]\n"
-            "       nusa <command> [args]\n"
+            "Usage:\n"
+            "\n"
+            "        nusa [options] [file.ns] [arguments]\n"
+            "        nusa <command> [arguments]\n"
+            "\n"
+            "The commands are:\n"
+            "\n"
+            "        run       run a program\n"
+            "        watch     run a program again every time it is saved\n"
+            "        get       add a package (git clone)\n"
+            "        install   install the dependencies listed in nusa.json\n"
+            "        go        build a Nusantara module from a Go module (nusa go add)\n"
+            "        update    update nusa itself to the latest release\n"
+            "        set       change a setting (nusa set lang ind|en)\n"
+            "        version   print the version\n"
             "\n"
             "Options:\n"
-            "  (no arguments)                 start an interactive REPL\n"
-            "  <file.ns>                      run a file (same as 'nusa run <file.ns>')\n"
-            "  <file.js>                      run a real JavaScript file via the embedded QuickJS engine\n"
-            "  -e, --eval=<code>              eval a code snippet directly, no file\n"
-            "  -c, --check <file.ns>          lex/parse/typecheck only, no execution\n"
-            "  -v, --version                  print nusa's version\n"
-            "  -h, --help                     show this\n"
             "\n"
-            "Commands:\n"
-            "  run <file.ns>                  run a file once\n"
-            "  watch <file.ns>                run it, then auto re-run on every save\n"
-            "  repl                           same as nusa with no arguments\n"
-            "  get <host/path>[#ref] [-g]     install a package via git clone (e.g. github.com/user/repo)\n"
-            "  install                        install every dep listed in ./nusa.json (like `go mod download`)\n"
-            "  install <host/path>[#ref] [-g] same as `get` (also updates nusa.json/nusa-lock.json)\n"
-            "  set lang <ind|en>              switch CLI/runtime error message language\n"
+            "        -e code   run a snippet of code\n"
+            "        -c file   check syntax and types only, do not run\n"
+            "        -v        print the version and exit\n"
+            "        -h        print this help and exit\n"
             "\n"
-            "  -g above: install/update to the global folder (next to the nusa binary),\n"
-            "  not ./nusantara_modules cwd -- see the README's 'Package manager' section.\n"
-            "  Language can also be set for one run via env var NUSA_LANG=ind|en.\n"
+            "With no arguments, nusa starts an interactive prompt. Files ending in .js run on\n"
+            "the embedded QuickJS engine.\n"
             "\n"
-            "Examples:\n"
-            "  nusa main.ns\n"
-            "  nusa -e 'cetak(1 + 1)'\n"
-            "  nusa -c modul.ns\n"
-            "  nusa watch main.ns\n"
-            "  nusa get github.com/user/repo\n"
-            "  nusa app.js\n";
+            "Environment: NUSA_LANG=ind|en (message language), NUSA_NO_VM=1 (tree-walking interpreter).\n";
         return;
     }
-    std::cerr <<
-        "nusa " NUSA_VERSION " -- Nusantara (.ns) toolchain\n"
+    out <<
+        "Nusantara adalah bahasa pemrograman bergaya Python (keyword Indonesia atau Inggris)\n"
+        "yang berjalan di bytecode VM sendiri.\n"
         "\n"
-        "Usage: nusa [options] [file.ns]\n"
-        "       nusa <command> [args]\n"
+        "Pemakaian:\n"
         "\n"
-        "Options:\n"
-        "  (tanpa argumen)                mulai REPL interaktif\n"
-        "  <file.ns>                      jalanin file (sama kayak 'nusa run <file.ns>')\n"
-        "  <file.js>                      jalanin file JavaScript asli lewat engine QuickJS bawaan\n"
-        "  -e, --eval=<kode>               eval satu potong kode langsung, tanpa file\n"
-        "  -c, --check <file.ns>          cek lexer/parser/tipe doang, nggak dieksekusi\n"
-        "  -v, --version                  cetak versi nusa\n"
-        "  -h, --help                     tampilin ini\n"
+        "        nusa [opsi] [file.ns] [argumen]\n"
+        "        nusa <perintah> [argumen]\n"
         "\n"
-        "Commands:\n"
-        "  run <file.ns>                  jalanin file sekali\n"
-        "  watch <file.ns>                jalanin, terus auto re-run tiap file disimpan\n"
-        "  build [file.ns]                rakit bundel produksi next-ns (WASM/HTML/JS obfuscated)\n"
-        "  dev [file.ns]                  jalankan server dev next-ns dengan live-reload\n"
-        "  deploy [file.ns]               rakit & publikasikan server produksi next-ns\n"
-        "  repl                           sama kayak nusa tanpa argumen\n"
-        "  get <host/path>[#ref] [-g]     install paket lewat git clone (mis. github.com/user/repo)\n"
-        "  install                        install semua dep di ./nusa.json (kayak `go mod download`)\n"
-        "  install <host/path>[#ref] [-g] sama kayak `get` (ikut update nusa.json/nusa-lock.json)\n"
-        "  set lang <ind|en>              ganti bahasa pesan CLI/error runtime\n"
+        "Perintah:\n"
         "\n"
-        "  -g di atas: install/update ke folder global (sebelah binary nusa), bukan\n"
-        "  ./nusantara_modules cwd -- lihat README bagian 'Package manager'.\n"
-        "  Bahasa juga bisa di-set buat satu kali run lewat env var NUSA_LANG=ind|en.\n"
+        "        run       jalankan program\n"
+        "        watch     jalankan ulang program setiap kali disimpan\n"
+        "        get       tambah paket (git clone)\n"
+        "        install   pasang dependensi yang tercatat di nusa.json\n"
+        "        go        bangun modul Nusantara dari modul Go (nusa go add)\n"
+        "        update    perbarui nusa ke rilis terbaru\n"
+        "        set       ubah pengaturan (nusa set lang ind|en)\n"
+        "        version   cetak versi\n"
         "\n"
-        "Contoh:\n"
-        "  nusa main.ns\n"
-        "  nusa -e 'cetak(1 + 1)'\n"
-        "  nusa -c modul.ns\n"
-        "  nusa watch main.ns\n"
-        "  nusa get github.com/user/repo\n";
+        "Opsi:\n"
+        "\n"
+        "        -e kode   jalankan potongan kode\n"
+        "        -c file   cek sintaks dan tipe saja, tidak dijalankan\n"
+        "        -v        cetak versi lalu keluar\n"
+        "        -h        cetak bantuan ini lalu keluar\n"
+        "\n"
+        "Tanpa argumen, nusa membuka prompt interaktif. File berakhiran .js dijalankan oleh\n"
+        "mesin QuickJS bawaan.\n"
+        "\n"
+        "Lingkungan: NUSA_LANG=ind|en (bahasa pesan), NUSA_NO_VM=1 (interpreter tree-walking).\n";
 }
 
 std::string langConfigPath() {
@@ -1552,9 +1544,16 @@ int main(int argc, char** argv) {
         std::cout << "nusa " NUSA_VERSION "\n";
         return 0;
     }
-    if (command == "-h" || command == "--help") {
-        printUsage();
+    if (command == "-h" || command == "--help" || command == "help") {
+        printUsage(std::cout);
         return 0;
+    }
+    if (command == "version") {
+        std::cout << "nusa " NUSA_VERSION "\n";
+        return 0;
+    }
+    if (command == "update") {
+        return runUpdate("nusa " NUSA_VERSION);
     }
     if (command == "-e" || command == "--eval") {
         if (argc < 3) {

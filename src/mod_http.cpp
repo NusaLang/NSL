@@ -20,6 +20,7 @@
 #include <cctype>
 #include <chrono>
 #include <condition_variable>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
@@ -28,6 +29,7 @@
 #include <thread>
 #include <unordered_map>
 
+#include "http_client.hpp"
 #include "json.hpp"
 #include "tls.hpp"
 #include "value.hpp"
@@ -703,6 +705,34 @@ NsValue httpTutupStream(int argc, const NsValue* argv) {
 }
 
 }  // namespace
+
+bool httpclient::downloadFile(const std::string& url, const std::string& dest, std::string& err) {
+    FILE* out = std::fopen(dest.c_str(), "wb");
+    if (!out) {
+        err = "tidak bisa menulis " + dest;
+        return false;
+    }
+    Request req;
+    req.method = "GET";
+    req.url = url;
+    req.timeoutMs = 600000;
+    long status = 0;
+    Sink sink;
+    sink.onHead = [&](long code, ValueMap&) { status = code; };
+    sink.onBody = [&](const char* p, size_t n) {
+        if (status != 200) return false;
+        return std::fwrite(p, 1, n, out) == n;
+    };
+    std::string e = fetch(req, sink);
+    std::fclose(out);
+    if (!e.empty()) err = e;
+    else if (status != 200) err = "HTTP " + std::to_string(status);
+    if (!err.empty()) {
+        std::remove(dest.c_str());
+        return false;
+    }
+    return true;
+}
 
 extern "C" void ns_plugin_init_http(void* registry, NsRegisterFn reg) {
     reg(registry, "minta", httpMinta);
