@@ -103,6 +103,15 @@ def luas(p: angka, l: angka) -> angka:
 - **Operator:** `**` (pangkat), `//` (bagi bulat, di file bergaya Python; di gaya `{ }` `//` tetap komentar), `%` (sisa; atau format teks: `"%d item" % 3`), `a if c else b`, `x in xs` / `x not in xs` (teks, larik, peta), `x is None` / `x is not None`, perbandingan berantai `0 <= x < n`, `and`/`or`/`not`, `del x[i]`, `assert cond, "pesan"`.
 - **Slice:** `a[1:3]`, `a[-2:]`, `a[::-1]`, `a[::2]`, `a[3:0:-1]` untuk teks dan larik.
 - **String:** kutip ganda/tunggal, triple-quote multi-baris, f-string `f"halo {nama}, {x + 1}"` (`{{` `}}` untuk kurung literal), template `` `halo ${nama}` ``, angka ilmiah `1e3`, `2.5e-2`.
+- **`*args` / `**kwargs` dan spread:** `def f(*a, **kw)`, `f(*xs, **d)`, `[*a, *b]`, `{**d1, **d2}`.
+- **Himpunan & bit:** `{1, 2}`, `a | b`, `a & b`, `a - b`, `a ^ b` (himpunan = larik tanpa duplikat; untuk angka: operator bit), `~x`, `<<`, `>>`. Literal `0x1F`, `0b101`, `0o17`, `1_000`, `.5`.
+- **f-string dengan format spec:** `f"{x:.2f}"`, `f"{n:>8,}"`, `f"{v!r}"`.
+- **Dekorator:** `@dec`, `@dec(arg)` untuk fungsi dan kelas; di dalam kelas `@staticmethod`, `@classmethod`, `@property` + `@x.setter`; atribut kelas (`total = 0`, `name: str = "x"`); `@dataclass` (`order=True`, `field(default_factory=list)`, pewarisan).
+- **Generator:** `yield`, `yield from`, `x = yield v`, `gen.send/throw_/close`, ekspresi generator `(x * x for x in xs)`, `next(g, default)`, `iter(x)`; `for`, `list()`, `sum()`, `sorted()`, ... membacanya secara lazy. Di VM generator = frame yang disimpan/dilanjutkan (tanpa thread, ~1,7 µs per `yield`).
+- **Eksepsi ala Python:** hierarki `BaseException > Exception > ValueError/TypeError/KeyError/IndexError/ZeroDivisionError/OSError/...`; `raise ValueError("x")`, `raise Kelas`, `raise` (lempar ulang), `except (A, B) as e:` berjenjang, `except:`, `else:`, `finally:`, kelas sendiri `class MyErr(Exception)`. Error bawaan (`1/0`, indeks di luar batas, ...) bisa ditangkap dengan kelasnya. `raise "teks"` gaya lama tetap jalan.
+- **Protokol objek:** `__str__`, `__repr__`, `__eq__`, `__lt__/__le__/__gt__/__ge__`, `__add__/__sub__/__mul__/__truediv__/__mod__`, `__len__`, `__bool__`, `__getitem__`, `__contains__`, `__iter__`/`__next__`, `__call__`, `__enter__`/`__exit__` (`with` penuh, termasuk penelan error), `getattr/setattr/hasattr/vars/dir/type(x).__name__/isinstance/issubclass`.
+- **Anotasi tipe Python:** `x: List[int] = []`, `def f(a: Dict[str, int]) -> Optional[str]:` diterima dan diabaikan (tipe polos seperti `int`/`str` tetap diperiksa).
+- **`try/finally`** tanpa `except`, `with` beberapa manajer, `yield` di dalam `try`.
 - **Impor:** `import math, json`, `import a.b`, `from modul import nama as alias`.
 - **File:** `open(path, "r"|"w"|"a")` dengan `read()`, `readline()`, `readlines()`, `write()`, `close()`, dan `with open(p) as f:` yang menutup file otomatis.
 - **Metode bawaan** — teks: `split join strip lstrip rstrip replace startswith endswith find count upper lower title capitalize isdigit isalpha zfill center ljust rjust format ...`; larik: `append extend insert remove pop index count sort reverse copy clear`; peta: `keys values items get setdefault pop update copy clear`.
@@ -151,7 +160,7 @@ Modul bergaya Python, tertanam di binary (tanpa instalasi): `import math` ...
 |---|---|
 | `math` | `sqrt sin cos tan atan2 exp log log2 log10 floor ceil trunc gcd lcm factorial comb prod hypot isnan isclose pi e tau inf` |
 | `json` | `dumps(obj, indent=2, sort_keys=True)`, `loads`, `dump(obj, f)`, `load(f)` |
-| `os` | `getcwd chdir listdir mkdir makedirs remove rename system getenv environ cpu_count`, `os.path.join/exists/isfile/isdir/basename/dirname/splitext/abspath/getsize` |
+| `os` | `getcwd chdir listdir walk scandir mkdir makedirs remove rename system getenv environ cpu_count stat`, `os.path.join/exists/isfile/isdir/basename/dirname/splitext/abspath/getsize/getmtime/normpath/relpath` |
 | `sys` | `argv exit platform version stdout.write stderr.write stdin.read` |
 | `time` | `time sleep monotonic perf_counter strftime localtime` |
 | `datetime` | `datetime.now()` → `year month day hour minute second strftime isoformat timestamp` |
@@ -159,7 +168,16 @@ Modul bergaya Python, tertanam di binary (tanpa instalasi): `import math` ...
 | `re` | `search match fullmatch findall finditer sub split compile` (objek `Match`: `group groups groupdict start end span`) |
 | `http` | klien HTTP(S) seperti `requests` (di bawah) |
 | `subprocess` | `run(args)` → `returncode stdout stderr`, `check_output` |
-| `hashlib`, `base64`, `string`, `copy`, `functools`, `collections` | `sha256(x).hexdigest()`, `b64encode/b64decode`, konstanta huruf, `deepcopy`, `reduce`, `Counter` |
+| `hashlib`, `base64`, `string`, `copy` | `sha256(x).hexdigest()`, `b64encode/b64decode`, konstanta huruf, `deepcopy` |
+| `collections` | `Counter` (`most_common`, `update`, `total`), `defaultdict`, `deque(maxlen=)`, `namedtuple`, `OrderedDict` |
+| `functools` | `reduce partial lru_cache cache wraps cmp_to_key` |
+| `itertools` | `count cycle repeat chain islice takewhile dropwhile accumulate groupby product permutations combinations zip_longest pairwise batched tee starmap compress` (lazy) |
+| `heapq`, `bisect`, `operator`, `statistics` | `heappush/heappop/heapify/nlargest`, `bisect_left/right insort`, `itemgetter add ...`, `mean median mode stdev variance` |
+| `pathlib`, `glob`, `fnmatch`, `shutil`, `tempfile` | `Path("a") / "b"` (`read_text write_text exists mkdir iterdir glob suffix stem parent ...`), `glob(pat, recursive=True)`, `copy copytree move rmtree which`, `TemporaryDirectory` |
+| `csv`, `io`, `textwrap`, `pprint`, `uuid`, `secrets`, `platform` | `reader/writer/DictReader/DictWriter`, `StringIO`, `wrap fill dedent shorten`, `uuid4()`, `token_hex` |
+| `argparse`, `logging`, `unittest` | `ArgumentParser` (`add_argument`, `nargs`, `action`, subparser), `getLogger/basicConfig/info/...`, `TestCase` + `unittest.main([Kelas])` |
+| `threading`, `queue`, `contextlib`, `dataclasses`, `typing`, `enum`, `abc` | `Thread Lock Event Timer`, `Queue`, `@contextmanager suppress`, `field asdict replace`, tipe petunjuk (no-op), `Enum` (anggota = nilai kelas), `ABC` |
+| `urllib.parse` | `quote unquote urlencode urlparse parse_qs urljoin` |
 
 ```python
 import http
@@ -316,14 +334,16 @@ src/            interpreter, VM, JIT, lexer/layout/parser (sintaks Python), type
                 mod_*.cpp       modul sistem tertanam: http, ws, crypto, audio, gambar
                 pylib.cpp       builtin & metode gaya Python, format string
                 pystd.cpp       native di balik math/json/os/sys/time/random/re
-                stdlib.cpp      pustaka standar bergaya Python (sumber NSL tertanam)
+                stdlib.cpp      modul inti (math json sys time ...) + kelas Exception (`__exc`) + runtime generator (`__gen`)
+                stdlib_embed.cpp  GENERATED dari lib/*.ns (itertools, pathlib, csv, argparse, ...)
                 update.cpp      `nusa update`
                 plugin.cpp      pemuat plugin .so + registri modul tertanam
                 sysmod.cpp      pemanggil plugin sistem opsional (js, qr)
                 gobridge*.cpp   `nusa go add` (+ sumber jembatan Go yang ditanam)
+lib/            pustaka standar bergaya Python ditulis dalam NSL (satu file per modul; `import a.b` -> lib/a_b.ns)
 plugins/        plugin .so: sqlite, js (QuickJS), qr (quirc+stb), hello (contoh); vendor C di sini
 tools/          gobridge/ (bridge.go = runtime jembatan Go, gen/main.go = generator registri),
-                embed_gobridge.py, gen_ca_bundle.py
+                embed_gobridge.py, embed_lib.py, gen_ca_bundle.py
 examples/       contoh program
 tests/          run.sh (golden test), cases/, golden/, tls/ (vektor kripto)
 bench/          microbenchmark
@@ -338,13 +358,14 @@ tests/run.sh --update             # tulis ulang golden (hanya kalau perubahan ou
 make tls-test                     # vektor kripto TLS (dari implementasi independen)
 ```
 
-`tests/run.sh` juga mengecek `src/gobridge_embed.cpp` tidak usang. Setelah mengubah `tools/gobridge/*`: `python3 tools/embed_gobridge.py > src/gobridge_embed.cpp`.
+`tests/run.sh` juga mengecek `src/gobridge_embed.cpp` tidak usang. Setelah mengubah `tools/gobridge/*`: `python3 tools/embed_gobridge.py > src/gobridge_embed.cpp`; setelah mengubah `lib/*.ns`: `python3 tools/embed_lib.py > src/stdlib_embed.cpp`.
 
 ## Batasan
 
 - `angka` selalu `double` (bilangan bulat tepat sampai 2^53); tuple = larik; `set` = larik tanpa duplikat.
 - Satu GIL: goroutine tidak paralel untuk CPU murni.
-- Belum ada: `yield`/generator (komprehensi dan `map`/`filter`/`zip` mengembalikan larik), dekorator, `*args`/`**kwargs`, `try/finally` tanpa `except` (pakai `with`), literal himpunan `{1, 2}`, format spec bersarang di f-string (`{x:.2f}` jalan lewat `"{:.2f}".format(x)`), modul standar lain (`itertools`, `pathlib`, `csv`, `argparse`).
+- Beda dari Python: `d[k]` pada kunci yang tidak ada mengembalikan `None` (bukan `KeyError`; pakai `d.get`); `Enum` tidak punya `.name/.value`; `import a.b` mengikat nama `b` (bukan `a`); alias di badan kelas (`baca = tulis`) belum jalan; `yield from` hanya sebagai pernyataan; generator yang tidak dihabiskan tidak menjalankan blok `finally`-nya saat dibuang; `asyncio`, `decimal`, `fractions`, `struct` belum ada.
+- Pembagian dengan nol melempar `ZeroDivisionError` di VM dan interpreter, tetapi tidak di loop numerik hasil JIT.
 - Modul Go: lihat batasannya di bagian "Modul Go".
 
 ## Lisensi
