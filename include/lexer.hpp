@@ -60,7 +60,7 @@ private:
 
     Token readNumber(size_t start, int line, int col);
     Token readIdent(size_t start, int line, int col);
-    Token readString(size_t start, int line, int col);
+    Token readString(size_t start, int line, int col, bool raw = false);
     Token readSymbol(size_t start, int line, int col);
     // Unlike other read* methods, produces several tokens (a desugared
     // `+`/`ke_teks(...)` chain) -- see lexer.cpp.

@@ -1,6 +1,6 @@
 # 🏝️ Nusantara (`.ns`)
 
-Bahasa pemrograman yang ditulis native di C++17, jalan di bytecode VM sendiri, dan bisa dipakai dengan **gaya Python** atau **keyword Bahasa Indonesia** (atau dicampur). Satu binary, tanpa runtime lain, tanpa pustaka luar (TLS-nya pun ditulis sendiri), dan bisa memakai **modul Go** apa saja.
+Bahasa pemrograman bergaya **Python** yang ditulis native di C++17 dan berjalan di bytecode VM sendiri. Keyword-nya bisa **Inggris/Python** atau **Indonesia** (atau dicampur), dengan struktur yang sama: blok berindentasi, `:` di akhir header, tanpa `{ }` dan `;`. Satu binary, tanpa runtime lain, tanpa pustaka luar (TLS-nya pun ditulis sendiri), dan bisa memakai **modul Go** apa saja. Dipakai seperti `node`/`python`: `nusa skrip.ns`.
 
 ```python
 def fib(n):
@@ -12,21 +12,22 @@ for i in range(10):
     print(fib(i))
 ```
 
-Versi Indonesianya persis sama artinya (token-nya identik di lexer):
+Program yang sama dengan keyword Indonesia — strukturnya tetap Python (indentasi, `:`, `for ... in`):
 
 ```
-fungsi fib(n) {
-    jika n < 2 { hasil n; }
-    hasil fib(n - 1) + fib(n - 2);
-}
+fungsi fib(n):
+    jika n < 2:
+        hasil n
+    hasil fib(n - 1) + fib(n - 2)
 
-untuk (buat i = 0; i < 10; i = i + 1) {
-    cetak(fib(i));
-}
+untuk i dalam rentang(10):
+    cetak(fib(i))
 ```
+
+Bentuk pendeknya juga jalan (`fung`, `jk`, `lain`, `slm`, `kem` = `return`, `henti`, ...).
 
 Isi:
-[Build & install](#build--install) · [CLI](#cli) · [Bahasa](#bahasa) · [Sintaks gaya Python](#sintaks-gaya-python) · [OOP](#oop) · [Concurrency](#concurrency) · [Builtin](#builtin) · [Modul & plugin](#modul--plugin) · [Modul Go](#modul-go) · [Tanpa pustaka luar](#tanpa-pustaka-luar) · [Memori & performa](#memori--performa) · [Struktur repo](#struktur-repo) · [Tes](#tes) · [Batasan](#batasan)
+[Build & install](#build--install) · [CLI](#cli) · [Bahasa](#bahasa) · [Sintaks gaya Python](#sintaks-gaya-python) · [OOP](#oop) · [Pustaka standar](#pustaka-standar) · [Concurrency](#concurrency) · [Builtin](#builtin) · [Modul & plugin](#modul--plugin) · [Modul Go](#modul-go) · [Tanpa pustaka luar](#tanpa-pustaka-luar) · [Memori & performa](#memori--performa) · [Struktur repo](#struktur-repo) · [Tes](#tes) · [Batasan](#batasan)
 
 ## Build & install
 
@@ -48,54 +49,63 @@ Butuh compiler C++17 dan `cc`. Go **tidak** dibutuhkan kecuali kamu membangun mo
 
 ## CLI
 
+`nusa` adalah runtime, seperti `node` atau `python` — tidak ada bundler/toolchain web bawaan.
+
 ```bash
 nusa                          # REPL
-nusa main.ns                  # jalanin file  (= nusa run main.ns)
+nusa main.ns arg1 arg2        # jalanin file (sys.argv = ["main.ns", "arg1", "arg2"])
 nusa app.js                   # jalanin JavaScript lewat QuickJS (plugin js)
 nusa -e 'print(1 + 1)'        # eval satu potong kode
 nusa -c main.ns               # cek lexer/parser/tipe saja
 nusa watch main.ns            # auto re-run tiap file disimpan
 nusa get github.com/u/repo    # install paket (git clone); `install` baca ./nusa.json
 nusa go add <modul-go> ...    # bangun modul Nusantara dari modul Go (lihat "Modul Go")
+nusa update                   # perbarui nusa (dan plugin) ke rilis terbaru
 nusa set lang en              # bahasa pesan error: ind | en (atau env NUSA_LANG)
+nusa -h                       # bantuan
 ```
 
 ## Bahasa
 
-Keyword Indonesia dan Inggris/Python **setara dan bisa dicampur bebas**:
+Keyword Indonesia dan Inggris/Python **setara dan bisa dicampur bebas** dalam satu file:
 
 | Indonesia | Singkat | Inggris / Python | | Indonesia | Singkat | Inggris / Python |
 |---|---|---|---|---|---|---|
-| `buat` | | `let` | | `kelas` | | `class` |
-| `fungsi` | `fung` | `func`, `function`, `def` | | `turunan` | | `extends` (atau `class A(B):`) |
+| `buat` | | `let` (tidak perlu di Python) | | `kelas` | | `class` |
+| `fungsi` | `fung` | `def`, `func`, `function` | | `turunan` | | `extends` (atau `class A(B):`) |
 | `jika` / `lain` | `jk` | `if` / `else`, `elif` | | `bentuk` | | `struct` |
 | `selama` | `slm` | `while` | | `jenis` | | `enum` |
-| `untuk` | | `for` | | `coba` / `tangkap` / `akhirnya` | `akhir` | `try` / `except`,`catch` / `finally` |
-| `hasil` | `kem` | `return` | | `lempar` | | `throw`, `raise` |
+| `untuk` ... `dalam` | | `for` ... `in` | | `coba` / `tangkap` / `akhirnya` | `akhir` | `try` / `except` / `finally` |
+| `hasil` | `kem` | `return` | | `lempar` | | `raise`, `throw` |
 | `berhenti` / `lanjut` | `henti` | `break` / `continue` | | `benar` / `salah` / `kosong` | | `True` / `False` / `None` |
-| `ini` / `induk` | | `self` / `super` | | `bukan` | | `not` |
+| `ini` / `induk` | | `self` / `super` | | `bukan` / `dan` / `atau` | | `not` / `and` / `or` |
+| `dalam` | | `in` | | `adalah` | | `is` |
+| `dengan` ... `sbg` | | `with` ... `as` | | `pastikan` / `hapus` | | `assert` / `del` |
 
-Nama builtin juga punya alias Python: `print`=`cetak`, `len`/`length`=`panjang`, `append`/`push`=`tambah`, `str`=`ke_teks`, `int`/`float`=`ke_angka`, `range`=`rentang`, `keys`=`peta_kunci`, `new_map`=`peta_baru`, dst.
-
-Tipe: `angka` (double), `teks`, `boolean`, `kosong`, `larik`, `peta`. Anotasi tipe opsional dicek sebelum program jalan:
+Nama builtin punya padanan Python: `print`=`cetak`, `len`=`panjang`, `range`=`rentang`, `str`=`ke_teks`, `float`=`ke_angka`, `keys`=`peta_kunci`, ... Tipe: `angka` (double), `teks`, `boolean`, `kosong`, `larik`, `peta`. Anotasi tipe opsional dicek sebelum program jalan:
 
 ```python
 def luas(p: angka, l: angka) -> angka:
     return p * l
 ```
 
+**Kebenaran (truthiness) seperti Python:** `None`, `False`, `0`, `""`, `[]`, dan `{}` bernilai salah; selain itu benar.
+
 ## Sintaks gaya Python
 
-- **Blok berindentasi dengan `:`** — `if x:`, `for i in range(n):`, `while c:`, `def f():`, `class A:`, `try:`/`except e:`/`finally:`. Gaya kurung kurawal `{ }` tetap jalan; satu file memakai salah satunya.
-- **`;` tidak wajib.** Baris baru mengakhiri pernyataan, juga di gaya kurung kurawal. Dua pernyataan dalam satu baris tetap butuh `;`.
+- **Blok berindentasi dengan `:`** — `if x:`, `elif`, `for i in range(n):`, `while c:`, `def f():`, `class A:`, `try:`/`except e:`/`finally:`, `with ... as f:`. Gaya kurung kurawal `{ }` tetap jalan (satu file memakai salah satunya).
+- **`;` tidak wajib.** Baris baru mengakhiri pernyataan, juga di gaya kurung kurawal.
 - **Deklarasi implisit:** `x = 1` cukup, tanpa `buat`. Nama baru di dalam blok tetap terlihat setelahnya (seperti Python); `global x` / `nonlocal x` untuk menulis ke luar fungsi.
-- **Parameter default:** `def f(a, b=1, c=[])` — juga di metode, konstruktor, dan lambda. Nilai default dievaluasi tiap panggilan (bukan sekali seperti Python). Argumen yang dilewat bernilai `None`.
-- **Literal peta:** `{"nama": "Rex", "umur": 3}`, boleh bersarang dan multi-baris dengan koma penutup. **Peta menjaga urutan sisip** seperti `dict` Python: `keys(m)`, iterasi, dan `json_encode` mengikuti urutan kunci ditambahkan.
-- `for x in larik:`, `for i in range(a, b, step):`, slice `a[1:3]`, `a[-1]`, `a[::2]`, `lambda a, b=2: a * b`.
-- `import modul`, `from modul import nama as alias`, `import a.b` (paket dengan `__init__`/`index.ns`).
-- Metode bawaan gaya Python di teks/larik/peta (`"a,b".split(",")`, `xs.append(v)`, `m.keys()`, dst).
-- `and` / `or` / `not`, `in` / `not in` (teks, larik, peta), `is` / `is not` (kesamaan nilai, mis. `x is None`).
-- Ekspresi kondisional `a if cond else b` (bersarang boleh), f-string `f"halo {nama}, {x + 1}"` (`{{` `}}` untuk kurung literal; tanpa format spec), string kutip tunggal `'...'` dan triple-quote `"""..."""` multi-baris.
+- **Penugasan beruntun dan unpacking:** `a, b = 1, 2`, `a, b = b, a`, `x[i], x[j] = x[j], x[i]`, `q, r = divmod(7, 2)`, `for i, x in enumerate(xs):`, `for k, v in d.items():`. Tuple `(a, b)` berupa larik.
+- **Parameter default dan argumen bernama:** `def f(a, b=1)`, `f(1, b=2)`, juga di metode, konstruktor `P(x=1)`, lambda, dan builtin (`print(a, b, sep="-", end="")`, `sorted(xs, key=len, reverse=True)`, `xs.sort(reverse=True)`, `max(xs, default=0)`, `"{a}".format(a=1)`). Nilai default dievaluasi tiap panggilan. Argumen yang dilewat bernilai `None`.
+- **Komprehensi:** `[x * 2 for x in xs if x > 0]`, `{k: v for k, v in pairs}`, bersarang (`for a in x for b in y`), dan generator sebagai argumen: `sum(x * x for x in xs)`.
+- **Literal peta:** `{"nama": "Rex"}`. **Peta menjaga urutan sisip** seperti `dict` Python; kunci non-teks dipakai sebagai teks (`d[1]` = `d["1"]`).
+- **Operator:** `**` (pangkat), `//` (bagi bulat, di file bergaya Python; di gaya `{ }` `//` tetap komentar), `%` (sisa; atau format teks: `"%d item" % 3`), `a if c else b`, `x in xs` / `x not in xs` (teks, larik, peta), `x is None` / `x is not None`, perbandingan berantai `0 <= x < n`, `and`/`or`/`not`, `del x[i]`, `assert cond, "pesan"`.
+- **Slice:** `a[1:3]`, `a[-2:]`, `a[::-1]`, `a[::2]`, `a[3:0:-1]` untuk teks dan larik.
+- **String:** kutip ganda/tunggal, triple-quote multi-baris, f-string `f"halo {nama}, {x + 1}"` (`{{` `}}` untuk kurung literal), template `` `halo ${nama}` ``, angka ilmiah `1e3`, `2.5e-2`.
+- **Impor:** `import math, json`, `import a.b`, `from modul import nama as alias`.
+- **File:** `open(path, "r"|"w"|"a")` dengan `read()`, `readline()`, `readlines()`, `write()`, `close()`, dan `with open(p) as f:` yang menutup file otomatis.
+- **Metode bawaan** — teks: `split join strip lstrip rstrip replace startswith endswith find count upper lower title capitalize isdigit isalpha zfill center ljust rjust format ...`; larik: `append extend insert remove pop index count sort reverse copy clear`; peta: `keys values items get setdefault pop update copy clear`.
 
 ## OOP
 
@@ -105,55 +115,102 @@ class Hewan:
         self.nama = nama
         self.suara = suara
     def bicara(self):
-        print(self.nama + " " + self.suara)
+        print(f"{self.nama} {self.suara}")
 
 class Anjing(Hewan):
     def bicara(self):
         print(self.nama + " menggonggong")
 
 Anjing("Rex").bicara()
+Hewan(suara="mbek", nama="Kambing").bicara()
 ```
 
-Gaya Indonesia: `kelas`, `fungsi konstruktor(...)`, `ini.x`, `turunan`, `induk`. Plus `bentuk` (struct data polos), `jenis` (enum), exception (`coba`/`tangkap`/`akhirnya`/`lempar` — boleh lempar nilai apa saja), template string `` `halo ${nama}` ``, dan fungsi anonim.
+Versi Indonesia (struktur sama):
+
+```
+kelas Hewan:
+    fungsi konstruktor(ini, nama):
+        ini.nama = nama
+    fungsi bicara(ini):
+        cetak(ini.nama + " bersuara")
+
+kelas Anjing(Hewan):
+    fungsi bicara(ini):
+        cetak(ini.nama + " menggonggong")
+
+Anjing("Rex").bicara()
+```
+
+Plus `bentuk` (struct data polos), `jenis` (enum), exception (`try`/`except`/`finally`/`raise` — boleh melempar nilai apa saja), dan fungsi anonim/lambda.
+
+## Pustaka standar
+
+Modul bergaya Python, tertanam di binary (tanpa instalasi): `import math` ...
+
+| Modul | Isi |
+|---|---|
+| `math` | `sqrt sin cos tan atan2 exp log log2 log10 floor ceil trunc gcd lcm factorial comb prod hypot isnan isclose pi e tau inf` |
+| `json` | `dumps(obj, indent=2, sort_keys=True)`, `loads`, `dump(obj, f)`, `load(f)` |
+| `os` | `getcwd chdir listdir mkdir makedirs remove rename system getenv environ cpu_count`, `os.path.join/exists/isfile/isdir/basename/dirname/splitext/abspath/getsize` |
+| `sys` | `argv exit platform version stdout.write stderr.write stdin.read` |
+| `time` | `time sleep monotonic perf_counter strftime localtime` |
+| `datetime` | `datetime.now()` → `year month day hour minute second strftime isoformat timestamp` |
+| `random` | `random randint uniform choice shuffle sample seed gauss randrange` |
+| `re` | `search match fullmatch findall finditer sub split compile` (objek `Match`: `group groups groupdict start end span`) |
+| `http` | klien HTTP(S) seperti `requests` (di bawah) |
+| `subprocess` | `run(args)` → `returncode stdout stderr`, `check_output` |
+| `hashlib`, `base64`, `string`, `copy`, `functools`, `collections` | `sha256(x).hexdigest()`, `b64encode/b64decode`, konstanta huruf, `deepcopy`, `reduce`, `Counter` |
+
+```python
+import http
+r = http.get("https://example.com", params={"q": "nusa"}, timeout=10)
+print(r.status, r.ok, r.headers["content-type"], len(r.text))
+
+r = http.post("https://httpbin.org/post", json={"nama": "Rex"})   # juga data={...}, headers={...}
+print(r.json()["json"])
+```
+
+`Response` punya `status`/`status_code`, `ok`, `headers` (kunci huruf kecil), `text`, `json()`, `raise_for_status()`. Metode: `get head post put patch delete request`.
+
+```python
+import re, os, sys
+for nama in os.listdir("."):
+    m = re.match(r"(\w+)\.ns$", nama)
+    if m:
+        print(m.group(1))
+print(sys.argv[1:])
+```
 
 ## Concurrency
 
-Goroutine (`jalan`) dan channel (`kanal_baru`, `kanal_kirim`, `kanal_terima`, `pilih_kanal`), `wg_*` (WaitGroup), di atas satu GIL yang dilepas otomatis saat menunggu I/O atau memanggil plugin — cocok untuk kerjaan network/background, bukan paralel CPU murni.
+Goroutine (`go`/`jalan`) dan channel (`channel`/`kanal_baru`, `chan_send`, `chan_recv`, `select`), `wg_*` (WaitGroup), di atas satu GIL yang dilepas otomatis saat menunggu I/O, `sleep`, atau memanggil plugin — cocok untuk kerjaan network/background, bukan paralel CPU murni.
 
 ```python
 c = channel()
 for i in range(5):
     go(lambda n: chan_send(c, n * n), i)
-total = 0
-for i in range(5):
-    total = total + chan_recv(c)
-print(total)   # 30
+print(sum(chan_recv(c) for _ in range(5)))   # 30
 ```
 
 `latar()` di dalam goroutine menandainya sebagai pekerja latar: proses boleh selesai walau goroutine itu masih jalan (dipakai pendengar event modul Go).
 
 ## Builtin
 
+- Python: `abs min max sum round pow divmod chr ord hex bin oct bool int float str list tuple set dict sorted reversed enumerate zip map filter any all isinstance callable len range print input open type`
 - Jaringan: `http_get`/`http_post` (HTTPS beneran), `tcp_konek`/`tcp_kirim`/`tcp_terima`, `http_dengar` (server), `email_kirim`
 - Data: `json_encode`/`json_decode`, `base64_encode`/`decode`, `sha256_hex`, `hmac_sha256_hex`, `jwt_buat`/`jwt_verifikasi`
 - Sistem: `baca_file`/`tulis_file`/`file_ada`, `jalankan_perintah` (argv-safe, tanpa shell), `proc_stream_*`, `ambil_env`, `waktu`, `tidur`
 - `qr_baca` (plugin `qr`), `impor()`, `muat_plugin()`, `gc_paksa()`
 
-Daftar lengkap + signature ada di `src/interpreter.cpp` (cari `builtinNames`/`callBuiltin`).
+Daftar lengkap + signature ada di `src/interpreter.cpp` (`builtinNames`/`callBuiltin`) dan `src/pylib.cpp`.
 
 ## Modul & plugin
 
-- `import nama` / `impor("nama")` mencari `nusantara_modules/nama/index.ns` (atau `nama.ns`) relatif ke folder kerja, seperti `node_modules`. `nusa get` memasangnya dari git.
+- `import nama` mencari `nusantara_modules/nama/index.ns` (atau `nama.ns`, paket dengan `__init__.ns`) relatif ke folder kerja dulu, baru pustaka standar di atas. `nusa get` memasangnya dari git.
 - **Modul sistem `muat_plugin("nama")`:**
   - **Tertanam di binary** (tanpa file `.so`): `http` (klien HTTP/1.1 + TLS, redirect, streaming, proxy), `ws` (WebSocket ws/wss), `crypto`, `audio`, `gambar`.
   - **Plugin `.so`** yang ikut terbangun oleh `make`: `sqlite`, `js` (QuickJS), `qr` (quirc + stb_image). Kode C vendor hanya ada di `plugins/<nama>/vendor/`.
   - Path eksplisit `muat_plugin("./x.so")` memuat plugin buatanmu (ABI di `include/plugin_abi.h`, contoh `plugins/hello`).
-
-```python
-h = muat_plugin("http")
-r = json_decode(h.minta("GET", "https://example.com", "/", "{}", ""))
-print(r["status"], r["header"]["content-type"], len(r["tubuh"]))
-```
 
 ## Modul Go
 
@@ -257,6 +314,10 @@ src/            interpreter, VM, JIT, lexer/layout/parser (sintaks Python), type
                 tls*.cpp        TLS + X.509 + bundel CA sendiri
                 net.cpp         socket / http_get / http_dengar
                 mod_*.cpp       modul sistem tertanam: http, ws, crypto, audio, gambar
+                pylib.cpp       builtin & metode gaya Python, format string
+                pystd.cpp       native di balik math/json/os/sys/time/random/re
+                stdlib.cpp      pustaka standar bergaya Python (sumber NSL tertanam)
+                update.cpp      `nusa update`
                 plugin.cpp      pemuat plugin .so + registri modul tertanam
                 sysmod.cpp      pemanggil plugin sistem opsional (js, qr)
                 gobridge*.cpp   `nusa go add` (+ sumber jembatan Go yang ditanam)
@@ -281,11 +342,10 @@ make tls-test                     # vektor kripto TLS (dari implementasi indepen
 
 ## Batasan
 
-- `angka` selalu `double` (bilangan bulat tepat sampai 2^53).
+- `angka` selalu `double` (bilangan bulat tepat sampai 2^53); tuple = larik; `set` = larik tanpa duplikat.
 - Satu GIL: goroutine tidak paralel untuk CPU murni.
-- Parameter default: argumen yang tidak diisi bernilai `None`, jadi `None` eksplisit ikut memicu nilai default.
-- Belum ada: `yield`/generator, format spec di f-string (`{x:.2f}`), `with`, dekorator.
-- Tidak ada toolchain web bawaan: `nusa` adalah runtime seperti `node`; web server lewat `http_dengar` atau modul Go (gin, dll).
+- Belum ada: `yield`/generator (komprehensi dan `map`/`filter`/`zip` mengembalikan larik), dekorator, `*args`/`**kwargs`, `try/finally` tanpa `except` (pakai `with`), literal himpunan `{1, 2}`, format spec bersarang di f-string (`{x:.2f}` jalan lewat `"{:.2f}".format(x)`), modul standar lain (`itertools`, `pathlib`, `csv`, `argparse`).
+- Modul Go: lihat batasannya di bagian "Modul Go".
 
 ## Lisensi
 

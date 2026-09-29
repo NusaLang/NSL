@@ -162,6 +162,12 @@ std::vector<Token> Lexer::nextTokens() {
 
     if (std::isdigit(static_cast<unsigned char>(ch))) {
         return {readNumber(start, line, col)};
+    } else if ((ch == 'r' || ch == 'R' || ch == 'b' || ch == 'B') && (peek(1) == '"' || peek(1) == '\'')) {
+        // r"..." keeps backslashes as written; b"..." is an ordinary string here
+        bool raw = ch == 'r' || ch == 'R';
+        advance();
+        Token t = readString(start, line, col, raw);
+        return {t};
     } else if ((ch == 'f' || ch == 'F') && (peek(1) == '"' || peek(1) == '\'')) {
         advance();  // the f prefix
         return readBacktickTemplate(start, line, col, peek(), true);
@@ -280,7 +286,7 @@ Token Lexer::readIdent(size_t start, int line, int col) {
     return tok;
 }
 
-Token Lexer::readString(size_t start, int line, int col) {
+Token Lexer::readString(size_t start, int line, int col, bool raw) {
     char quote = advance();  // opening quote: double or single
     bool triple = peek() == quote && peek(1) == quote;  // triple-quoted strings may span lines
     if (triple) { advance(); advance(); }
@@ -291,7 +297,10 @@ Token Lexer::readString(size_t start, int line, int col) {
         }
         if (peek() == quote && (!triple || (peek(1) == quote && peek(2) == quote))) break;
         char ch = advance();
-        if (ch == '\\') {
+        if (ch == '\\' && raw) {
+            value += ch;
+            if (pos_ < source_.size()) value += advance();
+        } else if (ch == '\\') {
             char esc = advance();
             switch (esc) {
                 case 'n': value += '\n'; break;
