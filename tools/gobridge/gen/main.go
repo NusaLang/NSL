@@ -485,6 +485,8 @@ fungsi chan_go(elem, ukuran = 0) {
 
 fungsi _gabung_arg(dasar, resto) {
     jika resto != kosong {
+        // satu nilai tunggal (bukan larik) dianggap satu argumen sisa: r.GET("/x", handler)
+        jika tipe(resto) != "larik" { tambah(dasar, resto); hasil dasar; }
         untuk (buat i = 0; i < panjang(resto); i = i + 1) { tambah(dasar, resto[i]); }
     }
     hasil dasar;

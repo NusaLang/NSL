@@ -184,7 +184,7 @@ func fieldSnapshotDepth(v reflect.Value, depth int) map[string]interface{} {
 			reflect.Float64, reflect.String:
 			m[sf.Name] = encodeOpt(fv, false)
 		case reflect.Ptr, reflect.Interface:
-			if depth == 0 && !fv.IsNil() && fv.CanInterface() {
+			if depth < 2 && !fv.IsNil() && fv.CanInterface() {
 				m[sf.Name] = handleRefDepth(fv, depth+1)
 			}
 		case reflect.Struct:

@@ -214,6 +214,23 @@ srv = gostd.httptest.NewServer(handler)      # server Go, handler NSL
 print(gostd.io.ReadAll(gostd.http.Get(srv.URL + "/tes").Body))
 ```
 
+Framework web Go dipakai dengan handler NSL:
+
+```python
+import gin
+g = gin.gin
+r = g.Default()
+def kuadrat(c):
+    n = int(c.Query("n"))
+    c.JSON(200, {"n": n, "kuadrat": n * n})
+r.GET("/kuadrat", kuadrat)          # handler tunggal tidak perlu dibungkus larik
+def layani():
+    latar()                         # pekerja latar: proses boleh selesai walau server masih jalan
+    r.Run(":8080")
+jalan(layani)
+tidur(60000)                        # curl "localhost:8080/kuadrat?n=12" -> {"kuadrat":144,"n":12}
+```
+
 Sudah dicoba dibangun: uuid, cast, jwt, decimal, yaml, toml, zerolog, samber/lo, goquery, goldmark, go-qrcode, imaging, go-redis, mysql/pq, gorilla/mux, gin, resty, viper, mongo-driver, golang.org/x/{text,net}, go-sqlite3, hypermeow (WhatsApp).
 
 **Batasan modul Go:** tipe generik (`Set[T]`) tidak dibungkus (hanya fungsinya); antarmuka yang butuh mengisi buffer keluaran (`io.Reader.Read(p)`) tidak bisa diimplementasikan dari NSL; callback yang tidak dibalas dalam 60 detik dilanjutkan dengan nilai kosong; paket yang butuh cgo/library C sistem harus tersedia di mesin pembangun.

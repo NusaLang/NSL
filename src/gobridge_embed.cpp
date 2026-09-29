@@ -192,7 +192,7 @@ func fieldSnapshotDepth(v reflect.Value, depth int) map[string]interface{} {
 			reflect.Float64, reflect.String:
 			m[sf.Name] = encodeOpt(fv, false)
 		case reflect.Ptr, reflect.Interface:
-			if depth == 0 && !fv.IsNil() && fv.CanInterface() {
+			if depth < 2 && !fv.IsNil() && fv.CanInterface() {
 				m[sf.Name] = handleRefDepth(fv, depth+1)
 			}
 		case reflect.Struct:
@@ -247,8 +247,8 @@ func encodeOpt(v reflect.Value, methodsAsHandle bool) interface{} {
 		switch v.Kind() {
 		case reflect.Interface, reflect.Ptr, reflect.Func, reflect.Chan:
 		default:
-)NSGO"
-         R"NSGO(			if hasMethods(v.Type()) {
+	)NSGO"
+         R"NSGO(		if hasMethods(v.Type()) {
 				return handleRef(v)
 			}
 		}
@@ -518,8 +518,8 @@ func queueFor(name string) *eventQueue {
 	q, ok := queues[name]
 	if !ok {
 		q = &eventQueue{ch: make(chan string, 8192)}
-		queues[na)NSGO"
-         R"NSGO(me] = q
+		queues[nam)NSGO"
+         R"NSGO(e] = q
 	}
 	return q
 }
@@ -817,8 +817,8 @@ func invoke(fv reflect.Value, rawArgs []json.RawMessage) (res callResult) {
 	if len(rawArgs) < fixed || (!variadic && len(rawArgs) > fixed) {
 		return callResult{Err: fmt.Errorf("butuh %d argumen, dapat %d", fixed, len(rawArgs))}
 	}
-	in := make([]reflect.Valu)NSGO"
-         R"NSGO(e, 0, len(rawArgs))
+	in := make([]reflect.Value)NSGO"
+         R"NSGO(, 0, len(rawArgs))
 	var outs []reflect.Value // {"$ptr": kind} arguments: pointers Go fills in (rows.Scan(&x))
 	for i, raw := range rawArgs {
 		var pt reflect.Type
@@ -1123,8 +1123,8 @@ func manifest() string {
 
 // ------------------------------------------------------------ ABI entry ----
 
-func argString(argv []C.NsValue, i int) string )NSGO"
-         R"NSGO({
+func argString(argv []C.NsValue, i int) string {)NSGO"
+         R"NSGO(
 	if i >= len(argv) || nsType(&argv[i]) != C.NS_STRING {
 		return ""
 	}
@@ -1735,6 +1735,8 @@ fungsi chan_go(elem, ukuran = 0) {
 
 fungsi _gabung_arg(dasar, resto) {
     jika resto != kosong {
+        // satu nilai tunggal (bukan larik) dianggap satu argumen sisa: r.GET("/x", handler)
+        jika tipe(resto) != "larik" { tambah(dasar, resto); hasil dasar; }
         untuk (buat i = 0; i < panjang(resto); i = i + 1) { tambah(dasar, resto[i]); }
     }
     hasil dasar;
@@ -1760,10 +1762,10 @@ fungsi _metode(h, nama, jumlah) {
     jika jumlah == 102 { hasil fungsi(a, b, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a, b], r)); }; }
     jika jumlah == 103 { hasil fungsi(a, b, c, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a, b, c], r)); }; }
     jika jumlah == 104 { hasil fungsi(a, b, c, d, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a, b, c, d], r)); }; }
-    jika jumlah == 0 { hasil fungsi() { hasil _panggil(h, nama, []); }; }
+    jika jumlah == 0 { hasil fungsi() { hasil _panggil(h)NSGO"
+         R"NSGO(, nama, []); }; }
     jika jumlah == 1 { hasil fungsi(a) { hasil _panggil(h, nama, [a]); }; }
-    jika jumlah == 2 { hasil fungsi(a, b) { hasil _panggil(h, nama, [a, b])NSGO"
-         R"NSGO(); }; }
+    jika jumlah == 2 { hasil fungsi(a, b) { hasil _panggil(h, nama, [a, b]); }; }
     jika jumlah == 3 { hasil fungsi(a, b, c) { hasil _panggil(h, nama, [a, b, c]); }; }
     jika jumlah == 4 { hasil fungsi(a, b, c, d) { hasil _panggil(h, nama, [a, b, c, d]); }; }
     jika jumlah == 5 { hasil fungsi(a, b, c, d, e) { hasil _panggil(h, nama, [a, b, c, d, e]); }; }
@@ -1986,10 +1988,10 @@ var stdInterfaces = []ifaceRef{
 	{"sort", "Interface"}, {"container/heap", "Interface"}, {"io", "Closer"}, {"io", "ReadCloser"},
 	{"io", "WriteCloser"}, {"io", "ReadWriteCloser"}, {"io", "ReadWriter"}, {"io", "Seeker"},
 	{"net/http", "RoundTripper"}, {"net/http", "CookieJar"}, {"net/http", "Handler"},
-	{"encoding/json", "Marshaler"}, {"encoding/json", "Unmarshaler"},
+	{"encoding/json", "Marshaler"}, {"encoding/json", )NSGO"
+         R"NSGO("Unmarshaler"},
 	{"encoding", "TextMarshaler"}, {"encoding", "TextUnmarshaler"}, {"fmt", "Stringer"},
-	{"fmt", "Formatter"}, {"context", "Context"}, {"log/slog", "Handl)NSGO"
-         R"NSGO(er"}, {"crypto", "Signer"},
+	{"fmt", "Formatter"}, {"context", "Context"}, {"log/slog", "Handler"}, {"crypto", "Signer"},
 	{"hash", "Hash"}, {"net", "Conn"}, {"net", "Listener"}, {"database/sql/driver", "Valuer"},
 	{"database/sql", "Scanner"},
 }
