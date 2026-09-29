@@ -717,9 +717,27 @@ ExprPtr Parser::call() {
             expr->span = start;
         } else if (check(TokenType::LBracket)) {
             advance();
-            ExprPtr index = expression();
+            // Python slices: x[a:b], x[:b], x[a:], x[:] -> __iris(x, a|kosong, b|kosong)
+            ExprPtr index;
+            bool slice = false;
+            ExprPtr hi;
+            if (!check(TokenType::Colon)) index = expression();
+            if (match(TokenType::Colon)) {
+                slice = true;
+                if (!check(TokenType::RBracket)) hi = expression();
+            }
             expect(TokenType::RBracket, i18n::tr("']' diharapkan setelah index", "Expected ']' after index"));
-            expr = std::make_unique<IndexExpr>(std::move(expr), std::move(index));
+            if (slice) {
+                std::vector<ExprPtr> args;
+                args.push_back(std::move(expr));
+                args.push_back(index ? std::move(index) : LiteralExpr::makeNull());
+                args.push_back(hi ? std::move(hi) : LiteralExpr::makeNull());
+                ExprPtr callee = std::make_unique<IdentifierExpr>("__iris");
+                callee->span = start;
+                expr = std::make_unique<CallExpr>(std::move(callee), std::move(args));
+            } else {
+                expr = std::make_unique<IndexExpr>(std::move(expr), std::move(index));
+            }
             expr->span = start;
         } else if (check(TokenType::Dot)) {
             // `obj.field` is sugar for `obj["field"]` -- same IndexExpr

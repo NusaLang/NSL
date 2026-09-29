@@ -100,7 +100,7 @@ Memori dikelola GC mark-sweep otomatis, gak ada alokasi/pembebasan manual.
 
 ## Builtin yang lumayan lengkap
 
-- `http_get`/`http_post` (HTTPS beneran, TLS lewat BearSSL divendor), `tcp_konek`/`tcp_kirim`/`tcp_terima`, `http_dengar` buat bikin server
+- `http_get`/`http_post` (HTTPS beneran, TLS 1.2/1.3 ditulis sendiri di `src/tls*.cpp`, tanpa pustaka luar), `tcp_konek`/`tcp_kirim`/`tcp_terima`, `http_dengar` buat bikin server
 - `json_encode`/`json_decode`, `base64_encode`/`decode`
 - `sha256_hex`, `hmac_sha256_hex`, `jwt_buat`/`jwt_verifikasi`
 - `qr_baca` — baca QR code dari gambar (PNG/JPEG/BMP/dst)

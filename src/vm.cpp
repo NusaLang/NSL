@@ -16,6 +16,7 @@
 #include "i18n.hpp"
 #include "interpreter.hpp"
 #include "methods.hpp"
+#include "value_eq.hpp"
 #include "jit.hpp"
 
 // Name of the function whose frame an in-flight error just left; the caller's
@@ -1195,17 +1196,7 @@ std::shared_ptr<Function> vmLookupMethod(const std::shared_ptr<ClassInfo>& start
 
 // Same rules as valuesEqual() in interpreter.cpp: primitives by value,
 // heap objects (arrays, maps, instances, closures, ...) by identity.
-inline bool vmValuesEqual(const Value& a, const Value& b) {
-    if (a.type != b.type) return false;
-    switch (a.type) {
-        case ValueType::Null: return true;
-        case ValueType::Bool: return a.boolean() == b.boolean();
-        case ValueType::Number: return a.number == b.number;
-        case ValueType::String: return a.str() == b.str();
-        case ValueType::Builtin: return a.builtinName() == b.builtinName();
-        default: return a.ref.get() == b.ref.get();
-    }
-}
+inline bool vmValuesEqual(const Value& a, const Value& b) { return valuesDeepEqual(a, b); }
 
 // Nearest bytecode-compiled method `name` along the class chain, or nullptr.
 // `astShadow` is set when the nearest definition is a tree-walker (AST)
@@ -1232,6 +1223,7 @@ Value vmGetIndex(const Value& target, const Value& idxv) {
         long long i = static_cast<long long>(idxv.number);
         VmArrayState& st = *target.vmArray();
         size_t size = st.numeric ? st.nums.size() : st.boxed->size();
+        if (i < 0) i += static_cast<long long>(size);  // Python: -1 is the last element
         if (i < 0 || static_cast<size_t>(i) >= size) throw VmRuntimeError("Index larik di luar batas: " + std::to_string(i));
         return st.numeric ? Value::fromNumber(st.nums[static_cast<size_t>(i)]) : (*st.boxed)[static_cast<size_t>(i)];
     }
@@ -1239,6 +1231,7 @@ Value vmGetIndex(const Value& target, const Value& idxv) {
         if (idxv.type != ValueType::Number) throw VmRuntimeError("Index larik harus angka");
         long long i = static_cast<long long>(idxv.number);
         auto arr = target.arrayShared();
+        if (i < 0) i += static_cast<long long>(arr->size());
         if (i < 0 || static_cast<size_t>(i) >= arr->size()) throw VmRuntimeError("Index larik di luar batas: " + std::to_string(i));
         return (*arr)[static_cast<size_t>(i)];
     }
@@ -1252,6 +1245,7 @@ Value vmGetIndex(const Value& target, const Value& idxv) {
         if (idxv.type != ValueType::Number) throw VmRuntimeError("Index teks harus angka");
         long long i = static_cast<long long>(idxv.number);
         const std::string& str = target.str();
+        if (i < 0) i += static_cast<long long>(str.size());
         if (i < 0 || static_cast<size_t>(i) >= str.size()) throw VmRuntimeError("Index teks di luar batas: " + std::to_string(i));
         return Value::fromString(std::string(1, str[static_cast<size_t>(i)]));
     }
@@ -2245,9 +2239,10 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 if (target.type == ValueType::VmArray) {
                     if (idxv.type != ValueType::Number) throw VmRuntimeError("Index larik harus angka");
                     long long i = static_cast<long long>(idxv.number);
-                    if (i < 0) throw VmRuntimeError("Index larik negatif nggak valid: " + std::to_string(i));
                     VmArrayState& st = *target.vmArray();
                     size_t size = st.numeric ? st.nums.size() : st.boxed->size();
+                    if (i < 0) i += static_cast<long long>(size);  // Python: -1 is the last element
+                    if (i < 0) throw VmRuntimeError("Index larik negatif nggak valid: " + std::to_string(i));
                     bool needsGrow = static_cast<size_t>(i) >= size;
                     if (st.numeric && val.type == ValueType::Number && !needsGrow) {
                         st.nums[static_cast<size_t>(i)] = val.number;
@@ -2267,8 +2262,9 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 } else if (target.type == ValueType::Array) {
                     if (idxv.type != ValueType::Number) throw VmRuntimeError("Index larik harus angka");
                     long long i = static_cast<long long>(idxv.number);
-                    if (i < 0) throw VmRuntimeError("Index larik negatif nggak valid: " + std::to_string(i));
                     auto arr = target.arrayShared();
+                    if (i < 0) i += static_cast<long long>(arr->size());
+                    if (i < 0) throw VmRuntimeError("Index larik negatif nggak valid: " + std::to_string(i));
                     if (static_cast<size_t>(i) >= arr->size()) {
                         arr->resize(static_cast<size_t>(i) + 1, Value::null());
                     }

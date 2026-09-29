@@ -1,6 +1,6 @@
 CXX ?= g++
 CC ?= cc
-CXXFLAGS := -std=c++17 -O3 -flto=auto -DNDEBUG -Wall -Wextra -Iinclude -Ithird_party/quickjs/vendor -Ithird_party/bearssl/vendor/inc -Ithird_party/stb/vendor -Ithird_party/quirc/vendor -pthread
+CXXFLAGS := -std=c++17 -O3 -flto=auto -DNDEBUG -Wall -Wextra -Iinclude -Ithird_party/quickjs/vendor -Ithird_party/stb/vendor -Ithird_party/quirc/vendor -pthread
 SRC := $(filter-out src/wasm_main.cpp, $(wildcard src/*.cpp))
 BIN := nusantara
 PLUGIN_DIRS := $(wildcard plugins/*)
@@ -30,21 +30,6 @@ QJS_CFLAGS := -O2 -w -D_GNU_SOURCE -DCONFIG_VERSION=\"$(QJS_VERSION)\" -DCONFIG_
 $(QJS_DIR)/%.o: $(QJS_DIR)/%.c
 	$(CC) $(QJS_CFLAGS) -c $< -o $@
 
-# --- BearSSL (vendored, TLS for net::httpRequest's https:// path) ----------
-# Same vendoring convention as QuickJS above: upstream source dropped in
-# verbatim under third_party/bearssl/vendor/src, compiled once and cached.
-# BR_AES_X86NI/BR_SSE2/BR_POWER8 disabled so the portable constant-time
-# implementations are always the ones actually linked in, regardless of
-# which CPU this happens to be built on -- this same object set has to be
-# correct on x86-64, ARM64 and (cross-compiled) Windows alike.
-BSSL_DIR := third_party/bearssl/vendor/src
-BSSL_SRCS := $(wildcard $(BSSL_DIR)/*.c)
-BSSL_OBJS := $(BSSL_SRCS:.c=.o)
-BSSL_CFLAGS := -O2 -w -Ithird_party/bearssl/vendor/inc -I$(BSSL_DIR) -DBR_AES_X86NI=0 -DBR_SSE2=0 -DBR_POWER8=0
-
-$(BSSL_DIR)/%.o: $(BSSL_DIR)/%.c
-	$(CC) $(BSSL_CFLAGS) -c $< -o $@
-
 # quirc (vendored, QR decode for qr_baca()). stb_image is header-only,
 # compiled via src/qr.cpp, no separate object rule needed.
 QUIRC_DIR := third_party/quirc/vendor
@@ -59,8 +44,8 @@ $(QUIRC_DIR)/%.o: $(QUIRC_DIR)/%.c
 
 all: $(BIN)
 
-$(BIN): $(SRC) $(QJS_OBJS) $(BSSL_OBJS) $(QUIRC_OBJS)
-	$(CXX) $(CXXFLAGS) $(SRC) $(QJS_OBJS) $(BSSL_OBJS) $(QUIRC_OBJS) -o $(BIN) -ldl -lm
+$(BIN): $(SRC) $(QJS_OBJS) $(QUIRC_OBJS)
+	$(CXX) $(CXXFLAGS) $(SRC) $(QJS_OBJS) $(QUIRC_OBJS) -o $(BIN) -ldl -lm
 
 run: $(BIN)
 	./$(BIN) run examples/hello.ns
@@ -73,10 +58,10 @@ OPT_BIN := build-opt/nusa
 
 opt: $(OPT_BIN)
 
-$(OPT_BIN): $(SRC) $(wildcard include/*.hpp) $(QJS_OBJS) $(BSSL_OBJS) $(QUIRC_OBJS)
+$(OPT_BIN): $(SRC) $(wildcard include/*.hpp) $(QJS_OBJS) $(QUIRC_OBJS)
 	@mkdir -p build-opt
 	@ln -sfn ../nusantara-plugins build-opt/nusantara-plugins
-	$(CXX) $(CXXFLAGS) $(SRC) $(QJS_OBJS) $(BSSL_OBJS) $(QUIRC_OBJS) -o $(OPT_BIN) -ldl -lm
+	$(CXX) $(CXXFLAGS) $(SRC) $(QJS_OBJS) $(QUIRC_OBJS) -o $(OPT_BIN) -ldl -lm
 
 # Regression / golden test suite. Lihat tests/run.sh.
 test: $(OPT_BIN)
@@ -152,7 +137,7 @@ clean-plugins:
 	@rm -rf nusantara-plugins
 
 clean: clean-plugins
-	rm -f $(BIN) $(QJS_OBJS) $(BSSL_OBJS) $(QUIRC_OBJS)
+	rm -f $(BIN) $(QJS_OBJS) $(QUIRC_OBJS)
 
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin

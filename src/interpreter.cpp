@@ -1,5 +1,6 @@
 #include "interpreter.hpp"
 #include "methods.hpp"
+#include "value_eq.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -71,27 +72,7 @@ struct DepthResetGuard {
     DepthResetGuard(const DepthResetGuard&) = delete;
 };
 
-bool valuesEqual(const Value& a, const Value& b) {
-    if (a.type != b.type) return false;
-    switch (a.type) {
-        case ValueType::Null: return true;
-        case ValueType::Bool: return a.boolean() == b.boolean();
-        case ValueType::Number: return a.number == b.number;
-        case ValueType::String: return a.str() == b.str();
-        case ValueType::Fn: return a.fn() == b.fn();
-        case ValueType::Builtin: return a.builtinName() == b.builtinName();
-        case ValueType::Array: return a.array() == b.array();
-        case ValueType::Map: return a.map() == b.map();
-        case ValueType::Channel: return a.channel() == b.channel();
-        case ValueType::WaitGroup: return a.waitgroup() == b.waitgroup();
-        case ValueType::Native: return a.native() == b.native();
-        case ValueType::Class: return a.klass() == b.klass();
-        case ValueType::Instance: return a.instance() == b.instance();
-        case ValueType::VmFn: return a.vmClosure() == b.vmClosure();
-        case ValueType::VmArray: return a.vmArray() == b.vmArray();
-    }
-    return false;
-}
+bool valuesEqual(const Value& a, const Value& b) { return valuesDeepEqual(a, b); }
 
 std::shared_ptr<Function> lookupMethod(const std::shared_ptr<ClassInfo>& start, const std::string& name,
                                         std::shared_ptr<ClassInfo>* ownerOut = nullptr) {
@@ -111,6 +92,7 @@ Value indexGet(const Value& target, const Value& idx) {
         long long i = static_cast<long long>(idx.number);
         VmArrayState& st = *target.vmArray();
         size_t size = st.numeric ? st.nums.size() : st.boxed->size();
+        if (i < 0) i += static_cast<long long>(size);  // Python: -1 is the last element
         if (i < 0 || static_cast<size_t>(i) >= size) {
             throw RuntimeError(i18n::tr("Index larik di luar batas: ", "Array index out of bounds: ") + std::to_string(i));
         }
@@ -120,6 +102,7 @@ Value indexGet(const Value& target, const Value& idx) {
     if (target.type == ValueType::Array) {
         if (idx.type != ValueType::Number) throw RuntimeError(i18n::tr("Index larik harus angka", "Array index must be a number"));
         long long i = static_cast<long long>(idx.number);
+        if (i < 0) i += static_cast<long long>(target.array()->size());
         if (i < 0 || static_cast<size_t>(i) >= target.array()->size()) {
             throw RuntimeError(i18n::tr("Index larik di luar batas: ", "Array index out of bounds: ") + std::to_string(i));
         }
@@ -134,6 +117,7 @@ Value indexGet(const Value& target, const Value& idx) {
     if (target.type == ValueType::String) {
         if (idx.type != ValueType::Number) throw RuntimeError(i18n::tr("Index teks harus angka", "String index must be a number"));
         long long i = static_cast<long long>(idx.number);
+        if (i < 0) i += static_cast<long long>(target.str().size());
         if (i < 0 || static_cast<size_t>(i) >= target.str().size()) {
             throw RuntimeError(i18n::tr("Index teks di luar batas: ", "String index out of bounds: ") + std::to_string(i));
         }
@@ -155,9 +139,10 @@ void indexSet(Value& target, const Value& idx, const Value& value) {
     if (target.type == ValueType::VmArray) {
         if (idx.type != ValueType::Number) throw RuntimeError(i18n::tr("Index larik harus angka", "Array index must be a number"));
         long long i = static_cast<long long>(idx.number);
-        if (i < 0) throw RuntimeError(i18n::tr("Index larik negatif nggak valid: ", "Negative array index is invalid: ") + std::to_string(i));
         VmArrayState& st = *target.vmArray();
         size_t size = st.numeric ? st.nums.size() : st.boxed->size();
+        if (i < 0) i += static_cast<long long>(size);  // Python: -1 is the last element
+        if (i < 0) throw RuntimeError(i18n::tr("Index larik negatif nggak valid: ", "Negative array index is invalid: ") + std::to_string(i));
         bool needsGrow = static_cast<size_t>(i) >= size;
         if (st.numeric && value.type == ValueType::Number && !needsGrow) {
             st.nums[static_cast<size_t>(i)] = value.number;
@@ -180,6 +165,7 @@ void indexSet(Value& target, const Value& idx, const Value& value) {
     if (target.type == ValueType::Array) {
         if (idx.type != ValueType::Number) throw RuntimeError(i18n::tr("Index larik harus angka", "Array index must be a number"));
         long long i = static_cast<long long>(idx.number);
+        if (i < 0) i += static_cast<long long>(target.array()->size());
         if (i < 0) throw RuntimeError(i18n::tr("Index larik negatif nggak valid: ", "Negative array index is invalid: ") + std::to_string(i));
         auto& vec = *target.array();
         if (static_cast<size_t>(i) >= vec.size()) vec.resize(static_cast<size_t>(i) + 1);
@@ -279,7 +265,7 @@ const std::vector<std::string>& builtinNames() {
         "gc_info", "gc_paksa", "impor",
         "byte_di", "teks_dari",
         "elemen", "teks", "baca_input", "input",
-        "rentang", "__iter",
+        "rentang", "__iter", "__iris",
     };
     return names;
 }
@@ -1603,6 +1589,27 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
             if (out->size() > 100000000) throw RuntimeError(i18n::tr("rentang(): kegedean", "range(): too large"));
         }
         return Value::fromArray(out);
+    }
+
+    // x[a:b] with Python rules: missing bound = start/end, negative bound counts from the end.
+    if (name == "__iris") {
+        need(3);
+        long long len;
+        const Value& v = args[0];
+        if (v.type == ValueType::String) len = static_cast<long long>(v.str().size());
+        else if (v.type == ValueType::Array) len = static_cast<long long>(v.array()->size());
+        else if (v.type == ValueType::VmArray) len = static_cast<long long>(v.vmArray()->numeric ? v.vmArray()->nums.size() : v.vmArray()->boxed->size());
+        else throw RuntimeError(std::string(i18n::tr("Tipe '", "Type '")) + v.typeName() + i18n::tr("' nggak bisa di-slice", "' can't be sliced"));
+        auto bound = [&](const Value& b, long long dflt) {
+            if (b.type == ValueType::Null) return dflt;
+            if (b.type != ValueType::Number) throw RuntimeError(i18n::tr("Batas slice harus angka", "Slice bounds must be numbers"));
+            long long i = static_cast<long long>(b.number);
+            if (i < 0) i += len;
+            return std::max<long long>(0, std::min(i, len));
+        };
+        std::vector<Value> sliceArgs = {v, Value::fromNumber(static_cast<double>(bound(args[1], 0))),
+                                        Value::fromNumber(static_cast<double>(bound(args[2], len)))};
+        return callBuiltin("potong", sliceArgs);
     }
 
     // What `for x in <expr>` walks: arrays and strings as they are, maps as
