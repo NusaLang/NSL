@@ -112,6 +112,16 @@ func lookupHandle(id string) (reflect.Value, bool) {
 	return v, ok
 }
 
+// Number of parameters the NSL wrapper takes. A variadic method reports 100+fixed: the
+// wrapper takes the fixed arguments plus one list holding the variadic ones.
+func methodArity(t reflect.Type, skip int) int {
+	n := t.NumIn() - skip
+	if t.IsVariadic() {
+		return 100 + n - 1
+	}
+	return n
+}
+
 var methodCache sync.Map // reflect.Type -> map[string]int
 
 func methodTable(t reflect.Type) map[string]int {
@@ -122,9 +132,9 @@ func methodTable(t reflect.Type) map[string]int {
 	for i := 0; i < t.NumMethod(); i++ {
 		m := t.Method(i)
 		if t.Kind() == reflect.Interface {
-			out[m.Name] = m.Type.NumIn()
+			out[m.Name] = methodArity(m.Type, 0)
 		} else {
-			out[m.Name] = m.Type.NumIn() - 1 // drop the receiver
+			out[m.Name] = methodArity(m.Type, 1) // drop the receiver
 		}
 	}
 	// A struct value's pointer-receiver methods are reachable through a pointer copy.
@@ -133,7 +143,7 @@ func methodTable(t reflect.Type) map[string]int {
 		for i := 0; i < pt.NumMethod(); i++ {
 			m := pt.Method(i)
 			if _, dup := out[m.Name]; !dup {
-				out[m.Name] = m.Type.NumIn() - 1
+				out[m.Name] = methodArity(m.Type, 1)
 			}
 		}
 	}
@@ -255,7 +265,8 @@ func encodeOpt(v reflect.Value, methodsAsHandle bool) interface{} {
 		out := make(map[string]interface{}, v.Len())
 		iter := v.MapRange()
 		for iter.Next() {
-			out[fmt.Sprint(iter.Key().Interface())] = encode(iter.Value())
+			out[fmt.Sprint(iter.Key().Interface())] = encode(iter.V)NSGO"
+         R"NSGO(alue())
 		}
 		return out
 	case reflect.Struct:
@@ -270,8 +281,7 @@ func encodeOpt(v reflect.Value, methodsAsHandle bool) interface{} {
 			return nil
 		}
 		switch v.Elem().Kind() {
-		case reflect.Bool, refl)NSGO"
-         R"NSGO(ect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32,
 			reflect.Float64, reflect.String:
 			return encode(v.Elem())
@@ -466,12 +476,18 @@ func invoke(fv reflect.Value, rawArgs []json.RawMessage) (res callResult) {
 		return callResult{Err: fmt.Errorf("butuh %d argumen, dapat %d", fixed, len(rawArgs))}
 	}
 	in := make([]reflect.Value, 0, len(rawArgs))
+	var outs []reflect.Value // {"$ptr": kind} arguments: pointers Go fills in (rows.Scan(&x))
 	for i, raw := range rawArgs {
 		var pt reflect.Type
 		if i < fixed {
 			pt = t.In(i)
 		} else {
 			pt = t.In(nIn - 1).Elem()
+		}
+		if pv, ok := pointerArg(raw, pt); ok {
+			outs = append(outs, pv)
+			in = append(in, pv)
+			continue
 		}
 		v, err := convertArg(raw, pt)
 		if err != nil {
@@ -495,6 +511,16 @@ func invoke(fv reflect.Value, rawArgs []json.RawMessage) (res callResult) {
 	vals := make([]interface{}, n)
 	for i := 0; i < n; i++ {
 		vals[i] = encode(out[i])
+	}
+	if len(outs) > 0 {
+		filled := make([]interface{}, len(outs))
+		for i, p := range outs {
+			filled[i] = encode(p.Elem())
+			if e := p.Elem(); e.Kind() == reflect.Slice && e.Type().Elem().Kind() == reflect.Uint8 {
+				filled[i] = string(e.Bytes())
+			}
+		}
+		vals = append(vals, filled)
 	}
 	return callResult{Values: vals}
 }
@@ -543,7 +569,8 @@ func callTarget(target, name, argsJSON string) string {
 	if target == "" {
 		fv, ok := funcs[name]
 		if !ok {
-			return envelope(nil, fmt.Errorf("fungsi Go '%s' tidak ada", name))
+			return envelope(nil, )NSGO"
+         R"NSGO(fmt.Errorf("fungsi Go '%s' tidak ada", name))
 		}
 		r := invoke(fv, args)
 		return envelope(resultValue(r), r.Err)
@@ -571,8 +598,7 @@ func callTarget(target, name, argsJSON string) string {
 		mv = p.MethodByName(name)
 	}
 	if !mv.IsValid() {
-		return envelope(nil, fmt.Errorf("tipe )NSGO"
-         R"NSGO(%s tidak punya metode '%s'", hv.Type(), name))
+		return envelope(nil, fmt.Errorf("tipe %s tidak punya metode '%s'", hv.Type(), name))
 	}
 	r := invoke(mv, args)
 	return envelope(resultValue(r), r.Err)
@@ -732,6 +758,33 @@ func nsGoInvoke(op C.int, argc C.int, argv *C.NsValue) (ret C.NsValue) {
 		return C.make_null()
 	}
 	return C.make_null()
+}
+
+// pointerArg recognises {"$ptr": "teks"|"angka"|"boolean"|"bytes"|"apa"} and returns a pointer to
+// a fresh value of that kind, for parameters typed as an interface (Scan's ...any).
+func pointerArg(raw json.RawMessage, pt reflect.Type) (reflect.Value, bool) {
+	if pt.Kind() != reflect.Interface || pt.NumMethod() != 0 || !strings.Contains(string(raw), "$ptr") {
+		return reflect.Value{}, false
+	}
+	var m struct {
+		P string `json:"$ptr"`
+	}
+	if json.Unmarshal(raw, &m) != nil || m.P == "" {
+		return reflect.Value{}, false
+	}
+	switch m.P {
+	case "teks":
+		return reflect.ValueOf(new(string)), true
+	case "angka":
+		return reflect.ValueOf(new(float64)), true
+	case "boolean":
+		return reflect.ValueOf(new(bool)), true
+	case "bytes":
+		return reflect.ValueOf(new([]byte)), true
+	case "apa":
+		return reflect.ValueOf(new(interface{})), true
+	}
+	return reflect.Value{}, false
 }
 )NSGO"
         },
@@ -1094,6 +1147,14 @@ fungsi _lepas(v) {
     hasil v;
 }
 
+// Penunjuk keluaran buat parameter seperti rows.Scan(...any): jenis "teks", "angka", "boolean",
+// "bytes" atau "apa". Go mengisinya, dan pemanggilnya mengembalikan larik nilai yang terisi.
+fungsi penunjuk(k) {
+    buat p = peta_baru();
+    p["$ptr"] = k;
+    hasil p;
+}
+
 fungsi _gabung_arg(dasar, resto) {
     jika resto != kosong {
         untuk (buat i = 0; i < panjang(resto); i = i + 1) { tambah(dasar, resto[i]); }
@@ -1115,6 +1176,12 @@ fungsi _buat(tipe_go, data) {
 fungsi _konst(nama) { hasil _urai(_p.konst(nama)); }
 
 fungsi _metode(h, nama, jumlah) {
+    // 100+n: metode variadik -- n argumen tetap lalu satu larik untuk sisanya.
+    jika jumlah == 100 { hasil fungsi(r) { hasil _panggil(h, nama, _gabung_arg([], r)); }; }
+    jika jumlah == 101 { hasil fungsi(a, r) { hasil _panggil(h, nama, _gabung_arg([a], r)); }; }
+    jika jumlah == 102 { hasil fungsi(a, b, r) { hasil _panggil(h, nama, _gabung_arg([a, b], r)); }; }
+    jika jumlah == 103 { hasil fungsi(a, b, c, r) { hasil _panggil(h, nama, _gabung_arg([a, b, c], r)); }; }
+    jika jumlah == 104 { hasil fungsi(a, b, c, d, r) { hasil _panggil(h, nama, _gabung_arg([a, b, c, d], r)); }; }
     jika jumlah == 0 { hasil fungsi() { hasil _panggil(h, nama, []); }; }
     jika jumlah == 1 { hasil fungsi(a) { hasil _panggil(h, nama, [a]); }; }
     jika jumlah == 2 { hasil fungsi(a, b) { hasil _panggil(h, nama, [a, b]); }; }
@@ -1132,6 +1199,7 @@ fungsi _objek(v) {
     buat o = peta_baru();
     buat h = v["$h"];
     o["$h"] = h;
+    o["$g"] = pegang(_p.bebas, h);
     o["tipe"] = v["tipe"];
     buat daftar = v["m"];
     buat nama = peta_kunci(daftar);
@@ -1160,6 +1228,7 @@ fungsi _picu(f, a) {
 
 fungsi _dengarkan(nama, f) {
     jalan(fungsi() {
+        latar();
         selama _aktif {
             buat e = _p.event(nama, 500);
             jika e != "" { _picu(f, json_decode(e)); }

@@ -355,6 +355,14 @@ fungsi _lepas(v) {
     hasil v;
 }
 
+// Penunjuk keluaran buat parameter seperti rows.Scan(...any): jenis "teks", "angka", "boolean",
+// "bytes" atau "apa". Go mengisinya, dan pemanggilnya mengembalikan larik nilai yang terisi.
+fungsi penunjuk(k) {
+    buat p = peta_baru();
+    p["$ptr"] = k;
+    hasil p;
+}
+
 fungsi _gabung_arg(dasar, resto) {
     jika resto != kosong {
         untuk (buat i = 0; i < panjang(resto); i = i + 1) { tambah(dasar, resto[i]); }
@@ -376,6 +384,12 @@ fungsi _buat(tipe_go, data) {
 fungsi _konst(nama) { hasil _urai(_p.konst(nama)); }
 
 fungsi _metode(h, nama, jumlah) {
+    // 100+n: metode variadik -- n argumen tetap lalu satu larik untuk sisanya.
+    jika jumlah == 100 { hasil fungsi(r) { hasil _panggil(h, nama, _gabung_arg([], r)); }; }
+    jika jumlah == 101 { hasil fungsi(a, r) { hasil _panggil(h, nama, _gabung_arg([a], r)); }; }
+    jika jumlah == 102 { hasil fungsi(a, b, r) { hasil _panggil(h, nama, _gabung_arg([a, b], r)); }; }
+    jika jumlah == 103 { hasil fungsi(a, b, c, r) { hasil _panggil(h, nama, _gabung_arg([a, b, c], r)); }; }
+    jika jumlah == 104 { hasil fungsi(a, b, c, d, r) { hasil _panggil(h, nama, _gabung_arg([a, b, c, d], r)); }; }
     jika jumlah == 0 { hasil fungsi() { hasil _panggil(h, nama, []); }; }
     jika jumlah == 1 { hasil fungsi(a) { hasil _panggil(h, nama, [a]); }; }
     jika jumlah == 2 { hasil fungsi(a, b) { hasil _panggil(h, nama, [a, b]); }; }
