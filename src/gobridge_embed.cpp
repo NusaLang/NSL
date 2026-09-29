@@ -69,6 +69,7 @@ import "C"
 import (
 	"context"
 	"encoding"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -82,6 +83,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 	"unsafe"
 )
 
@@ -251,8 +253,8 @@ func encodeOpt(v reflect.Value, methodsAsHandle bool) interface{} {
 	switch v.Kind() {
 	case reflect.Bool:
 		return v.Bool()
-	case reflect.Int, reflect.Int8, reflect.Int16,)NSGO"
-         R"NSGO( reflect.Int32, reflect.Int64:
+	case reflec)NSGO"
+         R"NSGO(t.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		n := v.Int()
 		if n > maxSafeInt || n < -maxSafeInt {
 			return strconv.FormatInt(n, 10)
@@ -279,7 +281,11 @@ func encodeOpt(v reflect.Value, methodsAsHandle bool) interface{} {
 		if v.Type().Elem().Kind() == reflect.Uint8 {
 			b := make([]byte, v.Len())
 			reflect.Copy(reflect.ValueOf(b), v)
-			return string(b)
+			if utf8.Valid(b) {
+				return string(b)
+			}
+			// JSON cannot carry arbitrary bytes: the Nusantara side decodes this back into raw bytes.
+			return map[string]interface{}{"$b64": base64.StdEncoding.EncodeToString(b)}
 		}
 		out := make([]interface{}, v.Len())
 		for i := range out {
@@ -356,10 +362,21 @@ func convertArg(raw json.RawMessage, t reflect.Type) (reflect.Value, error) {
 			H     string  `json:"$h"`
 			Cb    string  `json:"$cb"`
 			Bytes *string `json:"$bytes"`
+			B64   *string `json:"$b64"`
 		}
 		if err := json.Unmarshal(raw, &marker); err == nil {
-			if marker.Bytes != nil {
-				bv := reflect.ValueOf([]byte(*marker.Bytes))
+			if marker.Bytes != nil || marker.B64 != nil {
+				var raw []byte
+				if marker.B64 != nil {
+					dec, err := base64.StdEncoding.DecodeString(*marker.B64)
+					if err != nil {
+						return reflect.Value{}, decodeError(t, "base64 tidak valid")
+					}
+					raw = dec
+				} else {
+					raw = []byte(*marker.Bytes)
+				}
+				bv := reflect.ValueOf(raw)
 				if t.Kind() == reflect.Interface && !bv.Type().Implements(t) {
 					return reflect.Value{}, decodeError(t, "bytes_dari() tidak cocok dengan tipe ini")
 				}
@@ -420,6 +437,29 @@ func convertArg(raw json.RawMessage, t reflect.Type) (reflect.Value, error) {
 			return v, nil
 		}
 		return reflect.Value{}, decodeError(t, "butuh handle objek Go, bukan data JSON")
+	}
+	// Large integers travel as text (see encode): accept them back.
+	if strings.HasPrefix(trimmed, "\"") {
+		switch t.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			var str string
+			if json.Unmarshal(raw, &str) == nil {
+				if n, err := strconv.ParseInt(str, 10, 64); err == nil {
+					v := reflect.New(t).Elem()
+					v.SetInt(n)
+					return v, nil
+				}
+			}
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+			var str string
+			if json.Unmarshal(raw, &str) == nil {
+				if n, err := strconv.ParseUint(str, 10, 64); err == nil {
+					v := reflect.New(t).Elem()
+					v.SetUint(n)
+					return v, nil
+				}
+			}
+		}
 	}
 	p := reflect.New(t)
 	if err := json.Unmarshal(raw, p.Interface()); err != nil {
@@ -488,7 +528,8 @@ var (
 )
 
 // syncCallback: a callback that returns values, or takes an object/pointer (an http handler's
-// writer and request, a gin context), must finish on the Nusantara side before Go continues.
+// writer and request, a gin context), must finish on the Nusantara side)NSGO"
+         R"NSGO( before Go continues.
 // Plain event handlers (func(evt interface{})) stay fire-and-forget.
 func syncCallback(t reflect.Type) bool {
 	if t.NumOut() > 0 {
@@ -536,8 +577,7 @@ func makeCallback(t reflect.Type, queue string) reflect.Value {
 		if err != nil {
 			return outs
 		}
-		q.push(str)NSGO"
-         R"NSGO(ing(b))
+		q.push(string(b))
 		select {
 		case r := <-ch:
 			var reply struct {
@@ -796,7 +836,8 @@ func callTarget(target, name, argsJSON string) string {
 	}
 	mv := hv.MethodByName(name)
 	if !mv.IsValid() && hv.Kind() != reflect.Ptr && hv.Kind() != reflect.Interface {
-		p := reflect.New(hv.Type())
+		p := r)NSGO"
+         R"NSGO(eflect.New(hv.Type())
 		p.Elem().Set(hv)
 		mv = p.MethodByName(name)
 	}
@@ -840,8 +881,7 @@ func createValue(typeName, jsonInit string) string {
 	}
 	p := reflect.New(t)
 	if s := strings.TrimSpace(jsonInit); s != "" && s != "null" {
-		if err := json.Unmarshal([]byte(jsonInit), p.Interface());)NSGO"
-         R"NSGO( err != nil {
+		if err := json.Unmarshal([]byte(jsonInit), p.Interface()); err != nil {
 			return envelope(nil, decodeError(t, err.Error()))
 		}
 	}
@@ -1014,6 +1054,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1032,9 +1073,11 @@ type listedPkg struct {
 }
 
 type fnInfo struct {
-	Name     string
+	Name     string // name on the Nusantara side
 	In       int
 	Variadic bool
+	Real     string // Go identifier when it differs from Name (generic instantiations)
+	Inst     string // "[any,float64]" for an instantiated generic function
 }
 
 type pkgInfo struct {
@@ -1200,7 +1243,25 @@ func collect(f *ast.File, info *pkgInfo) {
 	for _, decl := range f.Decls {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
-			if d.Recv != nil || !ast.IsExported(d.Name.Name) || d.Type.TypeParams != nil {
+			if d.Recv != nil || !ast.IsExported(d.Name.Name) {
+				continue
+			}
+			if d.Type.TypeParams != nil {
+				for _, v := range genericVariants(d) {
+					n := 0
+					for _, field := range d.Type.Params.List {
+						if len(field.Names) == 0 {
+							n++
+						} else {
+							n += len(field.Names)
+						}
+					}
+					variadic := false
+					if len(d.Type.Params.List) > 0 {
+						_, variadic = d.Type.Params.List[len(d.Type.Params.List)-1].Type.(*ast.Ellipsis)
+					}
+					info.Funcs = append(info.Funcs, fnInfo{Name: d.Name.Name + v.suffix, In: n, Variadic: variadic, Real: d.Name.Name, Inst: v.inst})
+				}
 				continue
 			}
 			n := 0
@@ -1262,12 +1323,17 @@ func writeRegistry(path string, pkgs []*pkgInfo, blanks []string) {
 	b.WriteString("var funcs = map[string]reflect.Value{\n")
 	for _, p := range pkgs {
 		for _, f := range p.Funcs {
-			fmt.Fprintf(&b, "\t%q: reflect.ValueOf(%s.%s),\n", p.Namespace+"."+f.Name, p.Alias, f.Name)
+			real := f.Name
+			if f.Real != "" {
+				real = f.Real
+			}
+			fmt.Fprintf(&b, "\t%q: reflect.ValueOf(%s.%s%s),\n", p.Namespace+"."+f.Name, p.Alias, real, f.Inst)
 		}
 	}
 	b.WriteString("}\n\nvar typs = map[string]reflect.Type{\n")
 	for _, p := range pkgs {
-		for _, t := range p.Types {
+		fo)NSGO"
+         R"NSGO(r _, t := range p.Types {
 			fmt.Fprintf(&b, "\t%q: reflect.TypeOf((*%s.%s)(nil)).Elem(),\n", p.Namespace+"."+t, p.Alias, t)
 		}
 	}
@@ -1285,8 +1351,7 @@ func writeRegistry(path string, pkgs []*pkgInfo, blanks []string) {
 	}
 	b.WriteString("}\n")
 	if err := os.WriteFile(path, b.Bytes(), 0o644); err != nil {
-		fatal("tulis %s: %v", path)NSGO"
-         R"NSGO(, err)
+		fatal("tulis %s: %v", path, err)
 	}
 }
 
@@ -1397,6 +1462,7 @@ fungsi _bungkus(v) {
         hasil keluar;
     }
     jika t == "peta" {
+        jika v["$b64"] != kosong { hasil base64_decode(v["$b64"]); }
         jika v["$h"] != kosong { hasil _objek(v); }
         buat keluar = peta_baru();
         buat kunci = peta_kunci(v);
@@ -1435,7 +1501,7 @@ fungsi penunjuk(k) {
 // Teks sebagai []byte Go (mis. kunci HMAC: SignedString(bytes_dari("rahasia"))).
 fungsi bytes_dari(teks) {
     buat p = peta_baru();
-    p["$bytes"] = teks;
+    p["$b64"] = base64_encode(teks);
     hasil p;
 }
 
@@ -1475,7 +1541,8 @@ fungsi _metode(h, nama, jumlah) {
     jika jumlah == 6 { hasil fungsi(a, b, c, d, e, f) { hasil _panggil(h, nama, [a, b, c, d, e, f]); }; }
     jika jumlah == 7 { hasil fungsi(a, b, c, d, e, f, g) { hasil _panggil(h, nama, [a, b, c, d, e, f, g]); }; }
     jika jumlah == 8 { hasil fungsi(a, b, c, d, e, f, g, i) { hasil _panggil(h, nama, [a, b, c, d, e, f, g, i]); }; }
-    // Lebih dari 8 argumen: satu parameter larik berisi semua argumen.
+    // Lebih da)NSGO"
+         R"NSGO(ri 8 argumen: satu parameter larik berisi semua argumen.
     hasil fungsi(semua) { hasil _panggil(h, nama, semua); };
 }
 
@@ -1496,8 +1563,7 @@ fungsi _objek(v) {
     o["json"] = fungsi() { hasil _urai(_p.panggil(h, "$json", "[]")); };
     o["teks"] = fungsi() { hasil _urai(_p.panggil(h, "$str", "[]")); };
     o["field"] = fungsi(n) { hasil _urai(_p.field(h, n)); };
-    o[)NSGO"
-         R"NSGO("set"] = fungsi(n, x) { hasil _urai(_p.set_field(h, n, json_encode(_lepas(x)))); };
+    o["set"] = fungsi(n, x) { hasil _urai(_p.set_field(h, n, json_encode(_lepas(x)))); };
     o["bebas"] = fungsi() { _p.bebas(h); };
     hasil o;
 }
@@ -1545,6 +1611,139 @@ fungsi _callback(f) {
 // Menghentikan semua pendengar callback (biar proses bisa selesai).
 fungsi berhenti_dengarkan() { _aktif = salah; }
 `
+
+// ---- generics: no way to call an uninstantiated generic function through reflection, so each
+// one is instantiated with `any` (or a basic type for numeric/ordered constraints) at build time.
+
+type genericVariant struct{ suffix, inst string }
+
+var basicTypes = map[string]bool{"int": true, "int8": true, "int16": true, "int32": true, "int64": true,
+	"uint": true, "uint8": true, "uint16": true, "uint32": true, "uint64": true, "float32": true,
+	"float64": true, "string": true, "bool": true, "byte": true, "rune": true}
+
+func genericVariants(d *ast.FuncDecl) []genericVariant {
+	type tp struct {
+		name       string
+		constraint ast.Expr
+	}
+	var params []tp
+	for _, f := range d.Type.TypeParams.List {
+		for _, n := range f.Names {
+			params = append(params, tp{n.Name, f.Type})
+		}
+	}
+	// A variant assigns every ordered parameter the same basic type.
+	kinds := []string{"float64"}
+	hasOrdered := false
+	for _, p := range params {
+		if strings.Contains(types.ExprString(p.constraint), "Ordered") {
+			hasOrdered = true
+		}
+	}
+	if hasOrdered {
+		kinds = append(kinds, "string")
+	}
+	var out []genericVariant
+	for ki, ordered := range kinds {
+		assigned := map[string]string{}
+		var resolve func(name string, depth int) (string, bool)
+		var fromExpr func(e ast.Expr, depth int) (string, bool)
+		fromExpr = func(e ast.Expr, depth int) (string, bool) {
+			if depth > 6 {
+				return "", false
+			}
+			switch x := e.(type) {
+			case *ast.Ident:
+				if x.Name == "any" || x.Name == "comparable" {
+					return "any", true
+				}
+				if _, isParam := assigned[x.Name]; isParam {
+					return assigned[x.Name], true
+				}
+				for _, p := range params {
+					if p.name == x.Name {
+						return resolve(p.name, depth+1)
+					}
+				}
+				if basicTypes[x.Name] {
+					return x.Name, true
+				}
+				switch {
+				case strings.Contains(x.Name, "Ordered"):
+					return ordered, true
+				case strings.Contains(x.Name, "Unsigned"):
+					return "uint", true
+				case strings.Contains(x.Name, "Integer"), strings.Contains(x.Name, "Signed"):
+					return "int", true
+				case strings.Contains(x.Name, "Float"), strings.Contains(x.Name, "Number"), strings.Contains(x.Name, "Numeric"):
+					return "float64", true
+				}
+				return "", false
+			case *ast.SelectorExpr:
+				return fromExpr(x.Sel, depth+1)
+			case *ast.InterfaceType:
+				if x.Methods == nil || len(x.Methods.List) == 0 {
+					return "any", true
+				}
+				if len(x.Methods.List) == 1 && len(x.Methods.List[0].Names) == 0 {
+					return fromExpr(x.Methods.List[0].Type, depth+1)
+				}
+				return "", false
+			case *ast.UnaryExpr: // ~T
+				return fromExpr(x.X, depth+1)
+			case *ast.BinaryExpr: // A | B: use the first alternative
+				return fromExpr(x.X, depth+1)
+			case *ast.ArrayType:
+				if x.Len != nil {
+					return "", false
+				}
+				el, ok := fromExpr(x.Elt, depth+1)
+				return "[]" + el, ok
+			case *ast.MapType:
+				k, ok1 := fromExpr(x.Key, depth+1)
+				v, ok2 := fromExpr(x.Value, depth+1)
+				return "map[" + k + "]" + v, ok1 && ok2
+			}
+			return "", false
+		}
+		resolve = func(name string, depth int) (string, bool) {
+			if v, ok := assigned[name]; ok {
+				return v, true
+			}
+			for _, p := range params {
+				if p.name != name {
+					continue
+				}
+				t, ok := fromExpr(p.constraint, depth+1)
+				if ok {
+					// `~[]E` style constraints describe the type itself; plain ones name a bound.
+					assigned[name] = t
+				}
+				return t, ok
+			}
+			return "", false
+		}
+		ok := true
+		var args []string
+		for _, p := range params {
+			t, good := resolve(p.name, 0)
+			if !good {
+				ok = false
+				break
+			}
+			args = append(args, t)
+		}
+		if !ok {
+			return out
+		}
+		suffix := ""
+		if ki == 1 {
+			suffix = "_teks"
+		}
+		out = append(out, genericVariant{suffix, "[" + strings.Join(args, ",") + "]"})
+	}
+	return out
+}
 )NSGO"
         },
     };

@@ -15,6 +15,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,9 +34,11 @@ type listedPkg struct {
 }
 
 type fnInfo struct {
-	Name     string
+	Name     string // name on the Nusantara side
 	In       int
 	Variadic bool
+	Real     string // Go identifier when it differs from Name (generic instantiations)
+	Inst     string // "[any,float64]" for an instantiated generic function
 }
 
 type pkgInfo struct {
@@ -201,7 +204,25 @@ func collect(f *ast.File, info *pkgInfo) {
 	for _, decl := range f.Decls {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
-			if d.Recv != nil || !ast.IsExported(d.Name.Name) || d.Type.TypeParams != nil {
+			if d.Recv != nil || !ast.IsExported(d.Name.Name) {
+				continue
+			}
+			if d.Type.TypeParams != nil {
+				for _, v := range genericVariants(d) {
+					n := 0
+					for _, field := range d.Type.Params.List {
+						if len(field.Names) == 0 {
+							n++
+						} else {
+							n += len(field.Names)
+						}
+					}
+					variadic := false
+					if len(d.Type.Params.List) > 0 {
+						_, variadic = d.Type.Params.List[len(d.Type.Params.List)-1].Type.(*ast.Ellipsis)
+					}
+					info.Funcs = append(info.Funcs, fnInfo{Name: d.Name.Name + v.suffix, In: n, Variadic: variadic, Real: d.Name.Name, Inst: v.inst})
+				}
 				continue
 			}
 			n := 0
@@ -263,7 +284,11 @@ func writeRegistry(path string, pkgs []*pkgInfo, blanks []string) {
 	b.WriteString("var funcs = map[string]reflect.Value{\n")
 	for _, p := range pkgs {
 		for _, f := range p.Funcs {
-			fmt.Fprintf(&b, "\t%q: reflect.ValueOf(%s.%s),\n", p.Namespace+"."+f.Name, p.Alias, f.Name)
+			real := f.Name
+			if f.Real != "" {
+				real = f.Real
+			}
+			fmt.Fprintf(&b, "\t%q: reflect.ValueOf(%s.%s%s),\n", p.Namespace+"."+f.Name, p.Alias, real, f.Inst)
 		}
 	}
 	b.WriteString("}\n\nvar typs = map[string]reflect.Type{\n")
@@ -397,6 +422,7 @@ fungsi _bungkus(v) {
         hasil keluar;
     }
     jika t == "peta" {
+        jika v["$b64"] != kosong { hasil base64_decode(v["$b64"]); }
         jika v["$h"] != kosong { hasil _objek(v); }
         buat keluar = peta_baru();
         buat kunci = peta_kunci(v);
@@ -435,7 +461,7 @@ fungsi penunjuk(k) {
 // Teks sebagai []byte Go (mis. kunci HMAC: SignedString(bytes_dari("rahasia"))).
 fungsi bytes_dari(teks) {
     buat p = peta_baru();
-    p["$bytes"] = teks;
+    p["$b64"] = base64_encode(teks);
     hasil p;
 }
 
@@ -544,3 +570,136 @@ fungsi _callback(f) {
 // Menghentikan semua pendengar callback (biar proses bisa selesai).
 fungsi berhenti_dengarkan() { _aktif = salah; }
 `
+
+// ---- generics: no way to call an uninstantiated generic function through reflection, so each
+// one is instantiated with `any` (or a basic type for numeric/ordered constraints) at build time.
+
+type genericVariant struct{ suffix, inst string }
+
+var basicTypes = map[string]bool{"int": true, "int8": true, "int16": true, "int32": true, "int64": true,
+	"uint": true, "uint8": true, "uint16": true, "uint32": true, "uint64": true, "float32": true,
+	"float64": true, "string": true, "bool": true, "byte": true, "rune": true}
+
+func genericVariants(d *ast.FuncDecl) []genericVariant {
+	type tp struct {
+		name       string
+		constraint ast.Expr
+	}
+	var params []tp
+	for _, f := range d.Type.TypeParams.List {
+		for _, n := range f.Names {
+			params = append(params, tp{n.Name, f.Type})
+		}
+	}
+	// A variant assigns every ordered parameter the same basic type.
+	kinds := []string{"float64"}
+	hasOrdered := false
+	for _, p := range params {
+		if strings.Contains(types.ExprString(p.constraint), "Ordered") {
+			hasOrdered = true
+		}
+	}
+	if hasOrdered {
+		kinds = append(kinds, "string")
+	}
+	var out []genericVariant
+	for ki, ordered := range kinds {
+		assigned := map[string]string{}
+		var resolve func(name string, depth int) (string, bool)
+		var fromExpr func(e ast.Expr, depth int) (string, bool)
+		fromExpr = func(e ast.Expr, depth int) (string, bool) {
+			if depth > 6 {
+				return "", false
+			}
+			switch x := e.(type) {
+			case *ast.Ident:
+				if x.Name == "any" || x.Name == "comparable" {
+					return "any", true
+				}
+				if _, isParam := assigned[x.Name]; isParam {
+					return assigned[x.Name], true
+				}
+				for _, p := range params {
+					if p.name == x.Name {
+						return resolve(p.name, depth+1)
+					}
+				}
+				if basicTypes[x.Name] {
+					return x.Name, true
+				}
+				switch {
+				case strings.Contains(x.Name, "Ordered"):
+					return ordered, true
+				case strings.Contains(x.Name, "Unsigned"):
+					return "uint", true
+				case strings.Contains(x.Name, "Integer"), strings.Contains(x.Name, "Signed"):
+					return "int", true
+				case strings.Contains(x.Name, "Float"), strings.Contains(x.Name, "Number"), strings.Contains(x.Name, "Numeric"):
+					return "float64", true
+				}
+				return "", false
+			case *ast.SelectorExpr:
+				return fromExpr(x.Sel, depth+1)
+			case *ast.InterfaceType:
+				if x.Methods == nil || len(x.Methods.List) == 0 {
+					return "any", true
+				}
+				if len(x.Methods.List) == 1 && len(x.Methods.List[0].Names) == 0 {
+					return fromExpr(x.Methods.List[0].Type, depth+1)
+				}
+				return "", false
+			case *ast.UnaryExpr: // ~T
+				return fromExpr(x.X, depth+1)
+			case *ast.BinaryExpr: // A | B: use the first alternative
+				return fromExpr(x.X, depth+1)
+			case *ast.ArrayType:
+				if x.Len != nil {
+					return "", false
+				}
+				el, ok := fromExpr(x.Elt, depth+1)
+				return "[]" + el, ok
+			case *ast.MapType:
+				k, ok1 := fromExpr(x.Key, depth+1)
+				v, ok2 := fromExpr(x.Value, depth+1)
+				return "map[" + k + "]" + v, ok1 && ok2
+			}
+			return "", false
+		}
+		resolve = func(name string, depth int) (string, bool) {
+			if v, ok := assigned[name]; ok {
+				return v, true
+			}
+			for _, p := range params {
+				if p.name != name {
+					continue
+				}
+				t, ok := fromExpr(p.constraint, depth+1)
+				if ok {
+					// `~[]E` style constraints describe the type itself; plain ones name a bound.
+					assigned[name] = t
+				}
+				return t, ok
+			}
+			return "", false
+		}
+		ok := true
+		var args []string
+		for _, p := range params {
+			t, good := resolve(p.name, 0)
+			if !good {
+				ok = false
+				break
+			}
+			args = append(args, t)
+		}
+		if !ok {
+			return out
+		}
+		suffix := ""
+		if ki == 1 {
+			suffix = "_teks"
+		}
+		out = append(out, genericVariant{suffix, "[" + strings.Join(args, ",") + "]"})
+	}
+	return out
+}

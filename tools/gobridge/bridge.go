@@ -61,6 +61,7 @@ import "C"
 import (
 	"context"
 	"encoding"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,6 +75,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 	"unsafe"
 )
 
@@ -270,7 +272,11 @@ func encodeOpt(v reflect.Value, methodsAsHandle bool) interface{} {
 		if v.Type().Elem().Kind() == reflect.Uint8 {
 			b := make([]byte, v.Len())
 			reflect.Copy(reflect.ValueOf(b), v)
-			return string(b)
+			if utf8.Valid(b) {
+				return string(b)
+			}
+			// JSON cannot carry arbitrary bytes: the Nusantara side decodes this back into raw bytes.
+			return map[string]interface{}{"$b64": base64.StdEncoding.EncodeToString(b)}
 		}
 		out := make([]interface{}, v.Len())
 		for i := range out {
@@ -347,10 +353,21 @@ func convertArg(raw json.RawMessage, t reflect.Type) (reflect.Value, error) {
 			H     string  `json:"$h"`
 			Cb    string  `json:"$cb"`
 			Bytes *string `json:"$bytes"`
+			B64   *string `json:"$b64"`
 		}
 		if err := json.Unmarshal(raw, &marker); err == nil {
-			if marker.Bytes != nil {
-				bv := reflect.ValueOf([]byte(*marker.Bytes))
+			if marker.Bytes != nil || marker.B64 != nil {
+				var raw []byte
+				if marker.B64 != nil {
+					dec, err := base64.StdEncoding.DecodeString(*marker.B64)
+					if err != nil {
+						return reflect.Value{}, decodeError(t, "base64 tidak valid")
+					}
+					raw = dec
+				} else {
+					raw = []byte(*marker.Bytes)
+				}
+				bv := reflect.ValueOf(raw)
 				if t.Kind() == reflect.Interface && !bv.Type().Implements(t) {
 					return reflect.Value{}, decodeError(t, "bytes_dari() tidak cocok dengan tipe ini")
 				}
@@ -411,6 +428,29 @@ func convertArg(raw json.RawMessage, t reflect.Type) (reflect.Value, error) {
 			return v, nil
 		}
 		return reflect.Value{}, decodeError(t, "butuh handle objek Go, bukan data JSON")
+	}
+	// Large integers travel as text (see encode): accept them back.
+	if strings.HasPrefix(trimmed, "\"") {
+		switch t.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			var str string
+			if json.Unmarshal(raw, &str) == nil {
+				if n, err := strconv.ParseInt(str, 10, 64); err == nil {
+					v := reflect.New(t).Elem()
+					v.SetInt(n)
+					return v, nil
+				}
+			}
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+			var str string
+			if json.Unmarshal(raw, &str) == nil {
+				if n, err := strconv.ParseUint(str, 10, 64); err == nil {
+					v := reflect.New(t).Elem()
+					v.SetUint(n)
+					return v, nil
+				}
+			}
+		}
 	}
 	p := reflect.New(t)
 	if err := json.Unmarshal(raw, p.Interface()); err != nil {
