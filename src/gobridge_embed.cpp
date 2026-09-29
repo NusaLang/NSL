@@ -395,6 +395,9 @@ func convertArg(raw json.RawMessage, t reflect.Type) (reflect.Value, error) {
 				return adaptHandle(hv, t)
 			}
 			if marker.Cb != "" && t.Kind() == reflect.Interface {
+				if v, ok := implFromFunc(marker.Cb, t); ok {
+					return v, nil
+				}
 				if v, ok := adaptCallbackToInterface(t, marker.Cb); ok {
 					return v, nil
 				}
@@ -432,6 +435,17 @@ func convertArg(raw json.RawMessage, t reflect.Type) (reflect.Value, error) {
 				return reflect.Value{}, err
 			}
 			return reflect.ValueOf(generic), nil
+		}
+		if t == errType && strings.HasPrefix(trimmed, "\"") {
+			var msg string
+			if json.Unmarshal(raw, &msg) == nil {
+				return reflect.ValueOf(errors.New(msg)), nil
+			}
+		}
+		if strings.HasPrefix(trimmed, "{") {
+			if v, ok := implFromMethods(raw, t); ok {
+				return v, nil
+			}
 		}
 		// Data given where an interface with methods is expected: use a registered concrete type
 		// that implements it and decodes this JSON (jwt.MapClaims for jwt.Claims, ...).
@@ -504,7 +518,8 @@ func queueFor(name string) *eventQueue {
 	q, ok := queues[name]
 	if !ok {
 		q = &eventQueue{ch: make(chan string, 8192)}
-		queues[name] = q
+		queues[na)NSGO"
+         R"NSGO(me] = q
 	}
 	return q
 }
@@ -529,8 +544,7 @@ var (
 	replySeq int64
 )
 
-// syncCallback: a callback that )NSGO"
-         R"NSGO(returns values, or takes an object/pointer (an http handler's
+// syncCallback: a callback that returns values, or takes an object/pointer (an http handler's
 // writer and request, a gin context), must finish on the Nusantara side before Go continues.
 // Plain event handlers (func(evt interface{})) stay fire-and-forget.
 func syncCallback(t reflect.Type) bool {
@@ -565,52 +579,138 @@ func makeCallback(t reflect.Type, queue string) reflect.Value {
 			}
 			return outs
 		}
-		id := atomic.AddInt64(&replySeq, 1)
-		ch := make(chan string, 1)
+		outTypes := make([]reflect.Type, t.NumOut())
+		for i := range outTypes {
+			outTypes[i] = t.Out(i)
+		}
+		return syncCall(q, enc, outTypes)
+	})
+}
+
+// syncCall queues one call for the Nusantara side and waits (up to 60s) for its reply, decoding
+// the returned value(s) into outTypes; a missing or failed reply yields zero values.
+func syncCall(q *eventQueue, enc []interface{}, outTypes []reflect.Type) []reflect.Value {
+	outs := make([]reflect.Value, len(outTypes))
+	for i := range outs {
+		outs[i] = reflect.Zero(outTypes[i])
+	}
+	id := atomic.AddInt64(&replySeq, 1)
+	ch := make(chan string, 1)
+	replyMu.Lock()
+	replies[id] = ch
+	replyMu.Unlock()
+	defer func() {
 		replyMu.Lock()
-		replies[id] = ch
+		delete(replies, id)
 		replyMu.Unlock()
-		defer func() {
-			replyMu.Lock()
-			delete(replies, id)
-			replyMu.Unlock()
-		}()
-		b, err := json.Marshal(map[string]interface{}{"$id": id, "a": enc})
-		if err != nil {
+	}()
+	b, err := json.Marshal(map[string]interface{}{"$id": id, "a": enc})
+	if err != nil {
+		return outs
+	}
+	q.push(string(b))
+	select {
+	case r := <-ch:
+		var reply struct {
+			R json.RawMessage `json:"r"`
+		}
+		if json.Unmarshal([]byte(r), &reply) != nil || len(outs) == 0 {
 			return outs
 		}
-		q.push(string(b))
-		select {
-		case r := <-ch:
-			var reply struct {
-				R json.RawMessage `json:"r"`
+		if len(outs) == 1 {
+			if v, err := convertArg(reply.R, outTypes[0]); err == nil {
+				outs[0] = v
 			}
-			if json.Unmarshal([]byte(r), &reply) != nil || len(outs) == 0 {
-				return outs
-			}
-			if len(outs) == 1 {
-				if v, err := convertArg(reply.R, t.Out(0)); err == nil {
-					outs[0] = v
-				}
-				return outs
-			}
-			var parts []json.RawMessage
-			if json.Unmarshal(reply.R, &parts) != nil || len(parts) != len(outs) {
-				parts = []json.RawMessage{reply.R} // a single value: the first result (the rest stay zero, e.g. a nil error)
-			}
-			{
-				for i := range outs {
-					if i < len(parts) {
-						if v, err := convertArg(parts[i], t.Out(i)); err == nil {
-							outs[i] = v
-						}
-					}
-				}
-			}
-		case <-time.After(60 * time.Second):
+			return outs
 		}
-		return outs
-	})
+		var parts []json.RawMessage
+		if json.Unmarshal(reply.R, &parts) != nil || len(parts) != len(outs) {
+			parts = []json.RawMessage{reply.R} // a single value: the first result (the rest stay zero)
+		}
+		for i := range outs {
+			if i < len(parts) {
+				if v, err := convertArg(parts[i], outTypes[i]); err == nil {
+					outs[i] = v
+				}
+			}
+		}
+	case <-time.After(60 * time.Second):
+	}
+	return outs
+}
+
+// ---- interfaces implemented from Nusantara: the generated adapters (adapters_gen.go) forward
+// each method call to a dispatcher.
+
+type dispatcher func(method string, args []reflect.Value, outs []reflect.Type) []reflect.Value
+
+var adapters = map[reflect.Type]func(dispatcher) interface{}{}
+
+func adaptCast[T any](v reflect.Value) T {
+	var zero T
+	if !v.IsValid() || !v.CanInterface() {
+		return zero
+	}
+	if x, ok := v.Interface().(T); ok {
+		return x
+	}
+	return zero
+}
+
+func encodeArgs(args []reflect.Value) []interface{} {
+	enc := make([]interface{}, len(args))
+	for i, a := range args {
+		enc[i] = encode(a)
+	}
+	return enc
+}
+
+// implFromMethods: {"Method": {"$cb": q}, ...} (an NSL map of functions) as an implementation of
+// the interface type t.
+func implFromMethods(raw json.RawMessage, t reflect.Type) (reflect.Value, bool) {
+	mk, ok := adapters[t]
+	if !ok {
+		return reflect.Value{}, false
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return reflect.Value{}, false
+	}
+	queues := map[string]*eventQueue{}
+	for name, v := range m {
+		var mk struct {
+			Cb string `json:"$cb"`
+		}
+		if json.Unmarshal(v, &mk) == nil && mk.Cb != "" {
+			queues[name] = queueFor(mk.Cb)
+		}
+	}
+	if len(queues) == 0 {
+		return reflect.Value{}, false
+	}
+	return reflect.ValueOf(mk(func(method string, args []reflect.Value, outs []reflect.Type) []reflect.Value {
+		q, ok := queues[method]
+		if !ok {
+			zero := make([]reflect.Value, len(outs))
+			for i := range zero {
+				zero[i] = reflect.Zero(outs[i])
+			}
+			return zero
+		}
+		return syncCall(q, encodeArgs(args), outs)
+	})), true
+}
+
+// implFromFunc: one Nusantara function standing in for a single-method interface.
+func implFromFunc(queue string, t reflect.Type) (reflect.Value, bool) {
+	mk, ok := adapters[t]
+	if !ok || t.NumMethod() != 1 {
+		return reflect.Value{}, false
+	}
+	q := queueFor(queue)
+	return reflect.ValueOf(mk(func(method string, args []reflect.Value, outs []reflect.Type) []reflect.Value {
+		return syncCall(q, encodeArgs(args), outs)
+	})), true
 }
 
 func deliverReply(id int64, payload string) {
@@ -717,7 +817,8 @@ func invoke(fv reflect.Value, rawArgs []json.RawMessage) (res callResult) {
 	if len(rawArgs) < fixed || (!variadic && len(rawArgs) > fixed) {
 		return callResult{Err: fmt.Errorf("butuh %d argumen, dapat %d", fixed, len(rawArgs))}
 	}
-	in := make([]reflect.Value, 0, len(rawArgs))
+	in := make([]reflect.Valu)NSGO"
+         R"NSGO(e, 0, len(rawArgs))
 	var outs []reflect.Value // {"$ptr": kind} arguments: pointers Go fills in (rows.Scan(&x))
 	for i, raw := range rawArgs {
 		var pt reflect.Type
@@ -834,8 +935,7 @@ func callTarget(target, name, argsJSON string) string {
 	case "$str":
 		return envelope(fmt.Sprint(hv.Interface()), nil)
 	case "$tipe":
-		return envelope(hv.Type().Str)NSGO"
-         R"NSGO(ing(), nil)
+		return envelope(hv.Type().String(), nil)
 	case "$kirim", "$terima", "$terima_ok", "$tutup", "$panjang":
 		if hv.Kind() == reflect.Chan {
 			return chanOp(hv, name, args)
@@ -1023,7 +1123,8 @@ func manifest() string {
 
 // ------------------------------------------------------------ ABI entry ----
 
-func argString(argv []C.NsValue, i int) string {
+func argString(argv []C.NsValue, i int) string )NSGO"
+         R"NSGO({
 	if i >= len(argv) || nsType(&argv[i]) != C.NS_STRING {
 		return ""
 	}
@@ -1121,8 +1222,7 @@ func nsGoInvoke(op C.int, argc C.int, argv *C.NsValue) (ret C.NsValue) {
 // a fresh value of that kind, for parameters typed as an interface (Scan's ...any).
 func pointerArg(raw json.RawMessage, pt reflect.Type) (reflect.Value, bool) {
 	if pt.Kind() != reflect.Interface || pt.NumMethod() != 0 || !strings.Contains(string(raw), "$ptr") {
-		retu)NSGO"
-         R"NSGO(rn reflect.Value{}, false
+		return reflect.Value{}, false
 	}
 	var m struct {
 		P string `json:"$ptr"`
@@ -1163,6 +1263,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/importer"
 	"go/token"
 	"go/types"
 	"os"
@@ -1196,6 +1297,7 @@ type pkgInfo struct {
 	ImportPath string
 	Funcs      []fnInfo
 	Types      []string
+	Ifaces     []string // exported interface types (adapters let Nusantara objects implement them)
 	Consts     []string
 	Vars       []string
 }
@@ -1253,6 +1355,7 @@ func main() {
 	}
 
 	writeRegistry("registry_gen.go", pkgs, blanks)
+	writeAdapters("adapters_gen.go", pkgs)
 	pruneUntilBuilds("registry_gen.go")
 	writeManifestAndIndex(*module, pkgs)
 	fmt.Printf("registri: %d paket\n", len(pkgs))
@@ -1395,6 +1498,7 @@ func collect(f *ast.File, info *pkgInfo) {
 						continue
 					}
 					if _, isIface := s.Type.(*ast.InterfaceType); isIface {
+						info.Ifaces = append(info.Ifaces, s.Name.Name)
 						continue
 					}
 					info.Types = append(info.Types, s.Name.Name)
@@ -1436,14 +1540,14 @@ func writeRegistry(path string, pkgs []*pkgInfo, blanks []string) {
 			real := f.Name
 			if f.Real != "" {
 				real = f.Real
-			}
+	)NSGO"
+         R"NSGO(		}
 			fmt.Fprintf(&b, "\t%q: reflect.ValueOf(%s.%s%s),\n", p.Namespace+"."+f.Name, p.Alias, real, f.Inst)
 		}
 	}
 	b.WriteString("}\n\nvar typs = map[string]reflect.Type{\n")
 	for _, p := range pkgs {
-		fo)NSGO"
-         R"NSGO(r _, t := range p.Types {
+		for _, t := range p.Types {
 			fmt.Fprintf(&b, "\t%q: reflect.TypeOf((*%s.%s)(nil)).Elem(),\n", p.Namespace+"."+t, p.Alias, t)
 		}
 	}
@@ -1466,6 +1570,7 @@ func writeRegistry(path string, pkgs []*pkgInfo, blanks []string) {
 }
 
 var errLine = regexp.MustCompile(`registry_gen\.go:(\d+):`)
+var adapterErrLine = regexp.MustCompile(`adapters_gen\.go:(\d+):`)
 
 // Some exported names cannot be put in a registry (untyped constants that overflow, names of
 // generic-only helpers, ...). Compile, drop the lines the compiler rejects, repeat.
@@ -1480,6 +1585,9 @@ func pruneUntilBuilds(path string) {
 		for _, m := range errLine.FindAllStringSubmatch(string(out), -1) {
 			n, _ := strconv.Atoi(m[1])
 			bad[n] = true
+		}
+		if pruneAdapters(adapterErrLine.FindAllStringSubmatch(string(out), -1)) {
+			continue
 		}
 		if len(bad) == 0 {
 			fatal("kompilasi jembatan gagal:\n%s", out)
@@ -1654,12 +1762,12 @@ fungsi _metode(h, nama, jumlah) {
     jika jumlah == 104 { hasil fungsi(a, b, c, d, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a, b, c, d], r)); }; }
     jika jumlah == 0 { hasil fungsi() { hasil _panggil(h, nama, []); }; }
     jika jumlah == 1 { hasil fungsi(a) { hasil _panggil(h, nama, [a]); }; }
-    jika jumlah == 2 { hasil fungsi(a, b) { hasil _panggil(h, nama, [a, b]); }; }
+    jika jumlah == 2 { hasil fungsi(a, b) { hasil _panggil(h, nama, [a, b])NSGO"
+         R"NSGO(); }; }
     jika jumlah == 3 { hasil fungsi(a, b, c) { hasil _panggil(h, nama, [a, b, c]); }; }
     jika jumlah == 4 { hasil fungsi(a, b, c, d) { hasil _panggil(h, nama, [a, b, c, d]); }; }
     jika jumlah == 5 { hasil fungsi(a, b, c, d, e) { hasil _panggil(h, nama, [a, b, c, d, e]); }; }
-    jika jumlah == 6 { hasil fungsi(a, b, c, d, e, f) { hasil _panggil(h, )NSGO"
-         R"NSGO(nama, [a, b, c, d, e, f]); }; }
+    jika jumlah == 6 { hasil fungsi(a, b, c, d, e, f) { hasil _panggil(h, nama, [a, b, c, d, e, f]); }; }
     jika jumlah == 7 { hasil fungsi(a, b, c, d, e, f, g) { hasil _panggil(h, nama, [a, b, c, d, e, f, g]); }; }
     jika jumlah == 8 { hasil fungsi(a, b, c, d, e, f, g, i) { hasil _panggil(h, nama, [a, b, c, d, e, f, g, i]); }; }
     // Lebih dari 8 argumen: satu parameter larik berisi semua argumen.
@@ -1871,6 +1979,189 @@ func genericVariants(d *ast.FuncDecl) []genericVariant {
 		out = append(out, genericVariant{suffix, "[" + strings.Join(args, ",") + "]"})
 	}
 	return out
+}
+
+// std interfaces worth being able to implement from Nusantara, besides the wrapped packages' own.
+var stdInterfaces = []ifaceRef{
+	{"sort", "Interface"}, {"container/heap", "Interface"}, {"io", "Closer"}, {"io", "ReadCloser"},
+	{"io", "WriteCloser"}, {"io", "ReadWriteCloser"}, {"io", "ReadWriter"}, {"io", "Seeker"},
+	{"net/http", "RoundTripper"}, {"net/http", "CookieJar"}, {"net/http", "Handler"},
+	{"encoding/json", "Marshaler"}, {"encoding/json", "Unmarshaler"},
+	{"encoding", "TextMarshaler"}, {"encoding", "TextUnmarshaler"}, {"fmt", "Stringer"},
+	{"fmt", "Formatter"}, {"context", "Context"}, {"log/slog", "Handl)NSGO"
+         R"NSGO(er"}, {"crypto", "Signer"},
+	{"hash", "Hash"}, {"net", "Conn"}, {"net", "Listener"}, {"database/sql/driver", "Valuer"},
+	{"database/sql", "Scanner"},
+}
+
+type ifaceRef struct{ Path, Name string }
+
+// writeAdapters generates, for every interface, a struct whose methods forward to a dispatcher
+// (bridge.go) -- the only way to make a Go value implement an interface at run time. Each
+// adapter is one //adapter:begin ... //adapter:end block so the build can drop the ones that
+// don't compile (types from internal packages, ...).
+func writeAdapters(path string, pkgs []*pkgInfo) {
+	refs := append([]ifaceRef{}, stdInterfaces...)
+	for _, p := range pkgs {
+		for _, n := range p.Ifaces {
+			refs = append(refs, ifaceRef{p.ImportPath, n})
+		}
+	}
+	fset := token.NewFileSet()
+	imp := importer.ForCompiler(fset, "source", nil)
+	aliases := map[string]string{}
+	var order []string
+	alias := func(p string) string {
+		if a, ok := aliases[p]; ok {
+			return a
+		}
+		a := "ad" + strconv.Itoa(len(aliases)+1)
+		aliases[p] = a
+		order = append(order, p)
+		return a
+	}
+	qual := func(p *types.Package) string { return alias(p.Path()) }
+	var body strings.Builder
+	seen := map[string]bool{}
+	n := 0
+	for _, r := range refs {
+		key := r.Path + "." + r.Name
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		pkg, err := imp.Import(r.Path)
+		if err != nil {
+			continue
+		}
+		obj := pkg.Scope().Lookup(r.Name)
+		tn, ok := obj.(*types.TypeName)
+		if !ok {
+			continue
+		}
+		named, ok := tn.Type().(*types.Named)
+		if !ok || named.TypeParams().Len() > 0 {
+			continue
+		}
+		iface, ok := named.Underlying().(*types.Interface)
+		if !ok || !iface.IsMethodSet() || iface.NumMethods() == 0 {
+			continue
+		}
+		exported := true
+		for i := 0; i < iface.NumMethods(); i++ {
+			if !iface.Method(i).Exported() {
+				exported = false
+			}
+		}
+		if !exported {
+			continue
+		}
+		n++
+		var blk strings.Builder
+		fmt.Fprintf(&blk, "//adapter:begin\ntype adapter_%d struct{ d dispatcher }\n", n)
+		for i := 0; i < iface.NumMethods(); i++ {
+			m := iface.Method(i)
+			sig := m.Type().(*types.Signature)
+			var params, argv, outsT, rets []string
+			for j := 0; j < sig.Params().Len(); j++ {
+				pt := sig.Params().At(j).Type()
+				ts := types.TypeString(pt, qual)
+				if sig.Variadic() && j == sig.Params().Len()-1 {
+					ts = "..." + types.TypeString(pt.(*types.Slice).Elem(), qual)
+				}
+				params = append(params, fmt.Sprintf("p%d %s", j, ts))
+				argv = append(argv, fmt.Sprintf("reflect.ValueOf(p%d)", j))
+			}
+			for j := 0; j < sig.Results().Len(); j++ {
+				ts := types.TypeString(sig.Results().At(j).Type(), qual)
+				outsT = append(outsT, fmt.Sprintf("reflect.TypeOf((*%s)(nil)).Elem()", ts))
+				rets = append(rets, fmt.Sprintf("adaptCast[%s](outs[%d])", ts, j))
+			}
+			resSig := ""
+			if sig.Results().Len() > 0 {
+				var rs []string
+				for j := 0; j < sig.Results().Len(); j++ {
+					rs = append(rs, types.TypeString(sig.Results().At(j).Type(), qual))
+				}
+				resSig = " (" + strings.Join(rs, ", ") + ")"
+			}
+			fmt.Fprintf(&blk, "func (a *adapter_%d) %s(%s)%s {\n", n, m.Name(), strings.Join(params, ", "), resSig)
+			fmt.Fprintf(&blk, "\touts := a.d(%q, []reflect.Value{%s}, []reflect.Type{%s})\n", m.Name(), strings.Join(argv, ", "), strings.Join(outsT, ", "))
+			if len(rets) > 0 {
+				fmt.Fprintf(&blk, "\treturn %s\n", strings.Join(rets, ", "))
+			} else {
+				blk.WriteString("\t_ = outs\n")
+			}
+			blk.WriteString("}\n")
+		}
+		fmt.Fprintf(&blk, "func init() {\n\tadapters[reflect.TypeOf((*%s.%s)(nil)).Elem()] = func(d dispatcher) interface{} { return &adapter_%d{d: d} }\n}\n//adapter:end\n",
+			alias(r.Path), r.Name, n)
+		body.WriteString(blk.String())
+	}
+	var b strings.Builder
+	b.WriteString("// Code generated by `nusa go add`. DO NOT EDIT.\n\npackage main\n\nimport (\n\t\"reflect\"\n")
+	for _, p := range order {
+		fmt.Fprintf(&b, "\t%s %q\n", aliases[p], p)
+	}
+	b.WriteString(")\n\n")
+	b.WriteString(body.String())
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		fatal("tulis %s: %v", path, err)
+	}
+}
+
+// pruneAdapters drops the import lines / adapter blocks the compiler rejected. Reports whether
+// it changed anything.
+func pruneAdapters(matches [][]string) bool {
+	if len(matches) == 0 {
+		return false
+	}
+	bad := map[int]bool{}
+	for _, m := range matches {
+		n, _ := strconv.Atoi(m[1])
+		bad[n] = true
+	}
+	data, err := os.ReadFile("adapters_gen.go")
+	if err != nil {
+		return false
+	}
+	lines := strings.Split(string(data), "\n")
+	drop := map[int]bool{}
+	inImports := true
+	for i, l := range lines {
+		if strings.HasPrefix(l, ")") {
+			inImports = false
+		}
+		if !bad[i+1] {
+			continue
+		}
+		if inImports && strings.HasPrefix(l, "\t") {
+			drop[i] = true
+			continue
+		}
+		start, end := i, i
+		for start > 0 && !strings.HasPrefix(lines[start], "//adapter:begin") {
+			start--
+		}
+		for end < len(lines)-1 && !strings.HasPrefix(lines[end], "//adapter:end") {
+			end++
+		}
+		for k := start; k <= end; k++ {
+			drop[k] = true
+		}
+	}
+	if len(drop) == 0 {
+		return false
+	}
+	kept := lines[:0:0]
+	for i, l := range lines {
+		if !drop[i] {
+			kept = append(kept, l)
+		}
+	}
+	_ = os.WriteFile("adapters_gen.go", []byte(strings.Join(kept, "\n")), 0o644)
+	fmt.Printf("  melewati adapter antarmuka yang tidak bisa dibangun\n")
+	return true
 }
 )NSGO"
         },

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/importer"
 	"go/token"
 	"go/types"
 	"os"
@@ -47,6 +48,7 @@ type pkgInfo struct {
 	ImportPath string
 	Funcs      []fnInfo
 	Types      []string
+	Ifaces     []string // exported interface types (adapters let Nusantara objects implement them)
 	Consts     []string
 	Vars       []string
 }
@@ -104,6 +106,7 @@ func main() {
 	}
 
 	writeRegistry("registry_gen.go", pkgs, blanks)
+	writeAdapters("adapters_gen.go", pkgs)
 	pruneUntilBuilds("registry_gen.go")
 	writeManifestAndIndex(*module, pkgs)
 	fmt.Printf("registri: %d paket\n", len(pkgs))
@@ -246,6 +249,7 @@ func collect(f *ast.File, info *pkgInfo) {
 						continue
 					}
 					if _, isIface := s.Type.(*ast.InterfaceType); isIface {
+						info.Ifaces = append(info.Ifaces, s.Name.Name)
 						continue
 					}
 					info.Types = append(info.Types, s.Name.Name)
@@ -316,6 +320,7 @@ func writeRegistry(path string, pkgs []*pkgInfo, blanks []string) {
 }
 
 var errLine = regexp.MustCompile(`registry_gen\.go:(\d+):`)
+var adapterErrLine = regexp.MustCompile(`adapters_gen\.go:(\d+):`)
 
 // Some exported names cannot be put in a registry (untyped constants that overflow, names of
 // generic-only helpers, ...). Compile, drop the lines the compiler rejects, repeat.
@@ -330,6 +335,9 @@ func pruneUntilBuilds(path string) {
 		for _, m := range errLine.FindAllStringSubmatch(string(out), -1) {
 			n, _ := strconv.Atoi(m[1])
 			bad[n] = true
+		}
+		if pruneAdapters(adapterErrLine.FindAllStringSubmatch(string(out), -1)) {
+			continue
 		}
 		if len(bad) == 0 {
 			fatal("kompilasi jembatan gagal:\n%s", out)
@@ -720,4 +728,186 @@ func genericVariants(d *ast.FuncDecl) []genericVariant {
 		out = append(out, genericVariant{suffix, "[" + strings.Join(args, ",") + "]"})
 	}
 	return out
+}
+
+// std interfaces worth being able to implement from Nusantara, besides the wrapped packages' own.
+var stdInterfaces = []ifaceRef{
+	{"sort", "Interface"}, {"container/heap", "Interface"}, {"io", "Closer"}, {"io", "ReadCloser"},
+	{"io", "WriteCloser"}, {"io", "ReadWriteCloser"}, {"io", "ReadWriter"}, {"io", "Seeker"},
+	{"net/http", "RoundTripper"}, {"net/http", "CookieJar"}, {"net/http", "Handler"},
+	{"encoding/json", "Marshaler"}, {"encoding/json", "Unmarshaler"},
+	{"encoding", "TextMarshaler"}, {"encoding", "TextUnmarshaler"}, {"fmt", "Stringer"},
+	{"fmt", "Formatter"}, {"context", "Context"}, {"log/slog", "Handler"}, {"crypto", "Signer"},
+	{"hash", "Hash"}, {"net", "Conn"}, {"net", "Listener"}, {"database/sql/driver", "Valuer"},
+	{"database/sql", "Scanner"},
+}
+
+type ifaceRef struct{ Path, Name string }
+
+// writeAdapters generates, for every interface, a struct whose methods forward to a dispatcher
+// (bridge.go) -- the only way to make a Go value implement an interface at run time. Each
+// adapter is one //adapter:begin ... //adapter:end block so the build can drop the ones that
+// don't compile (types from internal packages, ...).
+func writeAdapters(path string, pkgs []*pkgInfo) {
+	refs := append([]ifaceRef{}, stdInterfaces...)
+	for _, p := range pkgs {
+		for _, n := range p.Ifaces {
+			refs = append(refs, ifaceRef{p.ImportPath, n})
+		}
+	}
+	fset := token.NewFileSet()
+	imp := importer.ForCompiler(fset, "source", nil)
+	aliases := map[string]string{}
+	var order []string
+	alias := func(p string) string {
+		if a, ok := aliases[p]; ok {
+			return a
+		}
+		a := "ad" + strconv.Itoa(len(aliases)+1)
+		aliases[p] = a
+		order = append(order, p)
+		return a
+	}
+	qual := func(p *types.Package) string { return alias(p.Path()) }
+	var body strings.Builder
+	seen := map[string]bool{}
+	n := 0
+	for _, r := range refs {
+		key := r.Path + "." + r.Name
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		pkg, err := imp.Import(r.Path)
+		if err != nil {
+			continue
+		}
+		obj := pkg.Scope().Lookup(r.Name)
+		tn, ok := obj.(*types.TypeName)
+		if !ok {
+			continue
+		}
+		named, ok := tn.Type().(*types.Named)
+		if !ok || named.TypeParams().Len() > 0 {
+			continue
+		}
+		iface, ok := named.Underlying().(*types.Interface)
+		if !ok || !iface.IsMethodSet() || iface.NumMethods() == 0 {
+			continue
+		}
+		exported := true
+		for i := 0; i < iface.NumMethods(); i++ {
+			if !iface.Method(i).Exported() {
+				exported = false
+			}
+		}
+		if !exported {
+			continue
+		}
+		n++
+		var blk strings.Builder
+		fmt.Fprintf(&blk, "//adapter:begin\ntype adapter_%d struct{ d dispatcher }\n", n)
+		for i := 0; i < iface.NumMethods(); i++ {
+			m := iface.Method(i)
+			sig := m.Type().(*types.Signature)
+			var params, argv, outsT, rets []string
+			for j := 0; j < sig.Params().Len(); j++ {
+				pt := sig.Params().At(j).Type()
+				ts := types.TypeString(pt, qual)
+				if sig.Variadic() && j == sig.Params().Len()-1 {
+					ts = "..." + types.TypeString(pt.(*types.Slice).Elem(), qual)
+				}
+				params = append(params, fmt.Sprintf("p%d %s", j, ts))
+				argv = append(argv, fmt.Sprintf("reflect.ValueOf(p%d)", j))
+			}
+			for j := 0; j < sig.Results().Len(); j++ {
+				ts := types.TypeString(sig.Results().At(j).Type(), qual)
+				outsT = append(outsT, fmt.Sprintf("reflect.TypeOf((*%s)(nil)).Elem()", ts))
+				rets = append(rets, fmt.Sprintf("adaptCast[%s](outs[%d])", ts, j))
+			}
+			resSig := ""
+			if sig.Results().Len() > 0 {
+				var rs []string
+				for j := 0; j < sig.Results().Len(); j++ {
+					rs = append(rs, types.TypeString(sig.Results().At(j).Type(), qual))
+				}
+				resSig = " (" + strings.Join(rs, ", ") + ")"
+			}
+			fmt.Fprintf(&blk, "func (a *adapter_%d) %s(%s)%s {\n", n, m.Name(), strings.Join(params, ", "), resSig)
+			fmt.Fprintf(&blk, "\touts := a.d(%q, []reflect.Value{%s}, []reflect.Type{%s})\n", m.Name(), strings.Join(argv, ", "), strings.Join(outsT, ", "))
+			if len(rets) > 0 {
+				fmt.Fprintf(&blk, "\treturn %s\n", strings.Join(rets, ", "))
+			} else {
+				blk.WriteString("\t_ = outs\n")
+			}
+			blk.WriteString("}\n")
+		}
+		fmt.Fprintf(&blk, "func init() {\n\tadapters[reflect.TypeOf((*%s.%s)(nil)).Elem()] = func(d dispatcher) interface{} { return &adapter_%d{d: d} }\n}\n//adapter:end\n",
+			alias(r.Path), r.Name, n)
+		body.WriteString(blk.String())
+	}
+	var b strings.Builder
+	b.WriteString("// Code generated by `nusa go add`. DO NOT EDIT.\n\npackage main\n\nimport (\n\t\"reflect\"\n")
+	for _, p := range order {
+		fmt.Fprintf(&b, "\t%s %q\n", aliases[p], p)
+	}
+	b.WriteString(")\n\n")
+	b.WriteString(body.String())
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		fatal("tulis %s: %v", path, err)
+	}
+}
+
+// pruneAdapters drops the import lines / adapter blocks the compiler rejected. Reports whether
+// it changed anything.
+func pruneAdapters(matches [][]string) bool {
+	if len(matches) == 0 {
+		return false
+	}
+	bad := map[int]bool{}
+	for _, m := range matches {
+		n, _ := strconv.Atoi(m[1])
+		bad[n] = true
+	}
+	data, err := os.ReadFile("adapters_gen.go")
+	if err != nil {
+		return false
+	}
+	lines := strings.Split(string(data), "\n")
+	drop := map[int]bool{}
+	inImports := true
+	for i, l := range lines {
+		if strings.HasPrefix(l, ")") {
+			inImports = false
+		}
+		if !bad[i+1] {
+			continue
+		}
+		if inImports && strings.HasPrefix(l, "\t") {
+			drop[i] = true
+			continue
+		}
+		start, end := i, i
+		for start > 0 && !strings.HasPrefix(lines[start], "//adapter:begin") {
+			start--
+		}
+		for end < len(lines)-1 && !strings.HasPrefix(lines[end], "//adapter:end") {
+			end++
+		}
+		for k := start; k <= end; k++ {
+			drop[k] = true
+		}
+	}
+	if len(drop) == 0 {
+		return false
+	}
+	kept := lines[:0:0]
+	for i, l := range lines {
+		if !drop[i] {
+			kept = append(kept, l)
+		}
+	}
+	_ = os.WriteFile("adapters_gen.go", []byte(strings.Join(kept, "\n")), 0o644)
+	fmt.Printf("  melewati adapter antarmuka yang tidak bisa dibangun\n")
+	return true
 }

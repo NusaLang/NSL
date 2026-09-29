@@ -386,6 +386,9 @@ func convertArg(raw json.RawMessage, t reflect.Type) (reflect.Value, error) {
 				return adaptHandle(hv, t)
 			}
 			if marker.Cb != "" && t.Kind() == reflect.Interface {
+				if v, ok := implFromFunc(marker.Cb, t); ok {
+					return v, nil
+				}
 				if v, ok := adaptCallbackToInterface(t, marker.Cb); ok {
 					return v, nil
 				}
@@ -423,6 +426,17 @@ func convertArg(raw json.RawMessage, t reflect.Type) (reflect.Value, error) {
 				return reflect.Value{}, err
 			}
 			return reflect.ValueOf(generic), nil
+		}
+		if t == errType && strings.HasPrefix(trimmed, "\"") {
+			var msg string
+			if json.Unmarshal(raw, &msg) == nil {
+				return reflect.ValueOf(errors.New(msg)), nil
+			}
+		}
+		if strings.HasPrefix(trimmed, "{") {
+			if v, ok := implFromMethods(raw, t); ok {
+				return v, nil
+			}
 		}
 		// Data given where an interface with methods is expected: use a registered concrete type
 		// that implements it and decodes this JSON (jwt.MapClaims for jwt.Claims, ...).
@@ -555,52 +569,138 @@ func makeCallback(t reflect.Type, queue string) reflect.Value {
 			}
 			return outs
 		}
-		id := atomic.AddInt64(&replySeq, 1)
-		ch := make(chan string, 1)
+		outTypes := make([]reflect.Type, t.NumOut())
+		for i := range outTypes {
+			outTypes[i] = t.Out(i)
+		}
+		return syncCall(q, enc, outTypes)
+	})
+}
+
+// syncCall queues one call for the Nusantara side and waits (up to 60s) for its reply, decoding
+// the returned value(s) into outTypes; a missing or failed reply yields zero values.
+func syncCall(q *eventQueue, enc []interface{}, outTypes []reflect.Type) []reflect.Value {
+	outs := make([]reflect.Value, len(outTypes))
+	for i := range outs {
+		outs[i] = reflect.Zero(outTypes[i])
+	}
+	id := atomic.AddInt64(&replySeq, 1)
+	ch := make(chan string, 1)
+	replyMu.Lock()
+	replies[id] = ch
+	replyMu.Unlock()
+	defer func() {
 		replyMu.Lock()
-		replies[id] = ch
+		delete(replies, id)
 		replyMu.Unlock()
-		defer func() {
-			replyMu.Lock()
-			delete(replies, id)
-			replyMu.Unlock()
-		}()
-		b, err := json.Marshal(map[string]interface{}{"$id": id, "a": enc})
-		if err != nil {
+	}()
+	b, err := json.Marshal(map[string]interface{}{"$id": id, "a": enc})
+	if err != nil {
+		return outs
+	}
+	q.push(string(b))
+	select {
+	case r := <-ch:
+		var reply struct {
+			R json.RawMessage `json:"r"`
+		}
+		if json.Unmarshal([]byte(r), &reply) != nil || len(outs) == 0 {
 			return outs
 		}
-		q.push(string(b))
-		select {
-		case r := <-ch:
-			var reply struct {
-				R json.RawMessage `json:"r"`
+		if len(outs) == 1 {
+			if v, err := convertArg(reply.R, outTypes[0]); err == nil {
+				outs[0] = v
 			}
-			if json.Unmarshal([]byte(r), &reply) != nil || len(outs) == 0 {
-				return outs
-			}
-			if len(outs) == 1 {
-				if v, err := convertArg(reply.R, t.Out(0)); err == nil {
-					outs[0] = v
-				}
-				return outs
-			}
-			var parts []json.RawMessage
-			if json.Unmarshal(reply.R, &parts) != nil || len(parts) != len(outs) {
-				parts = []json.RawMessage{reply.R} // a single value: the first result (the rest stay zero, e.g. a nil error)
-			}
-			{
-				for i := range outs {
-					if i < len(parts) {
-						if v, err := convertArg(parts[i], t.Out(i)); err == nil {
-							outs[i] = v
-						}
-					}
-				}
-			}
-		case <-time.After(60 * time.Second):
+			return outs
 		}
-		return outs
-	})
+		var parts []json.RawMessage
+		if json.Unmarshal(reply.R, &parts) != nil || len(parts) != len(outs) {
+			parts = []json.RawMessage{reply.R} // a single value: the first result (the rest stay zero)
+		}
+		for i := range outs {
+			if i < len(parts) {
+				if v, err := convertArg(parts[i], outTypes[i]); err == nil {
+					outs[i] = v
+				}
+			}
+		}
+	case <-time.After(60 * time.Second):
+	}
+	return outs
+}
+
+// ---- interfaces implemented from Nusantara: the generated adapters (adapters_gen.go) forward
+// each method call to a dispatcher.
+
+type dispatcher func(method string, args []reflect.Value, outs []reflect.Type) []reflect.Value
+
+var adapters = map[reflect.Type]func(dispatcher) interface{}{}
+
+func adaptCast[T any](v reflect.Value) T {
+	var zero T
+	if !v.IsValid() || !v.CanInterface() {
+		return zero
+	}
+	if x, ok := v.Interface().(T); ok {
+		return x
+	}
+	return zero
+}
+
+func encodeArgs(args []reflect.Value) []interface{} {
+	enc := make([]interface{}, len(args))
+	for i, a := range args {
+		enc[i] = encode(a)
+	}
+	return enc
+}
+
+// implFromMethods: {"Method": {"$cb": q}, ...} (an NSL map of functions) as an implementation of
+// the interface type t.
+func implFromMethods(raw json.RawMessage, t reflect.Type) (reflect.Value, bool) {
+	mk, ok := adapters[t]
+	if !ok {
+		return reflect.Value{}, false
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return reflect.Value{}, false
+	}
+	queues := map[string]*eventQueue{}
+	for name, v := range m {
+		var mk struct {
+			Cb string `json:"$cb"`
+		}
+		if json.Unmarshal(v, &mk) == nil && mk.Cb != "" {
+			queues[name] = queueFor(mk.Cb)
+		}
+	}
+	if len(queues) == 0 {
+		return reflect.Value{}, false
+	}
+	return reflect.ValueOf(mk(func(method string, args []reflect.Value, outs []reflect.Type) []reflect.Value {
+		q, ok := queues[method]
+		if !ok {
+			zero := make([]reflect.Value, len(outs))
+			for i := range zero {
+				zero[i] = reflect.Zero(outs[i])
+			}
+			return zero
+		}
+		return syncCall(q, encodeArgs(args), outs)
+	})), true
+}
+
+// implFromFunc: one Nusantara function standing in for a single-method interface.
+func implFromFunc(queue string, t reflect.Type) (reflect.Value, bool) {
+	mk, ok := adapters[t]
+	if !ok || t.NumMethod() != 1 {
+		return reflect.Value{}, false
+	}
+	q := queueFor(queue)
+	return reflect.ValueOf(mk(func(method string, args []reflect.Value, outs []reflect.Type) []reflect.Value {
+		return syncCall(q, encodeArgs(args), outs)
+	})), true
 }
 
 func deliverReply(id int64, payload string) {

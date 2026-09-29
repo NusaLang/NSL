@@ -171,7 +171,7 @@ void GC::markCell(Cell* c) {
 }
 
 void GC::collectIfNeeded() {
-    if (allocSinceCollect_ < kCollectThreshold && instancesSinceCollect_ < instanceThreshold_) return;
+    if (allocSinceCollect_ < collectThreshold_ && instancesSinceCollect_ < instanceThreshold_) return;
     collectNow();
 }
 
@@ -271,6 +271,7 @@ void GC::collectNow() {
     size_t dibebaskan = (before - envs_.size()) + (cellsBefore - cells_.size());
     totalFreed_ += dibebaskan;
     allocSinceCollect_ = 0;
+    collectThreshold_ = std::max<size_t>(kMinCollectThreshold, envs_.size() + cells_.size());
     collections_++;
 
 #ifdef NS_PUNYA_MALLOC_TRIM

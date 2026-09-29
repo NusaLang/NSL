@@ -112,7 +112,7 @@ public:
     void mintaTrim() { trimSekarang_ = true; }
     // Marks a collection as due at the next safe point without
     // collecting synchronously -- gc_paksa() itself runs mid-expression.
-    void requestCollection() { allocSinceCollect_ = kCollectThreshold; }
+    void requestCollection() { allocSinceCollect_ = collectThreshold_; }
 
     size_t liveCount() const { return envs_.size(); }
     size_t totalAllocated() const { return totalAllocated_; }
@@ -193,7 +193,10 @@ private:
     size_t totalFreed_ = 0;
     size_t collections_ = 0;
     bool trimSekarang_ = false;
-    static constexpr size_t kCollectThreshold = 256;
+    static constexpr size_t kMinCollectThreshold = 256;
+    // Grows with the live heap (collect when as much has been allocated as survived last time),
+    // so a big long-lived heap (a wrapped Go module's thousands of closures) isn't re-marked every 256 allocations.
+    size_t collectThreshold_ = kMinCollectThreshold;
 };
 
 // Roots `env` as reachable from the C++ call stack for as long as this
