@@ -61,7 +61,7 @@ public:
 
     Value doImport(const std::string& path);
     Environment* getGlobalsEnv() const { return globals_; }
-    const std::unordered_map<std::string, Value>& getGlobals() const { return globals_->vars(); }
+    std::unordered_map<std::string, Value> getGlobals() const { return globals_->vars(); }
 
 private:
     std::ostream* outStream_ = nullptr;

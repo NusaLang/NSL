@@ -44,9 +44,11 @@ namespace {
 
 // Used internally to unwind out of a function body on `hasil`/
 // `berhenti`/`lanjut`.
-struct ReturnSignal { Value value; };
-struct BreakSignal {};
-struct ContinueSignal {};
+// return/break/continue unwind via a pending flag checked by execBlock and
+// the loops, not C++ exceptions (a throw costs microseconds per `hasil`).
+enum : int { kPendNone = 0, kPendReturn, kPendBreak, kPendContinue };
+static thread_local int g_pending = kPendNone;
+static thread_local Value g_retVal;
 
 std::string thrownValueMessage(const Value& v) {
     if (v.type == ValueType::Map) {
@@ -348,6 +350,7 @@ void Interpreter::run(const Program& program) {
     for (const auto& stmt : program.statements) {
         if (exprDepth_ == 0) GC::instance().collectIfNeeded();
         exec(stmt.get(), globals_);
+        if (g_pending != kPendNone) { g_pending = kPendNone; break; }  // top-level `hasil` ends the program
     }
     if (exprDepth_ == 0) GC::instance().collectIfNeeded();
 }
@@ -459,9 +462,18 @@ void Interpreter::execInner(const Stmt* stmt, Environment* env) {
                 throw;
             }
             if (node->finallyBlock) {
+                // A return/break/continue in flight must survive the finally
+                // block, unless the finally block itself diverts control.
+                int savedPending = g_pending;
+                Value savedRet = std::move(g_retVal);
+                g_pending = kPendNone;
                 Environment* child = GC::instance().alloc(env);
                 GcRootGuard guard(child);
                 execBlock(node->finallyBlock.get(), child);
+                if (g_pending == kPendNone) {
+                    g_pending = savedPending;
+                    g_retVal = std::move(savedRet);
+                }
             }
             return;
         }
@@ -494,12 +506,11 @@ void Interpreter::execInner(const Stmt* stmt, Environment* env) {
             while (eval(node->condition.get(), env).truthy()) {
                 Environment* child = GC::instance().alloc(env);
                 GcRootGuard guard(child);
-                try {
-                    execBlock(node->body.get(), child);
-                } catch (BreakSignal&) {
-                    break;
-                } catch (ContinueSignal&) {
-                    continue;
+                execBlock(node->body.get(), child);
+                if (g_pending != kPendNone) {
+                    if (g_pending == kPendBreak) { g_pending = kPendNone; break; }
+                    if (g_pending == kPendContinue) { g_pending = kPendNone; continue; }
+                    return;  // kPendReturn keeps unwinding
                 }
             }
             return;
@@ -512,15 +523,12 @@ void Interpreter::execInner(const Stmt* stmt, Environment* env) {
             while (!node->condition || eval(node->condition.get(), loopEnv).truthy()) {
                 Environment* iterEnv = GC::instance().alloc(loopEnv);
                 GcRootGuard iterGuard(iterEnv);
-                bool doBreak = false;
-                try {
-                    execBlock(node->body.get(), iterEnv);
-                } catch (BreakSignal&) {
-                    doBreak = true;
-                } catch (ContinueSignal&) {
-                    // fall through to the post-expression, like C's `for`
+                execBlock(node->body.get(), iterEnv);
+                if (g_pending != kPendNone) {
+                    if (g_pending == kPendBreak) { g_pending = kPendNone; break; }
+                    if (g_pending == kPendContinue) g_pending = kPendNone;  // still run post, like C's `for`
+                    else return;  // kPendReturn keeps unwinding
                 }
-                if (doBreak) break;
                 if (node->post) eval(node->post.get(), loopEnv);
             }
             return;
@@ -528,12 +536,16 @@ void Interpreter::execInner(const Stmt* stmt, Environment* env) {
         case StmtKind::Return: {
             auto* node = static_cast<const ReturnStmt*>(stmt);
             Value value = node->value ? eval(node->value.get(), env) : Value::null();
-            throw ReturnSignal{value};
+            g_retVal = std::move(value);
+            g_pending = kPendReturn;
+            return;
         }
         case StmtKind::Break:
-            throw BreakSignal{};
+            g_pending = kPendBreak;
+            return;
         case StmtKind::Continue:
-            throw ContinueSignal{};
+            g_pending = kPendContinue;
+            return;
         case StmtKind::ExprStmt: {
             auto* node = static_cast<const ExprStmtNode*>(stmt);
             eval(node->expr.get(), env);
@@ -546,6 +558,7 @@ void Interpreter::execBlock(const BlockStmt* block, Environment* env) {
     for (const auto& stmt : block->statements) {
         if (exprDepth_ == 0) GC::instance().collectIfNeeded();
         exec(stmt.get(), env);
+        if (g_pending != kPendNone) return;  // g_retVal is unrooted: no GC while unwinding
     }
     if (exprDepth_ == 0) GC::instance().collectIfNeeded();
 }
@@ -805,8 +818,11 @@ Value Interpreter::callFunction(const std::shared_ptr<Function>& fn, std::vector
     try {
         DepthResetGuard depthReset(exprDepth_);
         execBlock(decl->body.get(), env);
-    } catch (ReturnSignal& r) {
-        return r.value;
+        if (g_pending != kPendNone) {
+            bool returned = g_pending == kPendReturn;
+            g_pending = kPendNone;  // stray break/continue don't leak into the caller's loop
+            if (returned) return std::move(g_retVal);
+        }
     } catch (RuntimeError& e) {
         // Builds the call-chain trace one frame per unwind, innermost first.
         e.addFrame(decl->name, callSite);
@@ -1972,6 +1988,7 @@ Value Interpreter::doImport(const std::string& rawPath) {
     for (const auto& stmt : program->statements) {
         if (exprDepth_ == 0) GC::instance().collectIfNeeded();
         exec(stmt.get(), modEnv);
+        if (g_pending != kPendNone) { g_pending = kPendNone; break; }
     }
     importDirStack_.pop_back();
     importStack_.pop_back();

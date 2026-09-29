@@ -33,26 +33,12 @@ public:
 
     // Fast path when liveGoroutines == 0: no other thread can be
     // touching GC state, so gcMutex_ can be skipped entirely.
-    void pushRoot(Environment* env) {
-        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) {
-            rootsByThread_[std::this_thread::get_id()].push_back(env);
-            return;
-        }
-        std::lock_guard<std::mutex> lock(gcMutex_);
-        rootsByThread_[std::this_thread::get_id()].push_back(env);
-    }
-    void popRoot() {
-        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) {
-            auto it = rootsByThread_.find(std::this_thread::get_id());
-            it->second.pop_back();
-            if (it->second.empty()) rootsByThread_.erase(it);
-            return;
-        }
-        std::lock_guard<std::mutex> lock(gcMutex_);
-        auto it = rootsByThread_.find(std::this_thread::get_id());
-        it->second.pop_back();
-        if (it->second.empty()) rootsByThread_.erase(it);
-    }
+    // Roots live in per-thread vectors inside the *RootsByThread_ maps. The
+    // vector is looked up once per thread and cached (unordered_map nodes are
+    // never invalidated, and entries are never erased), so a push/pop is a
+    // plain vector op instead of a hash lookup + node alloc.
+    void pushRoot(Environment* env) { push(envRoots(), env); }
+    void popRoot() { pop(envRoots()); }
 
     // Same as pushRoot/popRoot, for a VM runFrame()'s stack/locals/
     // boxedLocals (registered for the frame's duration via VmRootGuard).
@@ -61,71 +47,17 @@ public:
         const std::vector<Value>* locals = nullptr;
         const std::vector<Cell*>* boxedLocals = nullptr;
     };
-    void pushVmRoots(const VmFrameRoots& roots) {
-        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) {
-            vmRootsByThread_[std::this_thread::get_id()].push_back(roots);
-            return;
-        }
-        std::lock_guard<std::mutex> lock(gcMutex_);
-        vmRootsByThread_[std::this_thread::get_id()].push_back(roots);
-    }
-    void popVmRoots() {
-        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) {
-            auto it = vmRootsByThread_.find(std::this_thread::get_id());
-            it->second.pop_back();
-            if (it->second.empty()) vmRootsByThread_.erase(it);
-            return;
-        }
-        std::lock_guard<std::mutex> lock(gcMutex_);
-        auto it = vmRootsByThread_.find(std::this_thread::get_id());
-        it->second.pop_back();
-        if (it->second.empty()) vmRootsByThread_.erase(it);
-    }
+    void pushVmRoots(const VmFrameRoots& roots) { push(vmRoots(), roots); }
+    void popVmRoots() { pop(vmRoots()); }
 
     // RAII-rooting for a raw C++ local mid-eval (e.g. `callee` in
     // `f(a(), b())` while `b()` still evaluates) -- lets exprDepth_
     // return to 0 across a nested call without a collection sweeping
     // the caller's not-yet-consumed temporary.
-    void pushValueRoot(const Value* v) {
-        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) {
-            valueRootsByThread_[std::this_thread::get_id()].push_back(v);
-            return;
-        }
-        std::lock_guard<std::mutex> lock(gcMutex_);
-        valueRootsByThread_[std::this_thread::get_id()].push_back(v);
-    }
-    void popValueRoot() {
-        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) {
-            auto it = valueRootsByThread_.find(std::this_thread::get_id());
-            it->second.pop_back();
-            if (it->second.empty()) valueRootsByThread_.erase(it);
-            return;
-        }
-        std::lock_guard<std::mutex> lock(gcMutex_);
-        auto it = valueRootsByThread_.find(std::this_thread::get_id());
-        it->second.pop_back();
-        if (it->second.empty()) valueRootsByThread_.erase(it);
-    }
-    void pushValueVectorRoot(const std::vector<Value>* v) {
-        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) {
-            valueVectorRootsByThread_[std::this_thread::get_id()].push_back(v);
-            return;
-        }
-        std::lock_guard<std::mutex> lock(gcMutex_);
-        valueVectorRootsByThread_[std::this_thread::get_id()].push_back(v);
-    }
-    void popValueVectorRoot() {
-        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) {
-            auto it = valueVectorRootsByThread_.find(std::this_thread::get_id());
-            it->second.pop_back();
-            if (it->second.empty()) valueVectorRootsByThread_.erase(it);
-            return;
-        }
-        std::lock_guard<std::mutex> lock(gcMutex_);
-        auto it = valueVectorRootsByThread_.find(std::this_thread::get_id());
-        it->second.pop_back();
-        if (it->second.empty()) valueVectorRootsByThread_.erase(it);
-    }
+    void pushValueRoot(const Value* v) { push(valueRoots(), v); }
+    void popValueRoot() { pop(valueRoots()); }
+    void pushValueVectorRoot(const std::vector<Value>* v) { push(valueVectorRoots(), v); }
+    void popValueVectorRoot() { pop(valueVectorRoots()); }
 
     // Every thread running Nusantara code must register its own
     // exprDepth_ (thread_local, see interpreter.cpp) after first
@@ -152,6 +84,44 @@ public:
     size_t collections() const { return collections_; }
 
 private:
+    template <class T, class Map>
+    std::vector<T>& threadVec(Map& m, std::vector<T>*& cache) {
+        if (!cache) {
+            std::unique_lock<std::mutex> lock(gcMutex_, std::defer_lock);
+            if (GC::liveGoroutines.load(std::memory_order_seq_cst) != 0) lock.lock();
+            cache = &m[std::this_thread::get_id()];
+        }
+        return *cache;
+    }
+    template <class T>
+    void push(std::vector<T>& v, const T& x) {
+        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) { v.push_back(x); return; }
+        std::lock_guard<std::mutex> lock(gcMutex_);
+        v.push_back(x);
+    }
+    template <class T>
+    void pop(std::vector<T>& v) {
+        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) { v.pop_back(); return; }
+        std::lock_guard<std::mutex> lock(gcMutex_);
+        v.pop_back();
+    }
+    std::vector<Environment*>& envRoots() {
+        static thread_local std::vector<Environment*>* c = nullptr;
+        return threadVec(rootsByThread_, c);
+    }
+    std::vector<VmFrameRoots>& vmRoots() {
+        static thread_local std::vector<VmFrameRoots>* c = nullptr;
+        return threadVec(vmRootsByThread_, c);
+    }
+    std::vector<const Value*>& valueRoots() {
+        static thread_local std::vector<const Value*>* c = nullptr;
+        return threadVec(valueRootsByThread_, c);
+    }
+    std::vector<const std::vector<Value>*>& valueVectorRoots() {
+        static thread_local std::vector<const std::vector<Value>*>* c = nullptr;
+        return threadVec(valueVectorRootsByThread_, c);
+    }
+
     void markValue(const Value& v);
     void markEnv(Environment* e);
     void markCell(Cell* c);

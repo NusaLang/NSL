@@ -106,7 +106,7 @@ void GC::markEnv(Environment* e) {
     // during a collection.
     while (e && !e->gcMarked_) {
         e->gcMarked_ = true;
-        for (const auto& [name, value] : e->vars_) markValue(value);
+        e->forEachValue([this](const Value& v) { markValue(v); });
         e = e->parent_;
     }
 }
