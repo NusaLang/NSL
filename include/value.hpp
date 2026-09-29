@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ordered_map.hpp"
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -62,6 +63,8 @@ struct NativeFunction {
 enum class ValueType { Null, Bool, Number, String, Fn, Builtin, Array, Map, Channel, WaitGroup, Native, Class, Instance, VmFn, VmArray };
 struct ClassInfo;
 struct InstanceState;
+struct Value;
+using ValueMap = OrderedMapT<Value>;
 struct VmClosure;
 struct VmArrayState;
 
@@ -106,8 +109,8 @@ struct Value {
     std::vector<Value>* array() const {
         return type == ValueType::Array ? as<std::vector<Value>>() : nullptr;
     }
-    std::unordered_map<std::string, Value>* map() const {
-        return type == ValueType::Map ? as<std::unordered_map<std::string, Value>>() : nullptr;
+    ValueMap* map() const {
+        return type == ValueType::Map ? as<ValueMap>() : nullptr;
     }
     ChannelState* channel() const {
         return type == ValueType::Channel ? as<ChannelState>() : nullptr;
@@ -150,9 +153,9 @@ struct Value {
         return type == ValueType::Array ? std::static_pointer_cast<std::vector<Value>>(ref)
                                         : nullptr;
     }
-    std::shared_ptr<std::unordered_map<std::string, Value>> mapShared() const {
+    std::shared_ptr<ValueMap> mapShared() const {
         return type == ValueType::Map
-                   ? std::static_pointer_cast<std::unordered_map<std::string, Value>>(ref)
+                   ? std::static_pointer_cast<ValueMap>(ref)
                    : nullptr;
     }
 
@@ -195,14 +198,14 @@ struct Value {
         return v;
     }
     static Value newArray() { return fromArray(std::make_shared<std::vector<Value>>()); }
-    static Value fromMap(std::shared_ptr<std::unordered_map<std::string, Value>> m) {
+    static Value fromMap(std::shared_ptr<ValueMap> m) {
         Value v;
         v.type = ValueType::Map;
         v.ref = std::move(m);
         return v;
     }
     static Value newMap() {
-        return fromMap(std::make_shared<std::unordered_map<std::string, Value>>());
+        return fromMap(std::make_shared<ValueMap>());
     }
     static Value fromChannel(std::shared_ptr<ChannelState> c) {
         Value v;
@@ -367,7 +370,7 @@ struct ClassInfo {
 
 struct InstanceState {
     std::shared_ptr<ClassInfo> classInfo;
-    std::shared_ptr<std::unordered_map<std::string, Value>> fields;
+    std::shared_ptr<ValueMap> fields;
 };
 
 struct VmArrayState {

@@ -395,11 +395,11 @@ void Interpreter::execInner(const Stmt* stmt, Environment* env) {
             auto info = std::make_shared<ClassInfo>();
             info->name = node->name;
             info->isEnum = true;
-            auto ns = std::make_shared<std::unordered_map<std::string, Value>>();
+            auto ns = std::make_shared<ValueMap>();
             for (const auto& variant : node->variants) {
                 auto state = std::make_shared<InstanceState>();
                 state->classInfo = info;
-                state->fields = std::make_shared<std::unordered_map<std::string, Value>>();
+                state->fields = std::make_shared<ValueMap>();
                 (*state->fields)["nama"] = Value::fromString(variant);
                 (*ns)[variant] = Value::fromInstance(state);
             }
@@ -418,7 +418,7 @@ void Interpreter::execInner(const Stmt* stmt, Environment* env) {
                     if (auto* tv = dynamic_cast<ThrownValue*>(&e)) {
                         caught = tv->value();
                     } else {
-                        auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+                        auto m = std::make_shared<ValueMap>();
                         (*m)["pesan"] = Value::fromString(e.what());
                         caught = Value::fromMap(m);
                     }
@@ -754,7 +754,7 @@ Value Interpreter::callValue(const Value& callee, std::vector<Value>& args, Span
     if (callee.type == ValueType::Class) {
         auto state = std::make_shared<InstanceState>();
         state->classInfo = callee.klassShared();
-        state->fields = std::make_shared<std::unordered_map<std::string, Value>>();
+        state->fields = std::make_shared<ValueMap>();
         GC::instance().trackInstance(state->fields);
         Value instanceVal = Value::fromInstance(state);
         if (callee.klass()->isStruct) {
@@ -1288,7 +1288,7 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         } catch (const std::exception& e) {
             throw RuntimeError(std::string("http_get(): ") + e.what());
         }
-        auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+        auto m = std::make_shared<ValueMap>();
         (*m)["status"] = Value::fromNumber(resp.status);
         (*m)["tubuh"] = Value::fromString(resp.body);
         return Value::fromMap(m);
@@ -1305,7 +1305,7 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         } catch (const std::exception& e) {
             throw RuntimeError(std::string("http_post(): ") + e.what());
         }
-        auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+        auto m = std::make_shared<ValueMap>();
         (*m)["status"] = Value::fromNumber(resp.status);
         (*m)["tubuh"] = Value::fromString(resp.body);
         return Value::fromMap(m);
@@ -1356,9 +1356,9 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
                 // already held by the time this runs (net.cpp).
                 Interpreter::registerCurrentThread();
 
-                auto headerMap = std::make_shared<std::unordered_map<std::string, Value>>();
+                auto headerMap = std::make_shared<ValueMap>();
                 for (const auto& [k, v] : req.headers) (*headerMap)[k] = Value::fromString(v);
-                auto reqMap = std::make_shared<std::unordered_map<std::string, Value>>();
+                auto reqMap = std::make_shared<ValueMap>();
                 (*reqMap)["metode"] = Value::fromString(req.method);
                 (*reqMap)["path"] = Value::fromString(req.path);
                 (*reqMap)["header"] = Value::fromMap(headerMap);
@@ -1470,7 +1470,7 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         } catch (const std::exception& e) {
             throw RuntimeError(e.what());
         }
-        auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+        auto m = std::make_shared<ValueMap>();
         (*m)["status"] = Value::fromNumber(result.exitCode);
         (*m)["keluaran"] = Value::fromString(result.out);
         (*m)["error"] = Value::fromString(result.err);
@@ -1493,7 +1493,7 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         }
         proc::StreamHandle h = proc::startStream(args[0].str(), cmdArgs);
         if (h.pid < 0) return Value::null();
-        auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+        auto m = std::make_shared<ValueMap>();
         (*m)["pid"] = Value::fromNumber(h.pid);
         (*m)["fd"] = Value::fromNumber(h.fd);
         return Value::fromMap(m);
@@ -1545,7 +1545,7 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
             expectType(args[2], ValueType::Number);
             // Copy-on-write: don't mutate the caller's own map, build a
             // fresh one with "exp" added.
-            auto withExp = std::make_shared<std::unordered_map<std::string, Value>>(*args[0].map());
+            auto withExp = std::make_shared<ValueMap>(*args[0].map());
             double now = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
             (*withExp)["exp"] = Value::fromNumber(now + args[2].number);
             payload = Value::fromMap(withExp);
@@ -1902,13 +1902,13 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
                     chan->queue.pop_front();
                     lock.unlock();
                     chan->notFull.notify_one();
-                    auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+                    auto m = std::make_shared<ValueMap>();
                     (*m)["indeks"] = Value::fromNumber(static_cast<double>(i));
                     (*m)["nilai"] = v;
                     return Value::fromMap(m);
                 }
                 if (chan->closed) {
-                    auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+                    auto m = std::make_shared<ValueMap>();
                     (*m)["indeks"] = Value::fromNumber(static_cast<double>(i));
                     (*m)["nilai"] = Value::null();
                     return Value::fromMap(m);
@@ -2123,7 +2123,7 @@ Value Interpreter::doImport(const std::string& rawPath) {
     importDirStack_.pop_back();
     importStack_.pop_back();
 
-    auto exported = std::make_shared<std::unordered_map<std::string, Value>>(modEnv->vars());
+    auto exported = std::make_shared<ValueMap>(modEnv->vars());
     Value result = Value::fromMap(std::move(exported));
 
     // FnDeclStmt* pointers inside any exported closures point into

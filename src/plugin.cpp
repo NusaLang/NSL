@@ -122,7 +122,7 @@ Value load(const std::string& path) {
     }
     for (auto& [n, pf] : registry) pf.ver = abiVer;
 
-    auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+    auto m = std::make_shared<ValueMap>();
     for (const auto& [name, pf] : registry) {
         auto nf = std::make_shared<NativeFunction>();
         nf->plugin = pluginState;
@@ -158,7 +158,7 @@ bool loadBuiltin(const std::string& name, Value& out) {
         if (name != e.name) continue;
         Registry registry;
         e.init(&registry, registerTrampoline);
-        auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+        auto m = std::make_shared<ValueMap>();
         for (const auto& [fname, pf] : registry) {
             auto nf = std::make_shared<NativeFunction>();
             nf->fnPtr = reinterpret_cast<void*>(pf.fn);

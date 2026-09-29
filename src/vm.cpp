@@ -1355,7 +1355,7 @@ Value vmConstruct(const Value& callee, std::vector<Value>& args, VmContext& ctx)
     if (ci->isStruct || ci->isEnum) return viaInterpreter();
     auto state = std::make_shared<InstanceState>();
     state->classInfo = callee.klassShared();
-    state->fields = std::make_shared<std::unordered_map<std::string, Value>>();
+    state->fields = std::make_shared<ValueMap>();
     GC::instance().trackInstance(state->fields);
     Value inst = Value::fromInstance(state);
     for (const char* ctorName : {"konstruktor", "constructor"}) {
@@ -1572,7 +1572,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
         return false;
     };
     auto errorMap = [](const char* what) {
-        auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+        auto m = std::make_shared<ValueMap>();
         (*m)["pesan"] = Value::fromString(what);
         return Value::fromMap(m);
     };
@@ -2058,12 +2058,12 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 auto info = std::make_shared<ClassInfo>();
                 info->name = fn->constants[nameIdx].str();
                 info->isEnum = true;
-                auto ns = std::make_shared<std::unordered_map<std::string, Value>>();
+                auto ns = std::make_shared<ValueMap>();
                 for (uint16_t i = 0; i < count; i++) {
                     const std::string& variant = fn->constants[readU16()].str();
                     auto state = std::make_shared<InstanceState>();
                     state->classInfo = info;
-                    state->fields = std::make_shared<std::unordered_map<std::string, Value>>();
+                    state->fields = std::make_shared<ValueMap>();
                     (*state->fields)["nama"] = Value::fromString(variant);
                     (*ns)[variant] = Value::fromInstance(state);
                 }

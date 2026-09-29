@@ -71,7 +71,7 @@ Cell* GC::allocCell(Value v) {
     return cells_.back().get();
 }
 
-void GC::trackInstance(const std::shared_ptr<std::unordered_map<std::string, Value>>& fields) {
+void GC::trackInstance(const std::shared_ptr<ValueMap>& fields) {
     std::unique_lock<std::mutex> lock(gcMutex_, std::defer_lock);
     if (GC::liveGoroutines.load(std::memory_order_seq_cst) != 0) lock.lock();
     instances_.push_back(fields);
@@ -93,7 +93,7 @@ void GC::trackVector(const std::shared_ptr<std::vector<Value>>& v) {
     if (trackedContainers_.insert(v.get()).second) { vectors_.push_back(v); instancesSinceCollect_++; }
 }
 
-void GC::trackMap(const std::shared_ptr<std::unordered_map<std::string, Value>>& m) {
+void GC::trackMap(const std::shared_ptr<ValueMap>& m) {
     std::unique_lock<std::mutex> lock(gcMutex_, std::defer_lock);
     if (GC::liveGoroutines.load(std::memory_order_seq_cst) != 0) lock.lock();
     if (trackedContainers_.insert(m.get()).second) { maps_.push_back(m); instancesSinceCollect_++; }
@@ -212,7 +212,7 @@ void GC::collectNow() {
 
     // Instances nothing reaches: take their fields out (breaking cycles) and let
     // them die after the lock is released.
-    std::vector<std::unordered_map<std::string, Value>> deadFields;
+    std::vector<ValueMap> deadFields;
     std::vector<std::vector<Value>> deadVectors;
     {
         size_t keep = 0;

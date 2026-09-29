@@ -302,7 +302,7 @@ struct Request {
 };
 
 struct Sink {
-    std::function<void(long status, std::unordered_map<std::string, Value>&)> onHead;
+    std::function<void(long status, ValueMap&)> onHead;
     std::function<bool(const char*, size_t)> onBody;  // false = batalkan
 };
 
@@ -400,7 +400,7 @@ std::string fetch(Request req, Sink& sink) {
             size_t sp1 = statusLine.find(' ');
             if (statusLine.compare(0, 5, "HTTP/") != 0 || sp1 == std::string::npos) return "status line nggak valid";
             long status = std::atol(statusLine.c_str() + sp1 + 1);
-            std::unordered_map<std::string, Value> headers;
+            ValueMap headers;
             size_t pos = eol == std::string::npos ? head.size() : eol + 2;
             while (pos < head.size()) {
                 size_t e2 = head.find("\r\n", pos);
@@ -520,9 +520,9 @@ NsValue httpMinta(int argc, const NsValue* argv) {
 
     std::string responseBody;
     long statusCode = 0;
-    std::unordered_map<std::string, Value> responseHeaders;
+    ValueMap responseHeaders;
     Sink sink;
-    sink.onHead = [&](long st, std::unordered_map<std::string, Value>& h) { statusCode = st; responseHeaders = h; };
+    sink.onHead = [&](long st, ValueMap& h) { statusCode = st; responseHeaders = h; };
     sink.onBody = [&](const char* p, size_t n) { responseBody.append(p, n); return true; };
     std::string err = fetch(req, sink);
     if (!err.empty()) return errorEnvelope("request gagal: " + err);
@@ -530,7 +530,7 @@ NsValue httpMinta(int argc, const NsValue* argv) {
     Value out = Value::newMap();
     (*out.map())["ok"] = Value::fromBool(true);
     (*out.map())["status"] = Value::fromNumber(static_cast<double>(statusCode));
-    (*out.map())["header"] = Value::fromMap(std::make_shared<std::unordered_map<std::string, Value>>(responseHeaders));
+    (*out.map())["header"] = Value::fromMap(std::make_shared<ValueMap>(responseHeaders));
     (*out.map())["tubuh"] = Value::fromString(responseBody);
     return nsString(json::encode(out));
 }
@@ -545,7 +545,7 @@ struct HttpStreamState {
     bool done = false;        // transfer finished (success or failure)
     long status = 0;
     std::string error;        // non-empty if the transfer failed
-    std::unordered_map<std::string, Value> headers;
+    ValueMap headers;
     std::atomic<bool> abort{false};
     std::thread worker;
 };
@@ -573,7 +573,7 @@ void streamWorkerMain(HttpStreamState* st, std::string metode, std::string url, 
         return;
     }
     Sink sink;
-    sink.onHead = [&](long code, std::unordered_map<std::string, Value>& h) {
+    sink.onHead = [&](long code, ValueMap& h) {
         std::lock_guard<std::mutex> lock(st->mu);
         st->status = code;
         st->headers = h;
@@ -674,7 +674,7 @@ NsValue httpInfoStream(int argc, const NsValue* argv) {
     Value out = Value::newMap();
     (*out.map())["ok"] = Value::fromBool(true);
     (*out.map())["status"] = Value::fromNumber(static_cast<double>(st->status));
-    (*out.map())["header"] = Value::fromMap(std::make_shared<std::unordered_map<std::string, Value>>(st->headers));
+    (*out.map())["header"] = Value::fromMap(std::make_shared<ValueMap>(st->headers));
     lock.unlock();
     return nsString(json::encode(out));
 }

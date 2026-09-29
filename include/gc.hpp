@@ -33,7 +33,7 @@ public:
     // Instances are refcounted (shared field table), so a cycle between objects
     // (a.other = b; b.other = a) would never free itself. Every instance's field
     // table is registered here; a collection clears the ones no root can reach.
-    void trackInstance(const std::shared_ptr<std::unordered_map<std::string, Value>>& fields);
+    void trackInstance(const std::shared_ptr<ValueMap>& fields);
     // Same for arrays and maps, but only once one of them has had a container stored into it
     // (a cycle needs such a store), so plain data never pays for tracking.
     void noteStore(const Value& container, const Value& stored) {
@@ -162,7 +162,7 @@ private:
 
     void noteStoreSlow(const Value& container);
     void trackVector(const std::shared_ptr<std::vector<Value>>& v);
-    void trackMap(const std::shared_ptr<std::unordered_map<std::string, Value>>& m);
+    void trackMap(const std::shared_ptr<ValueMap>& m);
     void markValue(const Value& v);
     void markEnv(Environment* e);
     void markCell(Cell* c);
@@ -176,10 +176,10 @@ private:
     std::unordered_map<std::thread::id, VmFrameRoots**> vmHeads_;
     std::unordered_map<std::thread::id, std::vector<const Value*>> valueRootsByThread_;
     std::unordered_map<std::thread::id, std::vector<const std::vector<Value>*>> valueVectorRootsByThread_;
-    std::vector<std::weak_ptr<std::unordered_map<std::string, Value>>> instances_;
+    std::vector<std::weak_ptr<ValueMap>> instances_;
     std::unordered_set<const void*> markedFields_;
     std::vector<std::weak_ptr<std::vector<Value>>> vectors_;
-    std::vector<std::weak_ptr<std::unordered_map<std::string, Value>>> maps_;
+    std::vector<std::weak_ptr<ValueMap>> maps_;
     std::unordered_set<const void*> markedVectors_;
     std::unordered_set<const void*> trackedContainers_;
     size_t instancesSinceCollect_ = 0;
