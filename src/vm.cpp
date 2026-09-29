@@ -730,10 +730,20 @@ public:
             declaringCompiler->emitOp(Op::DefineGlobal);
             declaringCompiler->emitU16(static_cast<uint16_t>(declaringCompiler->addConstant(Value::fromString(decl->name))));
         } else {
-            int li = declaringCompiler->addLocal(decl->name);
+            // compileBlock already declared the name (see hoistLocal), so the body could
+            // capture it -- recursion and forward references between sibling functions.
+            int li = declaringCompiler->resolveLocal(decl->name);
+            if (li == -1) li = declaringCompiler->addLocal(decl->name);
             const Local& l = declaringCompiler->locals[static_cast<size_t>(li)];
-            declaringCompiler->emitOp(l.boxed ? Op::DefineBoxedLocal : Op::DefineLocal);
-            declaringCompiler->emitU16(static_cast<uint16_t>(l.slot));
+            if (l.boxed) {
+                // The cell exists already (created by hoistLocal): store into it.
+                declaringCompiler->emitOp(Op::SetBoxedLocal);
+                declaringCompiler->emitU16(static_cast<uint16_t>(l.slot));
+                declaringCompiler->emitOp(Op::Pop);
+            } else {
+                declaringCompiler->emitOp(Op::DefineLocal);
+                declaringCompiler->emitU16(static_cast<uint16_t>(l.slot));
+            }
         }
     }
 
@@ -1117,7 +1127,27 @@ public:
         }
     }
 
+    // Nested `fungsi` declarations are visible to the whole block (like the
+    // tree-walker, where a function can call itself or a sibling declared later),
+    // so their names are declared up front. A captured (boxed) one gets its cell
+    // now, holding null until the declaration runs.
+    void hoistLocal(const std::string& name) {
+        int li = current->addLocal(name);
+        const Local& l = current->locals[static_cast<size_t>(li)];
+        if (l.boxed) {
+            current->emitOp(Op::Null);
+            current->emitOp(Op::DefineBoxedLocal);
+            current->emitU16(static_cast<uint16_t>(l.slot));
+        }
+    }
+
     void compileBlock(const BlockStmt* block) {
+        std::unordered_set<std::string> hoisted;
+        for (auto& st : block->statements) {
+            if (st->kind != StmtKind::FnDecl) continue;
+            const std::string& name = static_cast<const FnDeclStmt*>(st.get())->name;
+            if (hoisted.insert(name).second) hoistLocal(name);
+        }
         for (auto& st : block->statements) compileStmt(st.get(), false);
     }
 
