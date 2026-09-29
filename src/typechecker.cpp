@@ -118,6 +118,7 @@ TypeChecker::StaticType TypeChecker::inferExpr(const Expr* expr) {
                 return {bothNum ? "angka" : "teks"};
             }
             // - * / %   (`*` also repeats text and arrays: "ab" * 3)
+            if (op == "%" && l.name == "teks") return {"teks"};  // "fmt %d" % value
             if (op == "*" && ((l.name == "teks" && (r.name == "angka" || r.name.empty())) ||
                               (r.name == "teks" && (l.name == "angka" || l.name.empty())) ||
                               l.name == "larik" || r.name == "larik")) {

@@ -46,6 +46,11 @@ private:
     StmtPtr whileStmt();
     StmtPtr forStmt();
     StmtPtr forInStmt(Span start);  // Python-style `for x in <iterable>`
+    // Loop over `iter` binding `vars` (several = unpacking each element); shared with comprehensions.
+    StmtPtr buildForIn(const std::vector<std::string>& vars, ExprPtr iter, std::unique_ptr<BlockStmt> body, Span sp);
+    std::vector<std::string> forTargets();
+    ExprPtr comprehension(ExprPtr element, ExprPtr valueOrNull, bool isDict, Span sp);
+    ExprPtr power();
     StmtPtr importStmt();           // `import a.b [as c]`
     StmtPtr fromImportStmt();       // `from a.b import x [as y], ...`
     bool isWord(const Token& t, const char* a, const char* b = nullptr) const;
@@ -59,6 +64,7 @@ private:
     StmtPtr continueStmt();
     std::unique_ptr<BlockStmt> block();
     StmtPtr exprStmt();
+    StmtPtr tupleAssign(ExprPtr first, Span sp);
     // Shared by `untuk (init; ...` and plain statements: a let or bare
     // expression, without consuming the trailing ';' itself.
     StmtPtr forClauseInit();

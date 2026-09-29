@@ -425,18 +425,34 @@ static bool literalNumber(const Expr* e, double* out) {
     return false;
 }
 
+// `for a, b in ...` / `for (a, b) in ...`: one or more loop variables.
+std::vector<std::string> Parser::forTargets() {
+    std::vector<std::string> vars;
+    bool paren = match(TokenType::LParen);
+    do {
+        vars.push_back(expect(TokenType::Ident, i18n::tr("Nama variabel diharapkan setelah 'for'", "Expected variable name after 'for'")).text);
+    } while (match(TokenType::Comma));
+    if (paren) expect(TokenType::RParen, i18n::tr("')' diharapkan", "Expected ')'"));
+    return vars;
+}
+
 StmtPtr Parser::forInStmt(Span sp) {
-    std::string var = expect(TokenType::Ident, i18n::tr("Nama variabel diharapkan setelah 'for'", "Expected variable name after 'for'")).text;
+    std::vector<std::string> vars = forTargets();
     if (!matchWord("in", "dalam")) {
         throw ParseError(i18n::tr("'in' diharapkan setelah variabel 'for'", "Expected 'in' after the 'for' variable"), peek());
     }
     ExprPtr iter = expression();
     auto body = block();
+    return buildForIn(vars, std::move(iter), std::move(body), sp);
+}
+
+StmtPtr Parser::buildForIn(const std::vector<std::string>& vars, ExprPtr iter, std::unique_ptr<BlockStmt> body, Span sp) {
+    const std::string& var = vars[0];
     int id = hiddenCounter_++;
 
     // `for i in range(a, b[, literal step])` -> a plain counting loop, so it
     // stays on the fast (VM/JIT) path and allocates nothing.
-    if (iter->kind == ExprKind::Call) {
+    if (vars.size() == 1 && iter->kind == ExprKind::Call) {
         auto* c = static_cast<CallExpr*>(iter.get());
         if (c->callee->kind == ExprKind::Identifier) {
             const std::string& fname = static_cast<IdentifierExpr*>(c->callee.get())->name;
@@ -507,7 +523,20 @@ StmtPtr Parser::forInStmt(Span sp) {
     postAssign->span = sp;
     ExprPtr elem = std::make_unique<IndexExpr>(mkIdent(cVar, sp), mkIdent(iVar, sp));
     elem->span = sp;
-    body->statements.insert(body->statements.begin(), mkLet(var, std::move(elem), sp));
+    if (vars.size() == 1) {
+        body->statements.insert(body->statements.begin(), mkLet(var, std::move(elem), sp));
+    } else {
+        // Unpack each element: let __eN = it[i]; let a = __eN[0]; let b = __eN[1] ...
+        std::string eVar = "__e" + std::to_string(id);
+        std::vector<StmtPtr> pre;
+        pre.push_back(mkLet(eVar, std::move(elem), sp));
+        for (size_t k = 0; k < vars.size(); k++) {
+            ExprPtr part = std::make_unique<IndexExpr>(mkIdent(eVar, sp), mkNum(static_cast<double>(k), sp));
+            part->span = sp;
+            pre.push_back(mkLet(vars[k], std::move(part), sp));
+        }
+        body->statements.insert(body->statements.begin(), std::make_move_iterator(pre.begin()), std::make_move_iterator(pre.end()));
+    }
     StmtPtr loop = std::make_unique<ForStmt>(mkLet(iVar, mkNum(0, sp), sp), std::move(cond),
                                               std::move(postAssign), std::move(body));
     loop->span = sp;
@@ -568,8 +597,80 @@ std::unique_ptr<BlockStmt> Parser::block() {
     return std::make_unique<BlockStmt>(std::move(statements));
 }
 
+// `a, b = x, y` / `a, b = pair` / `x[i], x[j] = x[j], x[i]`: the right side is evaluated in full
+// first (so swaps work), then each target is assigned in order.
+StmtPtr Parser::tupleAssign(ExprPtr first, Span sp) {
+    std::vector<ExprPtr> targets;
+    targets.push_back(std::move(first));
+    while (match(TokenType::Comma)) {
+        if (check(TokenType::Eq)) break;
+        targets.push_back(logicOr());
+    }
+    expect(TokenType::Eq, i18n::tr("'=' diharapkan pada penugasan beruntun", "Expected '=' in tuple assignment"));
+    std::vector<ExprPtr> rhs;
+    rhs.push_back(assignment());
+    bool literalTuple = false;
+    while (match(TokenType::Comma)) {
+        if (check(TokenType::Semi) || peek().span.line != tokens_[pos_ - 1].span.line) break;
+        rhs.push_back(assignment());
+        literalTuple = true;
+    }
+    expectEnd(i18n::tr("';' diharapkan setelah penugasan", "Expected ';' after assignment"));
+    std::string tmp = "__t" + std::to_string(hiddenCounter_++);
+    ExprPtr source = literalTuple ? ExprPtr(std::make_unique<ArrayLitExpr>(std::move(rhs))) : std::move(rhs[0]);
+    source->span = sp;
+    std::vector<StmtPtr> stmts;
+    stmts.push_back(mkLet(tmp, std::move(source), sp));
+    for (size_t k = 0; k < targets.size(); k++) {
+        ExprPtr val = std::make_unique<IndexExpr>(mkIdent(tmp, sp), mkNum(static_cast<double>(k), sp));
+        val->span = sp;
+        ExprPtr assign;
+        if (targets[k]->kind == ExprKind::Identifier) {
+            assign = std::make_unique<AssignExpr>(static_cast<IdentifierExpr*>(targets[k].get())->name, std::move(val));
+        } else if (targets[k]->kind == ExprKind::Index) {
+            auto* idx = static_cast<IndexExpr*>(targets[k].get());
+            assign = std::make_unique<IndexAssignExpr>(std::move(idx->target), std::move(idx->index), std::move(val));
+        } else {
+            throw ParseError(i18n::tr("Target penugasan nggak valid", "Invalid assignment target"), peek());
+        }
+        assign->span = sp;
+        StmtPtr st = std::make_unique<ExprStmtNode>(std::move(assign));
+        st->span = sp;
+        stmts.push_back(std::move(st));
+    }
+    // A bare block would hide the temp; statements are spliced by the caller via pendingStmts_.
+    StmtPtr blk = std::make_unique<BlockStmt>(std::move(stmts));
+    blk->span = sp;
+    return blk;
+}
+
 StmtPtr Parser::exprStmt() {
+    Span sp = peek().span;
+    if (isWord(peek(), "del", "hapus") && peekAt(1).type == TokenType::Ident) {
+        advance();
+        ExprPtr target = expression();
+        expectEnd(i18n::tr("';' diharapkan setelah 'del'", "Expected ';' after 'del'"));
+        if (target->kind != ExprKind::Index) {
+            throw ParseError(i18n::tr("'del' butuh x[i] atau x[kunci]", "'del' needs x[i] or x[key]"), peek());
+        }
+        auto* idx = static_cast<IndexExpr*>(target.get());
+        std::vector<ExprPtr> a;
+        a.push_back(std::move(idx->target));
+        a.push_back(std::move(idx->index));
+        return std::make_unique<ExprStmtNode>(mkCall("_delitem", std::move(a), sp));
+    }
+    if (isWord(peek(), "assert", "pastikan")) {
+        advance();
+        std::vector<ExprPtr> a;
+        a.push_back(expression());
+        if (match(TokenType::Comma)) a.push_back(expression());
+        expectEnd(i18n::tr("';' diharapkan setelah 'assert'", "Expected ';' after 'assert'"));
+        return std::make_unique<ExprStmtNode>(mkCall("_assert", std::move(a), sp));
+    }
     ExprPtr expr = expression();
+    if (check(TokenType::Comma) && (expr->kind == ExprKind::Identifier || expr->kind == ExprKind::Index)) {
+        return tupleAssign(std::move(expr), sp);
+    }
     expectEnd( i18n::tr("';' diharapkan setelah ekspresi", "Expected ';' after expression"));
     return std::make_unique<ExprStmtNode>(std::move(expr));
 }
@@ -744,11 +845,19 @@ ExprPtr Parser::term() {
 ExprPtr Parser::factor() {
     Span start = peek().span;
     ExprPtr expr = unary();
-    while (check(TokenType::Star) || check(TokenType::Slash) || check(TokenType::Percent)) {
+    while (check(TokenType::Star) || check(TokenType::Slash) || check(TokenType::Percent) || check(TokenType::SlashSlash)) {
+        bool floorDiv = check(TokenType::SlashSlash);
         std::string op = advance().text;
         ExprPtr right = unary();
-        expr = std::make_unique<BinaryExpr>(std::move(op), std::move(expr), std::move(right));
-        expr->span = start;
+        if (floorDiv) {
+            std::vector<ExprPtr> args;
+            args.push_back(std::move(expr));
+            args.push_back(std::move(right));
+            expr = mkCall("_floordiv", std::move(args), start);
+        } else {
+            expr = std::make_unique<BinaryExpr>(std::move(op), std::move(expr), std::move(right));
+            expr->span = start;
+        }
     }
     return expr;
 }
@@ -770,7 +879,22 @@ ExprPtr Parser::unary() {
         result->span = start;
         return result;
     }
-    return call();
+    return power();
+}
+
+// `a ** b` (right associative, binds tighter than a unary minus on its left).
+ExprPtr Parser::power() {
+    Span start = peek().span;
+    ExprPtr base = call();
+    if (check(TokenType::StarStar)) {
+        advance();
+        ExprPtr exponent = unary();
+        std::vector<ExprPtr> args;
+        args.push_back(std::move(base));
+        args.push_back(std::move(exponent));
+        return mkCall("_pow", std::move(args), start);
+    }
+    return base;
 }
 
 ExprPtr Parser::call() {
@@ -780,14 +904,58 @@ ExprPtr Parser::call() {
         if (check(TokenType::LParen)) {
             advance();
             std::vector<ExprPtr> args;
-            if (!check(TokenType::RParen)) {
-                args.push_back(expression());
-                while (match(TokenType::Comma)) {
+            std::vector<ExprPtr> kwFlat;  // name, value, name, value ... for name=value arguments
+            auto parseArg = [&]() {
+                if (check(TokenType::Ident) && peekAt(1).type == TokenType::Eq) {
+                    kwFlat.push_back(LiteralExpr::makeString(peek().text));
+                    kwFlat.back()->span = peek().span;
+                    advance();
+                    advance();
+                    kwFlat.push_back(expression());
+                } else {
+                    if (!kwFlat.empty()) {
+                        throw ParseError(i18n::tr("Argumen posisi nggak boleh setelah argumen bernama",
+                                                  "Positional argument follows keyword argument"), peek());
+                    }
                     args.push_back(expression());
+                    if (check(TokenType::For) && args.size() == 1) {  // f(x for x in xs): generator -> list
+                        args[0] = comprehension(std::move(args[0]), nullptr, false, start);
+                    }
+                }
+            };
+            if (!check(TokenType::RParen)) {
+                parseArg();
+                while (match(TokenType::Comma)) {
+                    if (check(TokenType::RParen)) break;  // trailing comma
+                    parseArg();
                 }
             }
             expect(TokenType::RParen, i18n::tr("')' diharapkan setelah argumen", "Expected ')' after arguments"));
-            expr = std::make_unique<CallExpr>(std::move(expr), std::move(args));
+            if (!kwFlat.empty()) {
+                // f(a, k=v) -> _callkw(f, [a], {k: v});  o.m(a, k=v) -> _callkwm(o, "m", [a], {k: v})
+                ExprPtr posList = std::make_unique<ArrayLitExpr>(std::move(args));
+                posList->span = start;
+                ExprPtr kwMap = mkCall("_peta", std::move(kwFlat), start);
+                std::vector<ExprPtr> outer;
+                bool isMethod = expr->kind == ExprKind::Index &&
+                                static_cast<IndexExpr*>(expr.get())->index->kind == ExprKind::Literal &&
+                                static_cast<LiteralExpr*>(static_cast<IndexExpr*>(expr.get())->index.get())->litKind == LiteralExpr::Kind::String;
+                if (isMethod) {
+                    auto* ix = static_cast<IndexExpr*>(expr.get());
+                    outer.push_back(std::move(ix->target));
+                    outer.push_back(std::move(ix->index));
+                    outer.push_back(std::move(posList));
+                    outer.push_back(std::move(kwMap));
+                    expr = mkCall("_callkwm", std::move(outer), start);
+                } else {
+                    outer.push_back(std::move(expr));
+                    outer.push_back(std::move(posList));
+                    outer.push_back(std::move(kwMap));
+                    expr = mkCall("_callkw", std::move(outer), start);
+                }
+            } else {
+                expr = std::make_unique<CallExpr>(std::move(expr), std::move(args));
+            }
             expr->span = start;
         } else if (check(TokenType::LBracket)) {
             advance();
@@ -796,9 +964,13 @@ ExprPtr Parser::call() {
             bool slice = false;
             ExprPtr hi;
             if (!check(TokenType::Colon)) index = expression();
+            ExprPtr step;
             if (match(TokenType::Colon)) {
                 slice = true;
-                if (!check(TokenType::RBracket)) hi = expression();
+                if (!check(TokenType::RBracket) && !check(TokenType::Colon)) hi = expression();
+                if (match(TokenType::Colon)) {
+                    if (!check(TokenType::RBracket)) step = expression();
+                }
             }
             expect(TokenType::RBracket, i18n::tr("']' diharapkan setelah index", "Expected ']' after index"));
             if (slice) {
@@ -806,6 +978,7 @@ ExprPtr Parser::call() {
                 args.push_back(std::move(expr));
                 args.push_back(index ? std::move(index) : LiteralExpr::makeNull());
                 args.push_back(hi ? std::move(hi) : LiteralExpr::makeNull());
+                if (step) args.push_back(std::move(step));
                 ExprPtr callee = std::make_unique<IdentifierExpr>("__iris");
                 callee->span = start;
                 expr = std::make_unique<CallExpr>(std::move(callee), std::move(args));
@@ -933,7 +1106,13 @@ ExprPtr Parser::primary() {
             std::vector<ExprPtr> elements;
             if (!check(TokenType::RBracket)) {
                 elements.push_back(expression());
+                if (check(TokenType::For)) {
+                    ExprPtr comp = comprehension(std::move(elements[0]), nullptr, false, start);
+                    expect(TokenType::RBracket, i18n::tr("']' diharapkan setelah komprehensi", "Expected ']' after comprehension"));
+                    return comp;
+                }
                 while (match(TokenType::Comma)) {
+                    if (check(TokenType::RBracket)) break;  // trailing comma
                     elements.push_back(expression());
                 }
             }
@@ -949,6 +1128,11 @@ ExprPtr Parser::primary() {
                 flat.push_back(expression());
                 expect(TokenType::Colon, i18n::tr("':' diharapkan setelah kunci peta", "Expected ':' after dict key"));
                 flat.push_back(expression());
+                if (flat.size() == 2 && check(TokenType::For)) {
+                    ExprPtr comp = comprehension(std::move(flat[0]), std::move(flat[1]), true, start);
+                    expect(TokenType::RDict, i18n::tr("'}' diharapkan setelah komprehensi", "Expected '}' after comprehension"));
+                    return comp;
+                }
                 if (!match(TokenType::Comma)) break;
             }
             expect(TokenType::RDict, i18n::tr("'}' diharapkan setelah isi peta", "Expected '}' after dict entries"));
@@ -956,7 +1140,24 @@ ExprPtr Parser::primary() {
         }
         case TokenType::LParen: {
             advance();
+            if (match(TokenType::RParen)) {  // () -- empty tuple
+                ExprPtr empty = std::make_unique<ArrayLitExpr>(std::vector<ExprPtr>{});
+                empty->span = start;
+                return empty;
+            }
             ExprPtr expr = expression();
+            if (check(TokenType::Comma)) {  // (a, b, ...) -- a tuple, represented as a list
+                std::vector<ExprPtr> items;
+                items.push_back(std::move(expr));
+                while (match(TokenType::Comma)) {
+                    if (check(TokenType::RParen)) break;
+                    items.push_back(expression());
+                }
+                expect(TokenType::RParen, i18n::tr("')' diharapkan setelah tuple", "Expected ')' after tuple"));
+                ExprPtr tuple = std::make_unique<ArrayLitExpr>(std::move(items));
+                tuple->span = start;
+                return tuple;
+            }
             expect(TokenType::RParen, i18n::tr("')' diharapkan setelah ekspresi", "Expected ')' after expression"));
             return expr;
         }
@@ -1140,4 +1341,70 @@ ExprPtr Parser::jsxElement() {
     auto result = std::make_unique<CallExpr>(std::make_unique<IdentifierExpr>("elemen"), std::move(elemenArgs));
     result->span = start;
     return result;
+}
+
+// `[expr for a in xs if cond ...]` / `{k: v for ...}`: an immediately-called function that builds
+// the result, so the loop variables stay local to the comprehension.
+ExprPtr Parser::comprehension(ExprPtr element, ExprPtr valueOrNull, bool isDict, Span sp) {
+    struct Clause { std::vector<std::string> vars; ExprPtr iter; std::vector<ExprPtr> conds; };
+    std::vector<Clause> clauses;
+    while (check(TokenType::For)) {
+        advance();
+        Clause c;
+        c.vars = forTargets();
+        if (!matchWord("in", "dalam")) {
+            throw ParseError(i18n::tr("'in' diharapkan setelah variabel 'for'", "Expected 'in' after the 'for' variable"), peek());
+        }
+        c.iter = logicOr();
+        while (check(TokenType::If)) {
+            advance();
+            c.conds.push_back(logicOr());
+        }
+        clauses.push_back(std::move(c));
+    }
+    std::string res = "__c" + std::to_string(hiddenCounter_++);
+    // innermost statement: append / assign
+    StmtPtr inner;
+    if (isDict) {
+        ExprPtr set = std::make_unique<IndexAssignExpr>(mkIdent(res, sp), std::move(element), std::move(valueOrNull));
+        set->span = sp;
+        inner = std::make_unique<ExprStmtNode>(std::move(set));
+    } else {
+        std::vector<ExprPtr> a;
+        a.push_back(mkIdent(res, sp));
+        a.push_back(std::move(element));
+        inner = std::make_unique<ExprStmtNode>(mkCall("tambah", std::move(a), sp));
+    }
+    inner->span = sp;
+    StmtPtr current = std::move(inner);
+    for (size_t k = clauses.size(); k-- > 0;) {
+        Clause& c = clauses[k];
+        std::vector<StmtPtr> bodyStmts;
+        // conditions wrap the inner statement: if c1 { if c2 { inner } }
+        for (size_t q = c.conds.size(); q-- > 0;) {
+            std::vector<StmtPtr> thenStmts;
+            thenStmts.push_back(std::move(current));
+            StmtPtr ifs = std::make_unique<IfStmt>(std::move(c.conds[q]), std::make_unique<BlockStmt>(std::move(thenStmts)), nullptr);
+            ifs->span = sp;
+            current = std::move(ifs);
+        }
+        bodyStmts.push_back(std::move(current));
+        auto body = std::make_unique<BlockStmt>(std::move(bodyStmts));
+        body->span = sp;
+        current = buildForIn(c.vars, std::move(c.iter), std::move(body), sp);
+    }
+    std::vector<StmtPtr> fnBody;
+    ExprPtr init = isDict ? mkCall("_peta", std::vector<ExprPtr>{}, sp) : ExprPtr(std::make_unique<ArrayLitExpr>(std::vector<ExprPtr>{}));
+    init->span = sp;
+    fnBody.push_back(mkLet(res, std::move(init), sp));
+    fnBody.push_back(std::move(current));
+    StmtPtr ret = std::make_unique<ReturnStmt>(mkIdent(res, sp));
+    ret->span = sp;
+    fnBody.push_back(std::move(ret));
+    auto decl = std::make_unique<FnDeclStmt>("", std::vector<std::string>{}, std::make_unique<BlockStmt>(std::move(fnBody)));
+    ExprPtr fn = std::make_unique<FnExprNode>(std::move(decl));
+    fn->span = sp;
+    ExprPtr callExpr = std::make_unique<CallExpr>(std::move(fn), std::vector<ExprPtr>{});
+    callExpr->span = sp;
+    return callExpr;
 }

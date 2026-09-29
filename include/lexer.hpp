@@ -9,7 +9,7 @@ enum class TokenType {
     Let, Fn, If, Else, While, For, Return, Break, Continue, True_, False_, Null_,
     Class, This, Super, Extends,
     Struct, EnumKw, Try, Catch, Finally, Throw,
-    Plus, Minus, Star, Slash, Percent,
+    Plus, Minus, Star, Slash, Percent, StarStar, SlashSlash,
     Eq, EqEq, Neq, Lt, Lte, Gt, Gte,
     PlusEq, MinusEq, StarEq, SlashEq,
     And, Or, Not,
@@ -51,8 +51,10 @@ private:
     size_t pos_ = 0;
     int line_ = 1;
     int column_ = 1;
+    bool pyStyle_ = false;  // Python-layout file: `//` is floor division, not a comment
 
     char peek(int offset = 0) const;
+    bool atLineStart() const;
     char advance();
     void skipWhitespaceAndComments();
 

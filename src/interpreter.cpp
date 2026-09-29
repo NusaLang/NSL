@@ -112,8 +112,7 @@ Value indexGet(const Value& target, const Value& idx) {
         return (*target.array())[static_cast<size_t>(i)];
     }
     if (target.type == ValueType::Map) {
-        if (idx.type != ValueType::String) throw RuntimeError(i18n::tr("Kunci peta harus teks", "Map key must be a string"));
-        auto it = target.map()->find(idx.str());
+        auto it = target.map()->find(idx.type == ValueType::String ? idx.str() : idx.stringify());
         if (it == target.map()->end()) return Value::null();
         return it->second;
     }
@@ -176,8 +175,7 @@ void indexSet(Value& target, const Value& idx, const Value& value) {
         return;
     }
     if (target.type == ValueType::Map) {
-        if (idx.type != ValueType::String) throw RuntimeError(i18n::tr("Kunci peta harus teks", "Map key must be a string"));
-        (*target.map())[idx.str()] = value;
+        (*target.map())[idx.type == ValueType::String ? idx.str() : idx.stringify()] = value;
         return;
     }
     if (target.type == ValueType::Instance) {
@@ -253,7 +251,7 @@ bool isRegularFile(const std::string& path) {
 const std::vector<std::string>& builtinNames() {
     static const std::vector<std::string> names = {
         "cetak", "panjang", "tambah", "hapus_akhir", "potong", "gabung", "pisah",
-        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "pegang", "_peta", "_in",
+        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "pegang", "_peta", "_in", "_callkw", "_callkwm",
         "base64_encode", "base64_decode",
         "baca_file", "tulis_file", "file_ada",
         "tcp_konek", "tcp_kirim", "tcp_terima", "tcp_tutup",
@@ -647,6 +645,14 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
             if (left.type != ValueType::Number || right.type != ValueType::Number) {
                 Value rep;
                 if (op == "*" && repeatValue(left, right, rep)) return rep;
+                if (op == "%" && left.type == ValueType::String) {
+                    std::vector<Value> pa{left, right};
+                    try {
+                        return pylib::call("_percent", pa, nullptr, nullptr);
+                    } catch (const pylib::PyError& e) {
+                        throw RuntimeError(e.what());
+                    }
+                }
                 throw RuntimeError(i18n::tr("Operand '", "Operands of '") + op + i18n::tr("' harus angka", "' must be numbers"));
             }
             if (op == "-") return Value::fromNumber(left.number - right.number);
@@ -1208,6 +1214,94 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         throw RuntimeError(i18n::tr("'in' butuh teks, larik, atau peta di kanan", "'in' needs a string, array, or map on the right"));
     }
 
+    if (name == "_callkw" || name == "_callkwm") {
+        // Keyword arguments. _callkw(fn, [pos...], {k: v}) / _callkwm(obj, "name", [pos...], {k: v})
+        const bool method = name == "_callkwm";
+        need(method ? 4 : 3);
+        Value obj = method ? args[0] : Value::null();
+        Value fn = method ? Value::null() : args[0];
+        std::string mname = method ? args[1].str() : std::string();
+        std::vector<Value> pos = arrayElements(args[method ? 2 : 1]);
+        ValueMap kwMap = *args[method ? 3 : 2].map();
+
+        auto tagged = [&](std::vector<Value> p) {  // positional + "__kw__"-tagged map, for builtins
+            auto m = std::make_shared<ValueMap>();
+            (*m)["__kw__"] = Value::fromBool(true);
+            for (const auto& e : kwMap) (*m)[e.first] = e.second;
+            p.push_back(Value::fromMap(m));
+            return p;
+        };
+        auto bind = [&](const std::vector<std::string>& names, std::vector<Value> p, const std::string& who) {
+            size_t maxIdx = p.size();
+            std::vector<Value> out = p;
+            for (const auto& e : kwMap) {
+                size_t idx = names.size();
+                for (size_t k = 0; k < names.size(); k++) if (names[k] == e.first) { idx = k; break; }
+                if (idx == names.size()) throw RuntimeError(who + "(): argumen bernama '" + e.first + "' tidak dikenal");
+                if (idx < p.size()) throw RuntimeError(who + "(): argumen '" + e.first + "' diberikan dua kali");
+                if (out.size() <= idx) out.resize(idx + 1, Value::null());
+                out[idx] = e.second;
+                maxIdx = std::max(maxIdx, idx + 1);
+            }
+            out.resize(maxIdx, Value::null());
+            return out;
+        };
+        auto astParams = [](const std::shared_ptr<Function>& f) { return f->decl->params; };
+
+        if (method) {
+            if (obj.type == ValueType::Instance) {
+                std::vector<std::string> names;
+                bool astShadow = false;
+                (void)astShadow;
+                bool haveVm = vmIsActive() && vmMethodParamNames(obj.instance()->classInfo.get(), mname, names);
+                std::shared_ptr<ClassInfo> owner;
+                auto astMethod = haveVm ? nullptr : lookupMethod(obj.instance()->classInfo, mname, &owner);
+                if (!haveVm && astMethod) names = astParams(astMethod);
+                if (haveVm || astMethod) {
+                    std::vector<Value> bound = bind(names, pos, mname);
+                    if (haveVm) return vmCallMethod(obj, mname, bound, this);
+                    return callFunction(astMethod, bound, Span{}, &obj, owner);
+                }
+                auto fit = obj.instance()->fields->find(mname);
+                if (fit == obj.instance()->fields->end()) throw RuntimeError("objek tidak punya metode '" + mname + "'");
+                fn = fit->second;
+            } else {
+                bool receiverLast = false;
+                if (const char* b = builtinMethodName(obj, mname, &receiverLast)) {
+                    std::vector<Value> full;
+                    full.push_back(obj);
+                    for (auto& p : pos) full.push_back(p);
+                    std::vector<Value> t = tagged(full);
+                    return callBuiltin(b, t);
+                }
+                fn = indexGet(obj, Value::fromString(mname));
+            }
+        }
+        if (fn.type == ValueType::Builtin) {
+            std::vector<Value> t = tagged(pos);
+            return callBuiltin(fn.builtinName(), t);
+        }
+        std::vector<std::string> names;
+        if (fn.type == ValueType::Fn) names = astParams(fn.fnShared());
+        else if (fn.type == ValueType::VmFn) { vmParamNames(fn, names); }
+        else if (fn.type == ValueType::Class) {
+            std::shared_ptr<ClassInfo> owner;
+            bool found = false;
+            for (const char* ctorName : {"konstruktor", "constructor"}) {
+                if (vmIsActive() && vmMethodParamNames(fn.klass(), ctorName, names)) { found = true; break; }
+                auto ctor = lookupMethod(fn.klassShared(), ctorName, &owner);
+                if (ctor) { names = astParams(ctor); found = true; break; }
+            }
+            if (!found && fn.klass()->isStruct) names = fn.klass()->structFields;
+            else if (!found) throw RuntimeError("kelas tidak punya konstruktor yang menerima argumen bernama");
+        } else {
+            throw RuntimeError("argumen bernama tidak didukung untuk tipe ini");
+        }
+        std::vector<Value> bound = bind(names, pos, "fungsi");
+        if (fn.type == ValueType::Class && vmIsActive()) return vmCallValue(fn, bound, this);
+        return callValue(fn, bound, Span{});
+    }
+
     if (name == "_peta") {
         // Dict literal {k: v, ...}: alternating key/value arguments.
         Value m = Value::newMap();
@@ -1727,23 +1821,45 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
 
     // x[a:b] with Python rules: missing bound = start/end, negative bound counts from the end.
     if (name == "__iris") {
-        need(3);
-        long long len;
+        if (args.size() != 3 && args.size() != 4) need(3);
         const Value& v = args[0];
-        if (v.type == ValueType::String) len = static_cast<long long>(v.str().size());
+        long long len;
+        bool isStr = v.type == ValueType::String;
+        if (isStr) len = static_cast<long long>(v.str().size());
         else if (v.type == ValueType::Array) len = static_cast<long long>(v.array()->size());
         else if (v.type == ValueType::VmArray) len = static_cast<long long>(v.vmArray()->numeric ? v.vmArray()->nums.size() : v.vmArray()->boxed->size());
         else throw RuntimeError(std::string(i18n::tr("Tipe '", "Type '")) + v.typeName() + i18n::tr("' nggak bisa di-slice", "' can't be sliced"));
-        auto bound = [&](const Value& b, long long dflt) {
+        long long step = 1;
+        if (args.size() == 4 && args[3].type != ValueType::Null) {
+            if (args[3].type != ValueType::Number) throw RuntimeError(i18n::tr("Langkah slice harus angka", "Slice step must be a number"));
+            step = static_cast<long long>(args[3].number);
+            if (step == 0) throw RuntimeError(i18n::tr("Langkah slice nggak boleh 0", "Slice step cannot be zero"));
+        }
+        auto bound = [&](const Value& b, long long dflt, long long lo, long long hi) {
             if (b.type == ValueType::Null) return dflt;
             if (b.type != ValueType::Number) throw RuntimeError(i18n::tr("Batas slice harus angka", "Slice bounds must be numbers"));
             long long i = static_cast<long long>(b.number);
             if (i < 0) i += len;
-            return std::max<long long>(0, std::min(i, len));
+            return std::max<long long>(lo, std::min(i, hi));
         };
-        std::vector<Value> sliceArgs = {v, Value::fromNumber(static_cast<double>(bound(args[1], 0))),
-                                        Value::fromNumber(static_cast<double>(bound(args[2], len)))};
-        return callBuiltin("potong", sliceArgs);
+        if (step == 1) {
+            std::vector<Value> sliceArgs = {v, Value::fromNumber(static_cast<double>(bound(args[1], 0, 0, len))),
+                                            Value::fromNumber(static_cast<double>(bound(args[2], len, 0, len)))};
+            return callBuiltin("potong", sliceArgs);
+        }
+        long long lo, hi;
+        if (step > 0) { lo = bound(args[1], 0, 0, len); hi = bound(args[2], len, 0, len); }
+        else { lo = bound(args[1], len - 1, -1, len - 1); hi = bound(args[2], -1, -1, len - 1); }
+        if (isStr) {
+            std::string out;
+            const std::string& s = v.str();
+            for (long long k = lo; step > 0 ? k < hi : k > hi; k += step) out += s[static_cast<size_t>(k)];
+            return Value::fromString(out);
+        }
+        std::vector<Value> src = arrayElements(v);
+        auto out = std::make_shared<std::vector<Value>>();
+        for (long long k = lo; step > 0 ? k < hi : k > hi; k += step) out->push_back(src[static_cast<size_t>(k)]);
+        return Value::fromArray(out);
     }
 
     // What `for x in <expr>` walks: arrays and strings as they are, maps as

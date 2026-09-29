@@ -2,6 +2,7 @@
 
 #include "layout.hpp"
 #include <cctype>
+#include <cstring>
 #include <cerrno>
 #include <cstdlib>
 #include <unordered_map>
@@ -67,7 +68,47 @@ LexError::LexError(const std::string& msg, int line, int column)
       line(line),
       column(column) {}
 
-Lexer::Lexer(std::string source) : source_(std::move(source)) {}
+// A file is Python-style when some line is a block header ending in ':' -- there `//` means floor
+// division (comments use `#`); in brace-style files `//` stays a comment.
+static bool looksBraceStyle(const std::string& src) {
+    size_t pos = 0;
+    while (pos < src.size()) {
+        size_t eol = src.find('\n', pos);
+        if (eol == std::string::npos) eol = src.size();
+        std::string line = src.substr(pos, eol - pos);
+        pos = eol + 1;
+        size_t hash = line.find('#');
+        if (hash != std::string::npos) line.resize(hash);
+        while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back()))) line.pop_back();
+        if (!line.empty() && (line.back() == ';' || line.back() == '{' || line.back() == '}')) return true;
+    }
+    return false;
+}
+
+static bool looksPythonStyle(const std::string& src) {
+    static const char* const heads[] = {"def ", "class ", "if ", "elif ", "else", "for ", "while ", "try", "except",
+                                        "finally", "with ", "fungsi ", "fung ", "jika ", "jk ", "lain", "untuk ", "selama ",
+                                        "slm ", "kelas ", "coba", "tangkap"};
+    size_t pos = 0;
+    while (pos < src.size()) {
+        size_t eol = src.find('\n', pos);
+        if (eol == std::string::npos) eol = src.size();
+        std::string line = src.substr(pos, eol - pos);
+        pos = eol + 1;
+        size_t b = line.find_first_not_of(" \t");
+        if (b == std::string::npos) continue;
+        size_t hash = line.find('#');
+        if (hash != std::string::npos) line.resize(hash);
+        while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back()))) line.pop_back();
+        if (line.empty() || line.back() != ':') continue;
+        for (const char* h : heads) {
+            if (line.compare(b, std::strlen(h), h) == 0) return true;
+        }
+    }
+    return false;
+}
+
+Lexer::Lexer(std::string source) : source_(std::move(source)) { pyStyle_ = looksPythonStyle(source_) || !looksBraceStyle(source_); }
 
 char Lexer::peek(int offset) const {
     size_t idx = pos_ + static_cast<size_t>(offset);
@@ -85,12 +126,21 @@ char Lexer::advance() {
     return ch;
 }
 
+bool Lexer::atLineStart() const {
+    for (size_t i = pos_; i > 0; i--) {
+        char c = source_[i - 1];
+        if (c == '\n') return true;
+        if (c != ' ' && c != '\t' && c != '\r') return false;
+    }
+    return true;
+}
+
 void Lexer::skipWhitespaceAndComments() {
     while (pos_ < source_.size()) {
         char ch = peek();
         if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n') {
             advance();
-        } else if ((ch == '/' && peek(1) == '/') || ch == '#') {
+        } else if ((ch == '/' && peek(1) == '/' && (!pyStyle_ || atLineStart())) || ch == '#') {
             while (pos_ < source_.size() && peek() != '\n') advance();
         } else {
             break;
@@ -373,9 +423,19 @@ Token Lexer::readSymbol(size_t start, int line, int col) {
         {"==", TokenType::EqEq}, {"!=", TokenType::Neq},
         {"<=", TokenType::Lte},  {">=", TokenType::Gte},
         {"&&", TokenType::And},  {"||", TokenType::Or},
+        {"**", TokenType::StarStar},
         {"+=", TokenType::PlusEq}, {"-=", TokenType::MinusEq},
         {"*=", TokenType::StarEq}, {"/=", TokenType::SlashEq},
     };
+    if (two == "//" && pyStyle_) {
+        advance();
+        advance();
+        Token tok;
+        tok.type = TokenType::SlashSlash;
+        tok.text = two;
+        tok.span = {static_cast<int>(start), static_cast<int>(pos_), line, col};
+        return tok;
+    }
     auto itTwo = kTwo.find(two);
     if (itTwo != kTwo.end()) {
         advance();

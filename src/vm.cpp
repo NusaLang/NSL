@@ -1,4 +1,5 @@
 #include "vm.hpp"
+#include "pylib.hpp"
 #include "repeat.hpp"
 
 #include <atomic>
@@ -715,6 +716,7 @@ public:
         }
         fn->paramSlots = std::move(paramSlots);
         fn->arity = static_cast<int>(paramNames.size());
+        fn->paramNames = paramNames;
         if (decl->minArgs >= 0) fn->minArity = decl->minArgs + (isMethod ? 1 : 0);
         if (!isMethod) {
             JitFuncResult jf = jitDisabled() ? JitFuncResult{} : tryCompileNativeFunc(decl);
@@ -1249,9 +1251,8 @@ Value vmGetIndex(const Value& target, const Value& idxv) {
         return (*arr)[static_cast<size_t>(i)];
     }
     if (target.type == ValueType::Map) {
-        if (idxv.type != ValueType::String) throw VmRuntimeError("Index peta harus teks");
         auto m = target.mapShared();
-        auto it = m->find(idxv.str());
+        auto it = m->find(idxv.type == ValueType::String ? idxv.str() : idxv.stringify());
         return it != m->end() ? it->second : Value::null();
     }
     if (target.type == ValueType::String) {
@@ -1680,6 +1681,15 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                     Value rep;
                     if (op == Op::Mul && repeatValue(a, b, rep)) {
                         stack.push_back(std::move(rep));
+                        break;
+                    }
+                    if (op == Op::Mod && a.type == ValueType::String) {  // "fmt %d" % args
+                        std::vector<Value> pa{a, b};
+                        try {
+                            stack.push_back(pylib::call("_percent", pa, nullptr, nullptr));
+                        } catch (const pylib::PyError& e) {
+                            throw VmRuntimeError(e.what());
+                        }
                         break;
                     }
                     throw VmRuntimeError("Operand aritmetika harus angka");
@@ -2295,7 +2305,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                     (*arr)[static_cast<size_t>(i)] = val;
                     GC::instance().noteStore(target, val);
                 } else if (target.type == ValueType::Map) {
-                    if (idxv.type != ValueType::String) throw VmRuntimeError("Index peta harus teks");
+                    if (idxv.type != ValueType::String) idxv = Value::fromString(idxv.stringify());
                     auto m = target.mapShared();
                     (*m)[idxv.str()] = val;
                     GC::instance().noteStore(target, val);
@@ -2627,6 +2637,39 @@ static void vmBind(VmProgram& program, Environment* globals) {
 
 bool vmIsActive() { return g_activeVm.load(std::memory_order_acquire) != nullptr; }
 
+bool vmParamNames(const Value& fn, std::vector<std::string>& out) {
+    if (fn.type != ValueType::VmFn || !fn.vmClosure()) return false;
+    out = fn.vmClosure()->function->paramNames;
+    return true;
+}
+
+bool vmMethodParamNames(const ClassInfo* cls, const std::string& name, std::vector<std::string>& out) {
+    bool astShadow = false;
+    const Value* m = findVmMethod(cls, name, astShadow);
+    if (!m || m->type != ValueType::VmFn) return false;
+    out = m->vmClosure()->function->paramNames;
+    if (!out.empty() && out[0] == "ini") out.erase(out.begin());
+    return true;
+}
+
+Value vmCallMethod(Value& target, const std::string& name, std::vector<Value>& args, Interpreter* interpreter) {
+    ActiveVmState* st = g_activeVm.load(std::memory_order_acquire);
+    if (!st) throw RuntimeError("Manggil metode VM butuh program VM yang lagi jalan");
+    VmContext ctx;
+    ctx.functions = st->functions;
+    ctx.nativeLoops = st->nativeLoops;
+    ctx.globals = st->globals;
+    ctx.interpreter = interpreter;
+    Value key = Value::fromString(name);
+    try {
+        return callMethodSlow(target, key, args, ctx);
+    } catch (const VmThrown& t) {
+        throw ThrownValue(t.value);
+    } catch (const VmRuntimeError& e) {
+        throw RuntimeError(e.what());
+    }
+}
+
 void vmRunModule(VmProgram& program, Environment* moduleGlobals, Interpreter* interpreter) {
     if (!program.topLevel) return;
     vmBind(program, moduleGlobals);
@@ -2686,7 +2729,7 @@ int vmRun(VmProgram& program, Interpreter* interpreter) {
 namespace {
 
 constexpr uint32_t kCacheMagic = 0x4E534256; // "NSBV"
-constexpr uint32_t kCacheVersion = 7;  // 6: + MakeClass, BinLK, BinLL, GetField, SetField, CallMethodK, Throw, handlers, lines, MakeStruct, MakeEnum, MakeSuper
+constexpr uint32_t kCacheVersion = 8;  // 6: + MakeClass, BinLK, BinLL, GetField, SetField, CallMethodK, Throw, handlers, lines, MakeStruct, MakeEnum, MakeSuper
 
 void writeU32(std::ofstream& f, uint32_t v) { f.write(reinterpret_cast<const char*>(&v), sizeof(v)); }
 void writeI32(std::ofstream& f, int32_t v) { f.write(reinterpret_cast<const char*>(&v), sizeof(v)); }
@@ -2713,6 +2756,8 @@ void writeFunction(std::ofstream& f, const VmFunction& fn) {
     writeString(f, fn.name);
     writeI32(f, fn.arity);
     writeI32(f, fn.minArity);
+    writeU32(f, static_cast<uint32_t>(fn.paramNames.size()));
+    for (const std::string& pn : fn.paramNames) writeString(f, pn);
     writeI32(f, fn.numLocals);
     writeI32(f, fn.numBoxedLocals);
     writeU32(f, static_cast<uint32_t>(fn.paramSlots.size()));
@@ -2755,6 +2800,12 @@ bool readFunction(std::ifstream& f, VmFunction& fn) {
     if (!readString(f, fn.name)) return false;
     if (!readI32(f, fn.arity)) return false;
     if (!readI32(f, fn.minArity)) return false;
+    {
+        uint32_t nNames = 0;
+        if (!readU32(f, nNames)) return false;
+        fn.paramNames.resize(nNames);
+        for (auto& pn : fn.paramNames) if (!readString(f, pn)) return false;
+    }
     if (!readI32(f, fn.numLocals)) return false;
     if (!readI32(f, fn.numBoxedLocals)) return false;
     uint32_t nParams = 0;

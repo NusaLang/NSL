@@ -302,6 +302,33 @@ std::vector<Token> applyLayout(std::vector<Token> toks, const std::string& sourc
                         sc.hoisted.push_back({t.text, t.span});
                     }
                 }
+            } else if (t.type == TokenType::Ident && i + 1 < toks.size() && toks[i + 1].type == TokenType::Comma) {
+                // `a, b = ...`: declare the plain names on the left before the statement.
+                std::vector<const Token*> names;
+                size_t k = i;
+                bool ok = true;
+                while (k < toks.size()) {
+                    if (toks[k].type != TokenType::Ident) { ok = false; break; }
+                    names.push_back(&toks[k]);
+                    if (k + 1 < toks.size() && toks[k + 1].type == TokenType::Comma) { k += 2; continue; }
+                    break;
+                }
+                if (ok && k + 1 < toks.size() && toks[k + 1].type == TokenType::Eq) {
+                    Scope& sc = scopes.back();
+                    for (const Token* nt : names) {
+                        if (sc.names.count(nt->text) || sc.outer.count(nt->text)) continue;
+                        sc.names.insert(nt->text);
+                        if (curDepth() == sc.bodyDepth) {
+                            out.push_back(makeTok(TokenType::Let, "let", nt->span));
+                            out.push_back(makeTok(TokenType::Ident, nt->text, nt->span));
+                            out.push_back(makeTok(TokenType::Eq, "=", nt->span));
+                            out.push_back(makeTok(TokenType::Null_, "None", nt->span));
+                            out.push_back(makeTok(TokenType::Semi, ";", nt->span));
+                        } else {
+                            sc.hoisted.push_back({nt->text, nt->span});
+                        }
+                    }
+                }
             } else if (t.type == TokenType::Let && i + 1 < toks.size() && toks[i + 1].type == TokenType::Ident) {
                 declare(toks[i + 1].text);
             } else if ((t.type == TokenType::Fn || t.type == TokenType::Class) && i + 1 < toks.size() &&
