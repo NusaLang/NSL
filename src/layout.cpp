@@ -112,6 +112,7 @@ struct Scope {
 struct BlockInfo {
     bool ownsScope = false;
     bool commaMode = false;  // struct/enum bodies separate members with commas
+    bool isClass = false;    // class body: `def` inside declares a method, not a variable
 };
 
 }  // namespace
@@ -333,7 +334,7 @@ std::vector<Token> applyLayout(std::vector<Token> toks, const std::string& sourc
                 declare(toks[i + 1].text);
             } else if ((t.type == TokenType::Fn || t.type == TokenType::Class) && i + 1 < toks.size() &&
                        toks[i + 1].type == TokenType::Ident) {
-                declare(toks[i + 1].text);
+                if (!(t.type == TokenType::Fn && blocks.back().isClass)) declare(toks[i + 1].text);
             } else if (t.type == TokenType::Catch) {
                 for (size_t k = i + 1; k < toks.size() && k < i + 6; k++) {
                     if (toks[k].type == TokenType::Colon || toks[k].type == TokenType::LBrace) break;
@@ -373,7 +374,7 @@ std::vector<Token> applyLayout(std::vector<Token> toks, const std::string& sourc
                     pendingBlock = true;
                     pendingIsFn = isFn;
                     pendingParams = std::move(params);
-                    pendingInfo = BlockInfo{isFn, lineFirst == TokenType::Struct || lineFirst == TokenType::EnumKw};
+                    pendingInfo = BlockInfo{isFn, lineFirst == TokenType::Struct || lineFirst == TokenType::EnumKw, lineFirst == TokenType::Class};
                     lineOpen = false;
                 } else {
                     Scope sc;

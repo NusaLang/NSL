@@ -80,10 +80,16 @@ StmtPtr Parser::statement() {
     else if (isWord(peek(), "import", "impor") && (peekAt(1).type == TokenType::Ident || peekAt(1).type == TokenType::String)) {
         advance();
         result = importStmt();
+        // `import a, b, c`: each further module is its own import, spliced in after this one.
+        while (match(TokenType::Comma)) pendingStmts_.push_back(importStmt());
     }
     else if (isWord(peek(), "from", "dari") && peekAt(1).type == TokenType::Ident) {
         advance();
         result = fromImportStmt();
+    }
+    else if (isWord(peek(), "with", "dengan") && peekAt(1).type != TokenType::Eq && peekAt(1).type != TokenType::LParen) {
+        advance();
+        result = withStmt();
     }
     else if (match(TokenType::Let)) result = letStmt();
     else if (match(TokenType::Fn)) result = fnDecl();
@@ -173,7 +179,7 @@ StmtPtr Parser::importStmt() {
         name = path.substr(path.find_last_of('/') == std::string::npos ? 0 : path.find_last_of('/') + 1);
     }
     if (matchWord("as", "sbg")) name = expect(TokenType::Ident, i18n::tr("Nama alias diharapkan setelah 'as'", "Expected alias after 'as'")).text;
-    expectEnd( i18n::tr("';' diharapkan setelah 'import'", "Expected ';' after import"));
+    if (!check(TokenType::Comma)) expectEnd( i18n::tr("';' diharapkan setelah 'import'", "Expected ';' after import"));
     std::vector<ExprPtr> args;
     args.push_back(LiteralExpr::makeString(path));
     return mkLet(name, mkCall("impor", std::move(args), sp), sp);
@@ -364,6 +370,28 @@ StmtPtr Parser::tryStmt() {
         finallyBlock = block();
     }
     return std::make_unique<TryStmt>(std::move(tryBlock), std::move(catchVar), std::move(catchBlock), std::move(finallyBlock));
+}
+
+// `with open(p) as f: body` -> { let f = open(p); try { body } catch (e) { throw e } finally { _close(f) } }
+StmtPtr Parser::withStmt() {
+    Span sp = peek().span;
+    ExprPtr resource = expression();
+    std::string var = "__w" + std::to_string(hiddenCounter_++);
+    if (matchWord("as", "sbg")) var = expect(TokenType::Ident, i18n::tr("Nama diharapkan setelah 'as'", "Expected a name after 'as'")).text;
+    auto body = block();
+    std::vector<StmtPtr> outer;
+    outer.push_back(mkLet(var, std::move(resource), sp));
+    std::vector<StmtPtr> rethrow;
+    rethrow.push_back(std::make_unique<ThrowStmt>(mkIdent("__we", sp)));
+    std::vector<ExprPtr> closeArgs;
+    closeArgs.push_back(mkIdent(var, sp));
+    std::vector<StmtPtr> fin;
+    fin.push_back(std::make_unique<ExprStmtNode>(mkCall("_close", std::move(closeArgs), sp)));
+    outer.push_back(std::make_unique<TryStmt>(std::move(body), "__we", std::make_unique<BlockStmt>(std::move(rethrow)),
+                                              std::make_unique<BlockStmt>(std::move(fin))));
+    StmtPtr blk = std::make_unique<BlockStmt>(std::move(outer));
+    blk->span = sp;
+    return blk;
 }
 
 StmtPtr Parser::throwStmt() {
@@ -795,11 +823,82 @@ ExprPtr Parser::comparison() {
     Span start = peek().span;
     ExprPtr expr = term();
     for (;;) {
-        if (check(TokenType::Lt) || check(TokenType::Lte) || check(TokenType::Gt) || check(TokenType::Gte)) {
-            std::string op = advance().text;
-            ExprPtr right = term();
-            expr = std::make_unique<BinaryExpr>(std::move(op), std::move(expr), std::move(right));
-            expr->span = start;
+        auto relational = [&]() {
+            return check(TokenType::Lt) || check(TokenType::Lte) || check(TokenType::Gt) || check(TokenType::Gte);
+        };
+        if (relational()) {
+            // Chains (`a < b < c`) mean (a < b) and (b < c) with `b` evaluated once.
+            std::vector<ExprPtr> operands;
+            std::vector<std::string> ops;
+            operands.push_back(std::move(expr));
+            while (relational()) {
+                ops.push_back(advance().text);
+                operands.push_back(term());
+            }
+            if (ops.size() == 1) {
+                expr = std::make_unique<BinaryExpr>(std::move(ops[0]), std::move(operands[0]), std::move(operands[1]));
+                expr->span = start;
+                continue;
+            }
+            auto cloneSimple = [&](const Expr* e) -> ExprPtr {
+                if (e->kind == ExprKind::Identifier) return mkIdent(static_cast<const IdentifierExpr*>(e)->name, e->span);
+                if (e->kind == ExprKind::Literal) {
+                    auto* l = static_cast<const LiteralExpr*>(e);
+                    ExprPtr c;
+                    if (l->litKind == LiteralExpr::Kind::Number) c = LiteralExpr::makeNumber(l->number);
+                    else if (l->litKind == LiteralExpr::Kind::String) c = LiteralExpr::makeString(l->str);
+                    else if (l->litKind == LiteralExpr::Kind::Bool) c = LiteralExpr::makeBool(l->boolean);
+                    else c = LiteralExpr::makeNull();
+                    c->span = e->span;
+                    return c;
+                }
+                return nullptr;
+            };
+            size_t n = operands.size();
+            bool simple = true;
+            for (size_t i = 1; i + 1 < n; i++) if (!cloneSimple(operands[i].get())) simple = false;
+            std::vector<ExprPtr> lefts(n - 1), rights(n - 1);
+            std::vector<StmtPtr> temps;
+            for (size_t k = 0; k + 1 < n; k++) {
+                // operands[k+1] is the right side of comparison k and the left side of comparison k+1
+                if (k == 0) lefts[0] = std::move(operands[0]);
+                if (k + 2 < n) {  // interior operand: used twice
+                    if (simple) {
+                        lefts[k + 1] = cloneSimple(operands[k + 1].get());
+                        rights[k] = std::move(operands[k + 1]);
+                    } else {
+                        std::string tmp = "__m" + std::to_string(hiddenCounter_++);
+                        temps.push_back(mkLet(tmp, std::move(operands[k + 1]), start));
+                        lefts[k + 1] = mkIdent(tmp, start);
+                        rights[k] = mkIdent(tmp, start);
+                    }
+                } else {
+                    rights[k] = std::move(operands[k + 1]);
+                }
+            }
+            ExprPtr chain;
+            for (size_t k = 0; k + 1 < n; k++) {
+                ExprPtr cmp = std::make_unique<BinaryExpr>(ops[k], std::move(lefts[k]), std::move(rights[k]));
+                cmp->span = start;
+                if (!chain) chain = std::move(cmp);
+                else {
+                    chain = std::make_unique<BinaryExpr>("&&", std::move(chain), std::move(cmp));
+                    chain->span = start;
+                }
+            }
+            if (!simple) {
+                // let __m = ...; return chain   -- inside a function called on the spot
+                std::vector<StmtPtr> body = std::move(temps);
+                StmtPtr ret = std::make_unique<ReturnStmt>(std::move(chain));
+                ret->span = start;
+                body.push_back(std::move(ret));
+                auto decl = std::make_unique<FnDeclStmt>("", std::vector<std::string>{}, std::make_unique<BlockStmt>(std::move(body)));
+                ExprPtr fn = std::make_unique<FnExprNode>(std::move(decl));
+                fn->span = start;
+                chain = std::make_unique<CallExpr>(std::move(fn), std::vector<ExprPtr>{});
+                chain->span = start;
+            }
+            expr = std::move(chain);
         } else if (isWord(peek(), "in", "dalam")) {  // a in b
             advance();
             ExprPtr right = term();

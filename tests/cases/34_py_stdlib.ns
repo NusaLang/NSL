@@ -1,0 +1,16 @@
+import math, json, os, re, string
+from functools import reduce
+print(math.sqrt(16), math.floor(2.7), math.log(8, 2), math.gcd(12, 18), math.factorial(5), math.pi > 3.14)
+print(json.dumps({"a": [1, 2], "b": {"c": None}}), json.loads('{"x": [1, 2]}')["x"])
+print(json.dumps({"b": 1, "a": {"c": [1]}}, indent=2, sort_keys=True))
+print(os.path.join("a", "b", "c.txt"), os.path.basename("/x/y.py"), os.path.splitext("a/b.txt"), os.path.exists("/"))
+m = re.search("(\\d+)-(?P<w>[a-z]+)", "id 42-abc!")
+print(m.group(0), m.group(1), m.group("w"), m.start(), m.span())
+print(re.findall("\\d+", "a1b22c333"), re.sub("\\s+", " ", "a   b \n c"), re.split(",", "a,b,,c"), re.match("x", "ax"))
+print(string.ascii_lowercase[:3], reduce(lambda a, b: a + b, [1, 2, 3]))
+with open("/tmp/nusa_test_io.txt", "w") as f:
+    f.write("halo\nbaris2\n")
+with open("/tmp/nusa_test_io.txt") as g:
+    print(g.readlines())
+print(0 <= 5 < 10, 1 < 3 < 2, 5 > 3 >= 3)
+print(1e3, 2.5e-2, 10 if 0 else 20)

@@ -374,7 +374,6 @@ const char* methodBuiltin(const Value& target, const std::string& name) {
 
 namespace {
 
-bool isTypeName(const Value& t, const char* n) { return t.type == ValueType::Builtin && t.builtinName() == n; }
 
 std::string kindOf(const Value& t) {
     if (t.type != ValueType::Builtin) return "";

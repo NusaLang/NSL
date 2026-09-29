@@ -31,6 +31,7 @@
 #include "i18n.hpp"
 #include "interpreter.hpp"
 #include "sysmod.hpp"
+#include "pystd.hpp"
 #include "json.hpp"
 #include "lexer.hpp"
 #include "net.hpp"
@@ -1150,6 +1151,7 @@ int main(int argc, char** argv) {
             printUsage();
             return 1;
         }
+        pystd::setArgv(std::vector<std::string>(argv + 2, argv + argc));
         return runFile(argv[2]);
     }
     if (command == "watch" || command == "--watch") {
@@ -1184,7 +1186,9 @@ int main(int argc, char** argv) {
         return runSetLang(argc, argv);
     }
     // Shorthand: `nusa main.ns` runs a file directly, no `run` needed.
-    if (argc == 2) {
+    struct stat scriptStat;
+    if (argc == 2 || (stat(command.c_str(), &scriptStat) == 0 && S_ISREG(scriptStat.st_mode))) {
+        pystd::setArgv(std::vector<std::string>(argv + 1, argv + argc));
         return runFile(command);
     }
     std::cerr << i18n::tr("nusantara: perintah nggak dikenal '", "nusantara: unknown command '") << command << "'\n";

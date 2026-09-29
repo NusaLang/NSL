@@ -189,7 +189,10 @@ static void markDictBraces(std::vector<Token>& toks) {
     for (size_t i = 1; i < toks.size(); i++) {
         if (toks[i].type != TokenType::LBrace) continue;
         TokenType prev = toks[i - 1].type;
-        bool inWord = prev == TokenType::Ident && (toks[i - 1].text == "in" || toks[i - 1].text == "dalam");
+        bool inWord = prev == TokenType::Ident &&
+                      (toks[i - 1].text == "in" || toks[i - 1].text == "dalam" || toks[i - 1].text == "or" ||
+                       toks[i - 1].text == "atau" || toks[i - 1].text == "and" || toks[i - 1].text == "dan" ||
+                       toks[i - 1].text == "not" || toks[i - 1].text == "bukan" || toks[i - 1].text == "is");
         if (prev != TokenType::Eq && prev != TokenType::LParen && prev != TokenType::LBracket &&
             prev != TokenType::Comma && prev != TokenType::Colon && prev != TokenType::Return &&
             prev != TokenType::LDict && prev != TokenType::Else && prev != TokenType::And &&
@@ -234,6 +237,14 @@ Token Lexer::readNumber(size_t start, int line, int col) {
     if (peek() == '.' && std::isdigit(static_cast<unsigned char>(peek(1)))) {
         isInteger = false;
         advance();
+        while (std::isdigit(static_cast<unsigned char>(peek()))) advance();
+    }
+    if ((peek() == 'e' || peek() == 'E') &&
+        (std::isdigit(static_cast<unsigned char>(peek(1))) ||
+         ((peek(1) == '+' || peek(1) == '-') && std::isdigit(static_cast<unsigned char>(peek(2)))))) {
+        isInteger = false;
+        advance();
+        if (peek() == '+' || peek() == '-') advance();
         while (std::isdigit(static_cast<unsigned char>(peek()))) advance();
     }
     std::string text = source_.substr(start, pos_ - start);

@@ -41,6 +41,7 @@ static const size_t kUkuranStackGoroutine = 512 * 1024;
 #include "plugin_abi.h"
 #include "sysmod.hpp"
 #include "pylib.hpp"
+#include "pystd.hpp"
 #include "repeat.hpp"
 #include "sysplugin.hpp"
 #include "vm.hpp"
@@ -251,7 +252,7 @@ bool isRegularFile(const std::string& path) {
 const std::vector<std::string>& builtinNames() {
     static const std::vector<std::string> names = {
         "cetak", "panjang", "tambah", "hapus_akhir", "potong", "gabung", "pisah",
-        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "pegang", "_peta", "_in", "_callkw", "_callkwm",
+        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "pegang", "_peta", "_in", "_callkw", "_callkwm", "_close",
         "base64_encode", "base64_decode",
         "baca_file", "tulis_file", "file_ada",
         "tcp_konek", "tcp_kirim", "tcp_terima", "tcp_tutup",
@@ -317,6 +318,10 @@ Interpreter::Interpreter(std::string entryDir) {
     for (const std::string& name : pylib::builtinNames()) {
         globals_->define(name, Value::builtin(name));
     }
+    for (const std::string& name : pystd::builtinNames()) {
+        globals_->define(name, Value::builtin(name));
+    }
+    globals_->define("open", Value::builtin("open"));
     for (const auto& [aliasName, canonical] : builtinAliases()) {
         globals_->define(aliasName, Value::builtin(canonical));
     }
@@ -881,6 +886,40 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         } catch (const pylib::PyError& e) {
             throw RuntimeError(e.what());
         }
+    }
+    if (pystd::handles(name)) {
+        try {
+            return pystd::call(name, args, kw, [this](const Value& fn, std::vector<Value>& a) { return callValue(fn, a, Span{}); });
+        } catch (const pylib::PyError& e) {
+            throw RuntimeError(e.what());
+        }
+    }
+    if (name == "open") {
+        // open(path, mode="r"): a File object from the embedded __io module.
+        std::string mode = "r";
+        if (args.size() > 1 && args[1].type == ValueType::String) mode = args[1].str();
+        if (kw) { auto it = kw->find("mode"); if (it != kw->end() && it->second.type == ValueType::String) mode = it->second.str(); }
+        if (args.empty()) throw RuntimeError("open() butuh path");
+        Value mod = doImport("__io");
+        Value cls = (*mod.map())["File"];
+        std::vector<Value> ctorArgs{args[0], Value::fromString(mode)};
+        if (vmIsActive()) return vmCallValue(cls, ctorArgs, this);
+        return callValue(cls, ctorArgs, Span{});
+    }
+    if (name == "_close") {
+        if (!args.empty() && args[0].type == ValueType::Instance) {
+            std::vector<std::string> names;
+            std::shared_ptr<ClassInfo> owner;
+            bool has = (vmIsActive() && vmMethodParamNames(args[0].instance()->classInfo.get(), "close", names)) ||
+                       lookupMethod(args[0].instance()->classInfo, "close", &owner) != nullptr;
+            if (has) {
+                Value obj = args[0];
+                std::vector<Value> none;
+                if (vmIsActive()) return vmCallMethod(obj, "close", none, this);
+                return callFunction(lookupMethod(obj.instance()->classInfo, "close", &owner), none, Span{}, &obj, owner);
+            }
+        }
+        return Value::null();
     }
     if (kw && name != "cetak" && name != "_callkw" && name != "_callkwm") {
         for (const auto& e : *kw) {
@@ -2245,6 +2284,12 @@ Value Interpreter::doImport(const std::string& rawPath) {
         }
     }
 
+    const char* embedded = nullptr;
+    if (path.empty() || (!isRegularFile(path) && !std::ifstream(path).good())) {
+        embedded = pystd::embeddedModule(rawPath);
+        if (embedded) path = "<std:" + rawPath + ">";
+    }
+
     auto cached = moduleCache_.find(path);
     if (cached != moduleCache_.end()) return cached->second;
 
@@ -2254,13 +2299,18 @@ Value Interpreter::doImport(const std::string& rawPath) {
                                           "circular import detected: '") + path + "'");
     }
 
-    std::ifstream file(path);
-    if (!file)
-        throw RuntimeError(i18n::tr("impor(): nggak bisa buka '", "impor(): can't open '") + path +
-                            i18n::tr("' (dari '", "' (from '") + rawPath + "')");
-    std::ostringstream buf;
-    buf << file.rdbuf();
-    std::string source = buf.str();
+    std::string source;
+    if (embedded) {
+        source = embedded;
+    } else {
+        std::ifstream file(path);
+        if (!file)
+            throw RuntimeError(i18n::tr("impor(): nggak bisa buka '", "impor(): can't open '") + path +
+                                i18n::tr("' (dari '", "' (from '") + rawPath + "')");
+        std::ostringstream buf;
+        buf << file.rdbuf();
+        source = buf.str();
+    }
 
     std::unique_ptr<Program> program;
     try {
