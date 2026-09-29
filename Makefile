@@ -164,3 +164,12 @@ install: all plugins
 	@mkdir -p $(DESTDIR)$(BINDIR)/nusantara-plugins
 	@cp -f nusantara-plugins/* $(DESTDIR)$(BINDIR)/nusantara-plugins/ 2>/dev/null || true
 	@echo "Nusantara installed to $(DESTDIR)$(BINDIR)/$(BIN) and $(DESTDIR)$(BINDIR)/nusa"
+
+# --- test kripto TLS bawaan (vektor dari implementasi independen, lihat tests/tls/) ---
+TLS_CRYPTO_SRC := src/tls_bigint_hash.cpp src/tls_cipher_sig.cpp
+build-opt/tls_selftest: tests/tls_selftest.cpp $(TLS_CRYPTO_SRC) include/tls_crypto.hpp
+	@mkdir -p build-opt
+	$(CXX) -std=c++17 -O2 -Wall -Wextra -Iinclude tests/tls_selftest.cpp $(TLS_CRYPTO_SRC) -o build-opt/tls_selftest
+
+tls-test: build-opt/tls_selftest
+	./build-opt/tls_selftest tests/tls/vectors.txt
