@@ -39,6 +39,7 @@ static NsValue t_event(int argc, const NsValue* argv) { return nsGoInvoke(5, arg
 static NsValue t_daftar(int argc, const NsValue* argv) { return nsGoInvoke(6, argc, (NsValue*)argv); }
 static NsValue t_bebas(int argc, const NsValue* argv) { return nsGoInvoke(7, argc, (NsValue*)argv); }
 static NsValue t_balas(int argc, const NsValue* argv) { return nsGoInvoke(8, argc, (NsValue*)argv); }
+static NsValue t_chan(int argc, const NsValue* argv) { return nsGoInvoke(9, argc, (NsValue*)argv); }
 
 static void register_all(void* r, NsRegisterFn reg) {
     reg(r, "panggil", t_panggil);
@@ -50,6 +51,7 @@ static void register_all(void* r, NsRegisterFn reg) {
     reg(r, "daftar", t_daftar);
     reg(r, "bebas", t_bebas);
     reg(r, "balas", t_balas);
+    reg(r, "chan_baru", t_chan);
 }
 
 static NsValue make_string(const char* s, int n) {
@@ -245,7 +247,8 @@ func encodeOpt(v reflect.Value, methodsAsHandle bool) interface{} {
 		switch v.Kind() {
 		case reflect.Interface, reflect.Ptr, reflect.Func, reflect.Chan:
 		default:
-			if hasMethods(v.Type()) {
+)NSGO"
+         R"NSGO(			if hasMethods(v.Type()) {
 				return handleRef(v)
 			}
 		}
@@ -253,8 +256,7 @@ func encodeOpt(v reflect.Value, methodsAsHandle bool) interface{} {
 	switch v.Kind() {
 	case reflect.Bool:
 		return v.Bool()
-	case reflec)NSGO"
-         R"NSGO(t.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		n := v.Int()
 		if n > maxSafeInt || n < -maxSafeInt {
 			return strconv.FormatInt(n, 10)
@@ -527,9 +529,9 @@ var (
 	replySeq int64
 )
 
-// syncCallback: a callback that returns values, or takes an object/pointer (an http handler's
-// writer and request, a gin context), must finish on the Nusantara side)NSGO"
-         R"NSGO( before Go continues.
+// syncCallback: a callback that )NSGO"
+         R"NSGO(returns values, or takes an object/pointer (an http handler's
+// writer and request, a gin context), must finish on the Nusantara side before Go continues.
 // Plain event handlers (func(evt interface{})) stay fire-and-forget.
 func syncCallback(t reflect.Type) bool {
 	if t.NumOut() > 0 {
@@ -832,12 +834,16 @@ func callTarget(target, name, argsJSON string) string {
 	case "$str":
 		return envelope(fmt.Sprint(hv.Interface()), nil)
 	case "$tipe":
-		return envelope(hv.Type().String(), nil)
+		return envelope(hv.Type().Str)NSGO"
+         R"NSGO(ing(), nil)
+	case "$kirim", "$terima", "$terima_ok", "$tutup", "$panjang":
+		if hv.Kind() == reflect.Chan {
+			return chanOp(hv, name, args)
+		}
 	}
 	mv := hv.MethodByName(name)
 	if !mv.IsValid() && hv.Kind() != reflect.Ptr && hv.Kind() != reflect.Interface {
-		p := r)NSGO"
-         R"NSGO(eflect.New(hv.Type())
+		p := reflect.New(hv.Type())
 		p.Elem().Set(hv)
 		mv = p.MethodByName(name)
 	}
@@ -846,6 +852,106 @@ func callTarget(target, name, argsJSON string) string {
 	}
 	r := invoke(mv, args)
 	return envelope(resultValue(r), r.Err)
+}
+
+// chanOp: send/receive/close/len on a Go channel handle. Send and receive take an optional
+// timeout in milliseconds (default: wait forever); a timeout reports an error.
+func chanOp(ch reflect.Value, op string, args []json.RawMessage) string {
+	timeout := func(idx int) <-chan time.Time {
+		if idx < len(args) {
+			var ms float64
+			if json.Unmarshal(args[idx], &ms) == nil && ms >= 0 {
+				return time.After(time.Duration(ms * float64(time.Millisecond)))
+			}
+		}
+		return nil
+	}
+	switch op {
+	case "$panjang":
+		return envelope(ch.Len(), nil)
+	case "$tutup":
+		defer func() { recover() }()
+		ch.Close()
+		return envelope(nil, nil)
+	case "$kirim":
+		if len(args) < 1 {
+			return envelope(nil, errors.New("kirim butuh 1 nilai"))
+		}
+		v, err := convertArg(args[0], ch.Type().Elem())
+		if err != nil {
+			return envelope(nil, err)
+		}
+		var sent bool
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("channel: %v", r)
+				}
+			}()
+			cases := []reflect.SelectCase{{Dir: reflect.SelectSend, Chan: ch, Send: v}}
+			var tc <-chan time.Time = timeout(1)
+			if tc != nil {
+				cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(tc)})
+			}
+			chosen, _, _ := reflect.Select(cases)
+			sent = chosen == 0
+		}()
+		if err != nil {
+			return envelope(nil, err)
+		}
+		if !sent {
+			return envelope(nil, errors.New("timeout mengirim ke channel"))
+		}
+		return envelope(nil, nil)
+	default: // $terima, $terima_ok
+		cases := []reflect.SelectCase{{Dir: reflect.SelectRecv, Chan: ch}}
+		if tc := timeout(0); tc != nil {
+			cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(tc)})
+		}
+		chosen, val, ok := reflect.Select(cases)
+		if chosen == 1 {
+			return envelope(nil, errors.New("timeout menerima dari channel"))
+		}
+		var out interface{}
+		if ok {
+			out = encode(val)
+		}
+		if op == "$terima_ok" {
+			return envelope([]interface{}{out, ok}, nil)
+		}
+		return envelope(out, nil)
+	}
+}
+
+// chanBaru makes a channel: element type is a basic type name, "any", or a registered type.
+func chanBaru(elem string, size int) string {
+	var et reflect.Type
+	switch elem {
+	case "string":
+		et = reflect.TypeOf("")
+	case "int":
+		et = reflect.TypeOf(0)
+	case "int64":
+		et = reflect.TypeOf(int64(0))
+	case "float64", "angka":
+		et = reflect.TypeOf(float64(0))
+	case "bool", "boolean":
+		et = reflect.TypeOf(false)
+	case "byte", "uint8":
+		et = reflect.TypeOf(byte(0))
+	case "any", "interface{}", "":
+		et = reflect.TypeOf((*interface{})(nil)).Elem()
+	default:
+		t, ok := typs[elem]
+		if !ok {
+			return envelope(nil, fmt.Errorf("tipe elemen channel '%s' tidak dikenal", elem))
+		}
+		et = t
+	}
+	if size < 0 {
+		size = 0
+	}
+	return envelope(handleRef(reflect.MakeChan(reflect.ChanOf(reflect.BothDir, et), size)), nil)
 }
 
 func indirectValue(v reflect.Value) reflect.Value {
@@ -981,6 +1087,9 @@ func nsGoInvoke(op C.int, argc C.int, argv *C.NsValue) (ret C.NsValue) {
 			return retString(envelope(encode(get()), nil))
 		}
 		return retString(envelope(nil, fmt.Errorf("konstanta/variabel Go '%s' tidak ada", name)))
+	case 9:
+		n, _ := strconv.Atoi(argString(args, 1))
+		return retString(chanBaru(argString(args, 0), n))
 	case 8:
 		n, _ := strconv.ParseInt(argString(args, 0), 10, 64)
 		deliverReply(n, argString(args, 1))
@@ -1012,7 +1121,8 @@ func nsGoInvoke(op C.int, argc C.int, argv *C.NsValue) (ret C.NsValue) {
 // a fresh value of that kind, for parameters typed as an interface (Scan's ...any).
 func pointerArg(raw json.RawMessage, pt reflect.Type) (reflect.Value, bool) {
 	if pt.Kind() != reflect.Interface || pt.NumMethod() != 0 || !strings.Contains(string(raw), "$ptr") {
-		return reflect.Value{}, false
+		retu)NSGO"
+         R"NSGO(rn reflect.Value{}, false
 	}
 	var m struct {
 		P string `json:"$ptr"`
@@ -1505,6 +1615,16 @@ fungsi bytes_dari(teks) {
     hasil p;
 }
 
+fungsi _opsi(ms) {
+    jika ms == kosong { hasil []; }
+    hasil [ms];
+}
+
+// Channel Go baru: chan_go("string", 10). Elemen: string/int/int64/float64/bool/byte/any atau tipe terdaftar.
+fungsi chan_go(elem, ukuran = 0) {
+    hasil _urai(_p.chan_baru(elem, ke_teks(ukuran)));
+}
+
 fungsi _gabung_arg(dasar, resto) {
     jika resto != kosong {
         untuk (buat i = 0; i < panjang(resto); i = i + 1) { tambah(dasar, resto[i]); }
@@ -1538,11 +1658,11 @@ fungsi _metode(h, nama, jumlah) {
     jika jumlah == 3 { hasil fungsi(a, b, c) { hasil _panggil(h, nama, [a, b, c]); }; }
     jika jumlah == 4 { hasil fungsi(a, b, c, d) { hasil _panggil(h, nama, [a, b, c, d]); }; }
     jika jumlah == 5 { hasil fungsi(a, b, c, d, e) { hasil _panggil(h, nama, [a, b, c, d, e]); }; }
-    jika jumlah == 6 { hasil fungsi(a, b, c, d, e, f) { hasil _panggil(h, nama, [a, b, c, d, e, f]); }; }
+    jika jumlah == 6 { hasil fungsi(a, b, c, d, e, f) { hasil _panggil(h, )NSGO"
+         R"NSGO(nama, [a, b, c, d, e, f]); }; }
     jika jumlah == 7 { hasil fungsi(a, b, c, d, e, f, g) { hasil _panggil(h, nama, [a, b, c, d, e, f, g]); }; }
     jika jumlah == 8 { hasil fungsi(a, b, c, d, e, f, g, i) { hasil _panggil(h, nama, [a, b, c, d, e, f, g, i]); }; }
-    // Lebih da)NSGO"
-         R"NSGO(ri 8 argumen: satu parameter larik berisi semua argumen.
+    // Lebih dari 8 argumen: satu parameter larik berisi semua argumen.
     hasil fungsi(semua) { hasil _panggil(h, nama, semua); };
 }
 
@@ -1560,6 +1680,14 @@ fungsi _objek(v) {
         untuk (buat i = 0; i < panjang(kf); i = i + 1) { o[kf[i]] = _bungkus(v["f"][kf[i]]); }
     }
     jika v["d"] != kosong { o["nilai"] = _bungkus(v["d"]); }
+    buat tp = v["tipe"];
+    jika tp[0:4] == "chan" or tp[0:6] == "<-chan" {
+        o["Kirim"] = fungsi(x, ms = kosong) { hasil _panggil(h, "$kirim", _gabung_arg([x], _opsi(ms))); };
+        o["Terima"] = fungsi(ms = kosong) { hasil _panggil(h, "$terima", _opsi(ms)); };
+        o["TerimaOk"] = fungsi(ms = kosong) { hasil _panggil(h, "$terima_ok", _opsi(ms)); };
+        o["Tutup"] = fungsi() { hasil _panggil(h, "$tutup", []); };
+        o["Panjang"] = fungsi() { hasil _panggil(h, "$panjang", []); };
+    }
     o["json"] = fungsi() { hasil _urai(_p.panggil(h, "$json", "[]")); };
     o["teks"] = fungsi() { hasil _urai(_p.panggil(h, "$str", "[]")); };
     o["field"] = fungsi(n) { hasil _urai(_p.field(h, n)); };

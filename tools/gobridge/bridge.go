@@ -31,6 +31,7 @@ static NsValue t_event(int argc, const NsValue* argv) { return nsGoInvoke(5, arg
 static NsValue t_daftar(int argc, const NsValue* argv) { return nsGoInvoke(6, argc, (NsValue*)argv); }
 static NsValue t_bebas(int argc, const NsValue* argv) { return nsGoInvoke(7, argc, (NsValue*)argv); }
 static NsValue t_balas(int argc, const NsValue* argv) { return nsGoInvoke(8, argc, (NsValue*)argv); }
+static NsValue t_chan(int argc, const NsValue* argv) { return nsGoInvoke(9, argc, (NsValue*)argv); }
 
 static void register_all(void* r, NsRegisterFn reg) {
     reg(r, "panggil", t_panggil);
@@ -42,6 +43,7 @@ static void register_all(void* r, NsRegisterFn reg) {
     reg(r, "daftar", t_daftar);
     reg(r, "bebas", t_bebas);
     reg(r, "balas", t_balas);
+    reg(r, "chan_baru", t_chan);
 }
 
 static NsValue make_string(const char* s, int n) {
@@ -823,6 +825,10 @@ func callTarget(target, name, argsJSON string) string {
 		return envelope(fmt.Sprint(hv.Interface()), nil)
 	case "$tipe":
 		return envelope(hv.Type().String(), nil)
+	case "$kirim", "$terima", "$terima_ok", "$tutup", "$panjang":
+		if hv.Kind() == reflect.Chan {
+			return chanOp(hv, name, args)
+		}
 	}
 	mv := hv.MethodByName(name)
 	if !mv.IsValid() && hv.Kind() != reflect.Ptr && hv.Kind() != reflect.Interface {
@@ -835,6 +841,106 @@ func callTarget(target, name, argsJSON string) string {
 	}
 	r := invoke(mv, args)
 	return envelope(resultValue(r), r.Err)
+}
+
+// chanOp: send/receive/close/len on a Go channel handle. Send and receive take an optional
+// timeout in milliseconds (default: wait forever); a timeout reports an error.
+func chanOp(ch reflect.Value, op string, args []json.RawMessage) string {
+	timeout := func(idx int) <-chan time.Time {
+		if idx < len(args) {
+			var ms float64
+			if json.Unmarshal(args[idx], &ms) == nil && ms >= 0 {
+				return time.After(time.Duration(ms * float64(time.Millisecond)))
+			}
+		}
+		return nil
+	}
+	switch op {
+	case "$panjang":
+		return envelope(ch.Len(), nil)
+	case "$tutup":
+		defer func() { recover() }()
+		ch.Close()
+		return envelope(nil, nil)
+	case "$kirim":
+		if len(args) < 1 {
+			return envelope(nil, errors.New("kirim butuh 1 nilai"))
+		}
+		v, err := convertArg(args[0], ch.Type().Elem())
+		if err != nil {
+			return envelope(nil, err)
+		}
+		var sent bool
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("channel: %v", r)
+				}
+			}()
+			cases := []reflect.SelectCase{{Dir: reflect.SelectSend, Chan: ch, Send: v}}
+			var tc <-chan time.Time = timeout(1)
+			if tc != nil {
+				cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(tc)})
+			}
+			chosen, _, _ := reflect.Select(cases)
+			sent = chosen == 0
+		}()
+		if err != nil {
+			return envelope(nil, err)
+		}
+		if !sent {
+			return envelope(nil, errors.New("timeout mengirim ke channel"))
+		}
+		return envelope(nil, nil)
+	default: // $terima, $terima_ok
+		cases := []reflect.SelectCase{{Dir: reflect.SelectRecv, Chan: ch}}
+		if tc := timeout(0); tc != nil {
+			cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(tc)})
+		}
+		chosen, val, ok := reflect.Select(cases)
+		if chosen == 1 {
+			return envelope(nil, errors.New("timeout menerima dari channel"))
+		}
+		var out interface{}
+		if ok {
+			out = encode(val)
+		}
+		if op == "$terima_ok" {
+			return envelope([]interface{}{out, ok}, nil)
+		}
+		return envelope(out, nil)
+	}
+}
+
+// chanBaru makes a channel: element type is a basic type name, "any", or a registered type.
+func chanBaru(elem string, size int) string {
+	var et reflect.Type
+	switch elem {
+	case "string":
+		et = reflect.TypeOf("")
+	case "int":
+		et = reflect.TypeOf(0)
+	case "int64":
+		et = reflect.TypeOf(int64(0))
+	case "float64", "angka":
+		et = reflect.TypeOf(float64(0))
+	case "bool", "boolean":
+		et = reflect.TypeOf(false)
+	case "byte", "uint8":
+		et = reflect.TypeOf(byte(0))
+	case "any", "interface{}", "":
+		et = reflect.TypeOf((*interface{})(nil)).Elem()
+	default:
+		t, ok := typs[elem]
+		if !ok {
+			return envelope(nil, fmt.Errorf("tipe elemen channel '%s' tidak dikenal", elem))
+		}
+		et = t
+	}
+	if size < 0 {
+		size = 0
+	}
+	return envelope(handleRef(reflect.MakeChan(reflect.ChanOf(reflect.BothDir, et), size)), nil)
 }
 
 func indirectValue(v reflect.Value) reflect.Value {
@@ -970,6 +1076,9 @@ func nsGoInvoke(op C.int, argc C.int, argv *C.NsValue) (ret C.NsValue) {
 			return retString(envelope(encode(get()), nil))
 		}
 		return retString(envelope(nil, fmt.Errorf("konstanta/variabel Go '%s' tidak ada", name)))
+	case 9:
+		n, _ := strconv.Atoi(argString(args, 1))
+		return retString(chanBaru(argString(args, 0), n))
 	case 8:
 		n, _ := strconv.ParseInt(argString(args, 0), 10, 64)
 		deliverReply(n, argString(args, 1))

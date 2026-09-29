@@ -465,6 +465,16 @@ fungsi bytes_dari(teks) {
     hasil p;
 }
 
+fungsi _opsi(ms) {
+    jika ms == kosong { hasil []; }
+    hasil [ms];
+}
+
+// Channel Go baru: chan_go("string", 10). Elemen: string/int/int64/float64/bool/byte/any atau tipe terdaftar.
+fungsi chan_go(elem, ukuran = 0) {
+    hasil _urai(_p.chan_baru(elem, ke_teks(ukuran)));
+}
+
 fungsi _gabung_arg(dasar, resto) {
     jika resto != kosong {
         untuk (buat i = 0; i < panjang(resto); i = i + 1) { tambah(dasar, resto[i]); }
@@ -519,6 +529,14 @@ fungsi _objek(v) {
         untuk (buat i = 0; i < panjang(kf); i = i + 1) { o[kf[i]] = _bungkus(v["f"][kf[i]]); }
     }
     jika v["d"] != kosong { o["nilai"] = _bungkus(v["d"]); }
+    buat tp = v["tipe"];
+    jika tp[0:4] == "chan" or tp[0:6] == "<-chan" {
+        o["Kirim"] = fungsi(x, ms = kosong) { hasil _panggil(h, "$kirim", _gabung_arg([x], _opsi(ms))); };
+        o["Terima"] = fungsi(ms = kosong) { hasil _panggil(h, "$terima", _opsi(ms)); };
+        o["TerimaOk"] = fungsi(ms = kosong) { hasil _panggil(h, "$terima_ok", _opsi(ms)); };
+        o["Tutup"] = fungsi() { hasil _panggil(h, "$tutup", []); };
+        o["Panjang"] = fungsi() { hasil _panggil(h, "$panjang", []); };
+    }
     o["json"] = fungsi() { hasil _urai(_p.panggil(h, "$json", "[]")); };
     o["teks"] = fungsi() { hasil _urai(_p.panggil(h, "$str", "[]")); };
     o["field"] = fungsi(n) { hasil _urai(_p.field(h, n)); };
