@@ -393,6 +393,7 @@ fungsi _objek(v) {
     buat o = peta_baru();
     buat h = v["$h"];
     o["$h"] = h;
+    o["$g"] = pegang(_p.bebas, h);
     o["tipe"] = v["tipe"];
     buat daftar = v["m"];
     buat nama = peta_kunci(daftar);
@@ -421,6 +422,7 @@ fungsi _picu(f, a) {
 
 fungsi _dengarkan(nama, f) {
     jalan(fungsi() {
+        latar();
         selama _aktif {
             buat e = _p.event(nama, 500);
             jika e != "" { _picu(f, json_decode(e)); }

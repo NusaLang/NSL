@@ -38,6 +38,7 @@ static const size_t kUkuranStackGoroutine = 512 * 1024;
 #include "net.hpp"
 #include "parser.hpp"
 #include "plugin.hpp"
+#include "plugin_abi.h"
 #include "qr.hpp"
 #include "sysplugin.hpp"
 #include "vm.hpp"
@@ -250,7 +251,7 @@ bool isRegularFile(const std::string& path) {
 const std::vector<std::string>& builtinNames() {
     static const std::vector<std::string> names = {
         "cetak", "panjang", "tambah", "hapus_akhir", "potong", "gabung", "pisah",
-        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur",
+        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "pegang",
         "base64_encode", "base64_decode",
         "baca_file", "tulis_file", "file_ada",
         "tcp_konek", "tcp_kirim", "tcp_terima", "tcp_tutup",
@@ -838,7 +839,7 @@ void Interpreter::jalankanBadanGoroutine(Value fn, std::vector<Value> args, std:
     }
     Interpreter::unregisterCurrentThread();
     GIL::instance().unlock();
-    GC::liveGoroutines--;
+    GC::goroutineDone();
 #else
     (void)fn; (void)args;
 #endif
@@ -1104,6 +1105,39 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         auto now = std::chrono::system_clock::now();
         double secs = std::chrono::duration<double>(now.time_since_epoch()).count();
         return Value::fromNumber(secs);
+    }
+
+    if (name == "pegang") {
+        // pegang(fungsi_bebas, kunci): a value that calls fungsi_bebas(kunci) when it is
+        // collected. Keep it inside the object that owns the resource.
+        need(2);
+        if (args[0].type != ValueType::Native || !args[0].native()) {
+            throw RuntimeError("pegang(): argumen pertama harus fungsi native");
+        }
+        expectType(args[1], ValueType::String);
+        const NativeFunction* src = args[0].native();
+        auto nf = std::make_shared<NativeFunction>();
+        nf->plugin = src->plugin;
+        nf->fnPtr = src->fnPtr;
+        nf->name = src->name;
+        nf->abiVer = src->abiVer;
+        std::shared_ptr<NativePlugin> keep = src->plugin;
+        void* fp = src->fnPtr;
+        std::string key = args[1].str();
+        nf->onRelease = [keep, fp, key]() {
+            NsValue a{};
+            a.type = NS_STRING;
+            a.str = const_cast<char*>(key.c_str());
+            a.str_len = static_cast<int>(key.size());
+            NsValue r = reinterpret_cast<NsFn>(fp)(1, &a);
+            if (r.type == NS_STRING && r.str) free(r.str);
+        };
+        return Value::fromNative(nf);
+    }
+
+    if (name == "latar") {
+        GC::markDaemonThread();
+        return Value::null();
     }
 
     if (name == "tidur") {

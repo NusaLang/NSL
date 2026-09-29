@@ -11,6 +11,19 @@
 #endif
 
 std::atomic<int> GC::liveGoroutines{0};
+std::atomic<int> GC::daemonGoroutines{0};
+static thread_local bool tlDaemon = false;
+
+void GC::markDaemonThread() {
+    if (tlDaemon) return;
+    tlDaemon = true;
+    daemonGoroutines++;
+}
+
+void GC::goroutineDone() {
+    if (tlDaemon) { tlDaemon = false; daemonGoroutines--; }
+    liveGoroutines--;
+}
 
 GC& GC::instance() {
     // Deliberately never deleted -- a detached goroutine can still be

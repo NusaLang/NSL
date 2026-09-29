@@ -59,7 +59,7 @@ struct NetCleanupGuard {
 };
 
 void waitForGoroutines() {
-    while (GC::liveGoroutines.load() > 0) {
+    while (GC::liveGoroutines.load() - GC::daemonGoroutines.load() > 0) {
         GilRelease release;
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }

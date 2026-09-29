@@ -50,6 +50,13 @@ struct NativeFunction {
     void* fnPtr = nullptr;
     std::string name;
     int abiVer = 1; // ABI plugin: 2 = string length-aware
+    // Runs when the last reference goes away (pegang(): frees a Go handle once the
+    // NSL object wrapping it is garbage).
+    std::function<void()> onRelease;
+    NativeFunction() = default;
+    NativeFunction(const NativeFunction&) = delete;
+    NativeFunction& operator=(const NativeFunction&) = delete;
+    ~NativeFunction() { if (onRelease) onRelease(); }
 };
 
 enum class ValueType { Null, Bool, Number, String, Fn, Builtin, Array, Map, Channel, WaitGroup, Native, Class, Instance, VmFn, VmArray };

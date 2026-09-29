@@ -2441,7 +2441,18 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 auto* nativeLoopsPtr = ctx.nativeLoops;
                 auto globalsSnapshot = ctx.globals;
                 GC::liveGoroutines++;
-                std::thread([fn, goroutineArgs, interpreterPtr, functionsPtr, nativeLoopsPtr, globalsSnapshot]() mutable {
+                // The closure and its arguments are only reachable from the new thread's
+                // lambda until its frame exists; keep them rooted from this side until the
+                // thread has rooted them itself, or a collection in between frees the
+                // closure's upvalue cells.
+                auto rooted = std::make_shared<std::atomic<bool>>(false);
+                {
+                    ValueRootGuard spawnRoot(fn);
+                    ValueVectorRootGuard spawnArgsRoot(goroutineArgs);
+                    std::thread([fn, goroutineArgs, interpreterPtr, functionsPtr, nativeLoopsPtr, globalsSnapshot, rooted]() mutable {
+                    ValueRootGuard fnRoot(fn);
+                    ValueVectorRootGuard argsRoot(goroutineArgs);
+                    rooted->store(true, std::memory_order_release);
                     Interpreter::registerCurrentThread();
                     GIL::instance().lock();
                     VmContext threadCtx;
@@ -2458,8 +2469,10 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                     }
                     Interpreter::unregisterCurrentThread();
                     GIL::instance().unlock();
-                    GC::liveGoroutines--;
-                }).detach();
+                    GC::goroutineDone();
+                    }).detach();
+                    while (!rooted->load(std::memory_order_acquire)) std::this_thread::yield();
+                }
                 stack.push_back(Value::null());
                 break;
             }

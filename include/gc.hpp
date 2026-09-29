@@ -88,6 +88,12 @@ public:
     void registerThread(const int* depthPtr);
     void unregisterThread(const int* depthPtr);
     static std::atomic<int> liveGoroutines;
+    // Goroutines that called latar(): background workers (e.g. Go callback listeners) that
+    // must not keep the process alive once the main script has finished.
+    static std::atomic<int> daemonGoroutines;
+    static void markDaemonThread();
+    // Every goroutine's last act (replaces a bare liveGoroutines--).
+    static void goroutineDone();
 
     // Collects if enough allocations have piled up and every thread is
     // at a safe point. Call only while holding the GIL at exprDepth_==0.
