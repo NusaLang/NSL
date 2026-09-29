@@ -50,8 +50,12 @@ void TypeChecker::error(const std::string& msg, Span span) {
     errors_.push_back(msg + " (line " + std::to_string(span.line) + ", col " + std::to_string(span.column) + ")");
 }
 
+// Only these are checked strictly; anything else (arrays, maps, user classes with __add__/__lt__) is left alone.
+static bool primitiveType(const std::string& n) { return n == "angka" || n == "teks" || n == "boolean"; }
+
 void TypeChecker::checkComparable(const StaticType& l, const StaticType& r, const std::string& op, Span span) {
     if (l.name.empty() || r.name.empty()) return;  // one side unknown -- gradual, don't flag it
+    if (!primitiveType(l.name) || !primitiveType(r.name)) return;
     bool bothNum = l.name == "angka" && r.name == "angka";
     bool bothStr = l.name == "teks" && r.name == "teks";
     if (!bothNum && !bothStr) {
@@ -106,6 +110,8 @@ TypeChecker::StaticType TypeChecker::inferExpr(const Expr* expr) {
             }
             if (op == "+") {
                 if (l.name.empty() || r.name.empty()) return {};
+                if (l.name == "larik" && r.name == "larik") return {"larik"};
+                if (!primitiveType(l.name) || !primitiveType(r.name)) return {};
                 bool bothNum = l.name == "angka" && r.name == "angka";
                 bool bothStr = l.name == "teks" && r.name == "teks";
                 if (!bothNum && !bothStr) {

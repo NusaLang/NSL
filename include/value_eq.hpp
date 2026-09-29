@@ -26,6 +26,10 @@ inline bool valuesDeepEqual(const Value& a, const Value& b, int depth = 0) {
         }
         return true;
     }
+    if (a.type == ValueType::Instance && instanceOpHook()) {
+        Value r;
+        if (instanceOpHook()("__eq__", a, b, r)) return r.truthy();
+    }
     if (a.type != b.type) return false;
     switch (a.type) {
         case ValueType::Null: return true;

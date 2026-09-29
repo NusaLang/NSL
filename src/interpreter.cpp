@@ -368,6 +368,31 @@ static bool callInstMethod(Interpreter* in, const Value& inst, const char* name,
 
 Interpreter::Interpreter(std::string entryDir) {
     g_propInterpreter = this;
+    instanceStrHook() = [this](const Value& inst, std::string& out) {
+        for (const char* m : {"__str__", "__repr__"}) {
+            std::vector<Value> none;
+            Value r;
+            if (callInstMethod(this, inst, m, none, &r)) {
+                out = r.type == ValueType::String ? r.str() : r.stringify();
+                return true;
+            }
+        }
+        return false;
+    };
+    instanceOpHook() = [this](const char* dunder, const Value& a, const Value& b, Value& out) {
+        std::vector<Value> args{b};
+        if (callInstMethod(this, a, dunder, args, &out)) return true;
+        // comparisons fall back to the reflected operation on the right operand: a > b == b < a
+        static const std::pair<const char*, const char*> reflected[] = {
+            {"__gt__", "__lt__"}, {"__lt__", "__gt__"}, {"__ge__", "__le__"}, {"__le__", "__ge__"}};
+        for (const auto& [from, to] : reflected) {
+            if (std::string(dunder) == from && b.type == ValueType::Instance) {
+                std::vector<Value> rargs{a};
+                return callInstMethod(this, b, to, rargs, &out);
+            }
+        }
+        return false;
+    };
     pylib::setMethodHook([this](const Value& inst, const char* name, std::vector<Value>& args, Value* out) {
         return callInstMethod(this, inst, name, args, out);
     });
@@ -693,6 +718,14 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
                 if (left.type == ValueType::String && right.type == ValueType::String) {
                     return Value::fromString(left.str() + right.str());
                 }
+                if (left.type == ValueType::Instance) {
+                    Value r;
+                    if (instanceOpHook()("__add__", left, right, r)) return r;
+                }
+                if ((left.type == ValueType::Array || left.type == ValueType::VmArray) && (right.type == ValueType::Array || right.type == ValueType::VmArray)) {
+                    std::vector<Value> pa{left, right};
+                    return pylib::call("_concat", pa, nullptr, nullptr);
+                }
                 throw RuntimeError(i18n::tr("Operand '+' harus dua angka atau dua teks", "Operands of '+' must be two numbers or two strings"));
             }
 
@@ -708,6 +741,11 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
                     if (op == "<=") return Value::fromBool(left.str() <= right.str());
                     if (op == ">") return Value::fromBool(left.str() > right.str());
                     return Value::fromBool(left.str() >= right.str());
+                }
+                if (left.type == ValueType::Instance) {
+                    Value r;
+                    const char* dn = op == "<" ? "__lt__" : op == "<=" ? "__le__" : op == ">" ? "__gt__" : "__ge__";
+                    if (instanceOpHook()(dn, left, right, r)) return Value::fromBool(r.truthy());
                 }
                 throw RuntimeError(i18n::tr("Operand '", "Operands of '") + op +
                         i18n::tr("' harus dua angka atau dua teks", "' must be two numbers or two strings"));
@@ -728,6 +766,11 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
                     } catch (const pylib::PyError& e) {
                         throw RuntimeError(e.what());
                     }
+                }
+                if (left.type == ValueType::Instance) {
+                    Value r;
+                    const char* dn = op == "-" ? "__sub__" : op == "*" ? "__mul__" : op == "/" ? "__truediv__" : "__mod__";
+                    if (instanceOpHook()(dn, left, right, r)) return r;
                 }
                 throw RuntimeError(i18n::tr("Operand '", "Operands of '") + op + i18n::tr("' harus angka", "' must be numbers"));
             }
@@ -888,6 +931,10 @@ Value Interpreter::callValue(const Value& callee, std::vector<Value>& args, Span
         if (!ctor) ctor = lookupMethod(callee.klassShared(), "constructor", &owner);
         if (ctor) callFunction(ctor, args, callSite, &instanceVal, owner);
         return instanceVal;
+    }
+    if (callee.type == ValueType::Instance) {
+        Value r;
+        if (callInstMethod(this, callee, "__call__", args, &r)) return r;
     }
     throw RuntimeError(i18n::tr("Coba manggil nilai yang bukan fungsi", "Attempted to call a non-function value"));
 }
@@ -1419,6 +1466,15 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
                 return Value::fromBool(false);
             }
             for (const Value& el : *st->boxed) if (valuesEqual(el, needle)) return Value::fromBool(true);
+            return Value::fromBool(false);
+        }
+        if (hay.type == ValueType::Instance) {
+            std::vector<Value> a{needle};
+            Value r;
+            if (callInstMethod(this, hay, "__contains__", a, &r)) return Value::fromBool(r.truthy());
+            std::vector<Value> lst{hay};
+            Value arr = pylib::call("list", lst, nullptr, [this](const Value& fn, std::vector<Value>& aa) { return callValue(fn, aa, Span{}); });
+            for (const Value& el : arrayElements(arr)) if (valuesEqual(el, needle)) return Value::fromBool(true);
             return Value::fromBool(false);
         }
         throw RuntimeError(i18n::tr("'in' butuh teks, larik, atau peta di kanan", "'in' needs a string, array, or map on the right"));

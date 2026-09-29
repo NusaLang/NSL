@@ -1739,6 +1739,16 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 } else if (a.type == ValueType::String && b.type == ValueType::String) {
                     stack.push_back(Value::fromString(a.str() + b.str()));
                 } else {
+                    Value r;
+                    if (a.type == ValueType::Instance && instanceOpHook() && (syncTop(), instanceOpHook()("__add__", a, b, r))) {
+                        stack.push_back(std::move(r));
+                        break;
+                    }
+                    if ((a.type == ValueType::Array || a.type == ValueType::VmArray) && (b.type == ValueType::Array || b.type == ValueType::VmArray)) {
+                        std::vector<Value> pa{a, b};
+                        stack.push_back(pylib::call("_concat", pa, nullptr, nullptr));
+                        break;
+                    }
                     throw VmRuntimeError("Operand '+' harus dua angka atau dua teks");
                 }
                 break;
@@ -1781,6 +1791,15 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                             throw VmRuntimeError(e.what());
                         }
                         break;
+                    }
+                    if (a.type == ValueType::Instance && instanceOpHook()) {
+                        const char* dn = op == Op::Sub ? "__sub__" : op == Op::Mul ? "__mul__" : op == Op::Div ? "__truediv__" : "__mod__";
+                        Value r;
+                        syncTop();
+                        if (instanceOpHook()(dn, a, b, r)) {
+                            stack.push_back(std::move(r));
+                            break;
+                        }
                     }
                     throw VmRuntimeError("Operand aritmetika harus angka");
                 }
@@ -1857,7 +1876,13 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                     else if (op == Op::Gt) r = a.str() > b.str();
                     else r = a.str() >= b.str();
                 } else {
-                    throw VmRuntimeError("Operand perbandingan harus dua angka atau dua teks");
+                    Value ov;
+                    const char* dn = op == Op::Lt ? "__lt__" : op == Op::Lte ? "__le__" : op == Op::Gt ? "__gt__" : "__ge__";
+                    if (a.type == ValueType::Instance && instanceOpHook() && (syncTop(), instanceOpHook()(dn, a, b, ov))) {
+                        r = ov.truthy();
+                    } else {
+                        throw VmRuntimeError("Operand perbandingan harus dua angka atau dua teks");
+                    }
                 }
                 stack.push_back(Value::fromBool(r));
                 break;

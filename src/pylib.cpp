@@ -127,6 +127,15 @@ int cmpValues(const Value& a, const Value& b) {
         int c = a.str().compare(b.str());
         return c < 0 ? -1 : (c > 0 ? 1 : 0);
     }
+    if (a.type == ValueType::Instance && instanceOpHook()) {
+        Value r;
+        if (instanceOpHook()("__lt__", a, b, r)) {
+            if (r.truthy()) return -1;
+            Value r2;
+            if (instanceOpHook()("__lt__", b, a, r2) && r2.truthy()) return 1;
+            return 0;
+        }
+    }
     if (isSeq(a) && isSeq(b)) {
         std::vector<Value> x = elems(a), y = elems(b);
         for (size_t i = 0; i < x.size() && i < y.size(); i++) {
@@ -380,7 +389,7 @@ const std::vector<std::string>& allNames() {
         std::vector<std::string> n = {"abs", "min", "max", "sum", "round", "pow", "divmod", "chr", "ord", "hex", "bin",
             "oct", "bool", "list", "tuple", "set", "dict", "sorted", "reversed", "enumerate", "zip", "map", "filter",
             "any", "all", "isinstance", "callable", "int", "_floordiv", "_pow", "_percent", "_fmt", "_delitem",
-            "_assert", "frozenset", "_bitor", "_bitand", "_bitxor", "_bitnot", "_shl", "_shr", "_setdiff", "_concat", "_kwmerge"};
+            "_assert", "repr", "frozenset", "_bitor", "_bitand", "_bitxor", "_bitnot", "_shl", "_shr", "_setdiff", "_concat", "_kwmerge"};
         for (const char* m : kStrMethods) n.push_back(std::string("_m_s_") + m);
         for (const char* m : kListMethods) n.push_back(std::string("_m_a_") + m);
         for (const char* m : kDictMethods) n.push_back(std::string("_m_d_") + m);
@@ -848,6 +857,18 @@ Value call(const std::string& name, std::vector<Value>& a, const ValueMap* kw, c
         long cp = c & (0xFF >> (n + 1));
         for (int i = 1; i < n && static_cast<size_t>(i) < s.size(); i++) cp = (cp << 6) | (static_cast<unsigned char>(s[static_cast<size_t>(i)]) & 0x3F);
         return Value::fromNumber(static_cast<double>(cp));
+    }
+    if (name == "repr") {
+        needArgs(a, 1, 1, "repr");
+        if (a[0].type != ValueType::String) return Value::fromString(a[0].stringify());
+        std::string out = "'";
+        for (char c : a[0].str()) {
+            if (c == '\\' || c == '\'') { out += '\\'; out += c; }
+            else if (c == '\n') out += "\\n";
+            else if (c == '\t') out += "\\t";
+            else out += c;
+        }
+        return Value::fromString(out + "'");
     }
     if (name == "hex" || name == "bin" || name == "oct") {
         needArgs(a, 1, 1, name.c_str());

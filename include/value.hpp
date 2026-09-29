@@ -437,6 +437,18 @@ inline const char* Value::typeName() const {
     return "?";
 }
 
+// Operator overloading: `a <op> b` with an instance on the left calls its `__add__` / `__lt__` / ...
+// Returns false when the class has no such method. Installed by the interpreter.
+inline std::function<bool(const char*, const Value&, const Value&, Value&)>& instanceOpHook() {
+    static std::function<bool(const char*, const Value&, const Value&, Value&)> hook;
+    return hook;
+}
+
+inline std::function<bool(const Value&, std::string&)>& instanceStrHook() {
+    static std::function<bool(const Value&, std::string&)> hook;
+    return hook;
+}
+
 inline std::string Value::stringify() const {
     switch (type) {
         case ValueType::Null: return "kosong";
@@ -601,8 +613,12 @@ inline std::string Value::stringify() const {
             return "<plugin " + (native() ? native()->name : "") + ">";
         case ValueType::Class:
             return "<kelas " + (klass() ? klass()->name : "") + ">";
-        case ValueType::Instance:
+        case ValueType::Instance: {
+            // User classes with __str__ / __repr__ print through them (hook set by the interpreter).
+            std::string custom;
+            if (instanceStrHook() && instanceStrHook()(*this, custom)) return custom;
             return "<objek " + (instance() && instance()->classInfo ? instance()->classInfo->name : "") + ">";
+        }
         case ValueType::VmFn:
             return "<fn>";
         case ValueType::VmArray: {
