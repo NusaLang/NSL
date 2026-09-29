@@ -703,6 +703,7 @@ public:
         }
         fn->paramSlots = std::move(paramSlots);
         fn->arity = static_cast<int>(paramNames.size());
+        if (decl->minArgs >= 0) fn->minArity = decl->minArgs + (isMethod ? 1 : 0);
         if (!isMethod) {
             JitFuncResult jf = jitDisabled() ? JitFuncResult{} : tryCompileNativeFunc(decl);
             if (jf.ok) {
@@ -1324,10 +1325,12 @@ inline void placeParam(Value* base, std::vector<Cell*>& boxed, const ParamSlot& 
 // General (args-in-a-vector) call of a bytecode method with `self` as `ini`.
 Value callVmWithSelf(VmClosure* cl, const Value& self, std::vector<Value>& args, VmContext& ctx) {
     const VmFunction* fn = cl->function;
-    if (static_cast<int>(args.size()) + 1 != fn->arity) {
-        throw VmRuntimeError("metode '" + fn->name + "' butuh " + std::to_string(fn->arity - 1) + " argumen, dapat " +
-                              std::to_string(args.size()));
+    if (static_cast<int>(args.size()) + 1 < fn->requiredArity() || static_cast<int>(args.size()) + 1 > fn->arity) {
+        throw VmRuntimeError("metode '" + fn->name + "' butuh " + std::to_string(fn->requiredArity() - 1) +
+                              (fn->minArity >= 0 ? ".." + std::to_string(fn->arity - 1) : std::string()) +
+                              " argumen, dapat " + std::to_string(args.size()));
     }
+    while (static_cast<int>(args.size()) + 1 < fn->arity) args.push_back(Value::null());
     Value* base = ctx.arena->top;  // synced by the calling op
     initFrameLocals(base, fn, ctx);
     std::vector<Cell*> boxed(static_cast<size_t>(fn->numBoxedLocals));
@@ -1393,10 +1396,12 @@ Value callValue(const Value& callee, std::vector<Value>& args, VmContext& ctx) {
     }
     VmClosure* closure = callee.vmClosure();
     const VmFunction* fn = closure->function;
-    if (static_cast<int>(args.size()) != fn->arity) {
-        throw VmRuntimeError("fungsi '" + fn->name + "' butuh " + std::to_string(fn->arity) + " argumen, dapat " +
-                              std::to_string(args.size()));
+    if (static_cast<int>(args.size()) < fn->requiredArity() || static_cast<int>(args.size()) > fn->arity) {
+        throw VmRuntimeError("fungsi '" + fn->name + "' butuh " + std::to_string(fn->requiredArity()) +
+                              (fn->minArity >= 0 ? ".." + std::to_string(fn->arity) : std::string()) +
+                              " argumen, dapat " + std::to_string(args.size()));
     }
+    while (static_cast<int>(args.size()) < fn->arity) args.push_back(Value::null());
     if (fn->nativeCode) {
         bool allNumeric = true;
         for (auto& av : args) {
@@ -2664,7 +2669,7 @@ int vmRun(VmProgram& program, Interpreter* interpreter) {
 namespace {
 
 constexpr uint32_t kCacheMagic = 0x4E534256; // "NSBV"
-constexpr uint32_t kCacheVersion = 6;  // 6: + MakeClass, BinLK, BinLL, GetField, SetField, CallMethodK, Throw, handlers, lines, MakeStruct, MakeEnum, MakeSuper
+constexpr uint32_t kCacheVersion = 7;  // 6: + MakeClass, BinLK, BinLL, GetField, SetField, CallMethodK, Throw, handlers, lines, MakeStruct, MakeEnum, MakeSuper
 
 void writeU32(std::ofstream& f, uint32_t v) { f.write(reinterpret_cast<const char*>(&v), sizeof(v)); }
 void writeI32(std::ofstream& f, int32_t v) { f.write(reinterpret_cast<const char*>(&v), sizeof(v)); }
@@ -2690,6 +2695,7 @@ bool readString(std::ifstream& f, std::string& s) {
 void writeFunction(std::ofstream& f, const VmFunction& fn) {
     writeString(f, fn.name);
     writeI32(f, fn.arity);
+    writeI32(f, fn.minArity);
     writeI32(f, fn.numLocals);
     writeI32(f, fn.numBoxedLocals);
     writeU32(f, static_cast<uint32_t>(fn.paramSlots.size()));
@@ -2731,6 +2737,7 @@ void writeFunction(std::ofstream& f, const VmFunction& fn) {
 bool readFunction(std::ifstream& f, VmFunction& fn) {
     if (!readString(f, fn.name)) return false;
     if (!readI32(f, fn.arity)) return false;
+    if (!readI32(f, fn.minArity)) return false;
     if (!readI32(f, fn.numLocals)) return false;
     if (!readI32(f, fn.numBoxedLocals)) return false;
     uint32_t nParams = 0;

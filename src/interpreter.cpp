@@ -781,11 +781,13 @@ Value Interpreter::callValue(const Value& callee, std::vector<Value>& args, Span
 Value Interpreter::callFunction(const std::shared_ptr<Function>& fn, std::vector<Value>& args, Span callSite,
                                  const Value* boundThis, const std::shared_ptr<ClassInfo>& methodOwner) {
     const FnDeclStmt* decl = fn->decl;
-    if (args.size() != decl->params.size()) {
+    if (static_cast<int>(args.size()) < decl->requiredArgs() || args.size() > decl->params.size()) {
         throw RuntimeError(i18n::tr("Fungsi '", "Function '") + decl->name +
-                            i18n::tr("' butuh ", "' expects ") + std::to_string(decl->params.size()) +
+                            i18n::tr("' butuh ", "' expects ") + std::to_string(decl->requiredArgs()) +
+                            (decl->minArgs >= 0 ? ".." + std::to_string(decl->params.size()) : std::string()) +
                             i18n::tr(" argumen, dapat ", " arg(s), got ") + std::to_string(args.size()));
     }
+    while (args.size() < decl->params.size()) args.push_back(Value::null());
     if (callDepth_ >= kMaxCallDepth) {
         throw RuntimeError(i18n::tr("Rekursi kelewat dalam (lebih dari ", "Recursion too deep (over ") +
                             std::to_string(kMaxCallDepth) + i18n::tr(" panggilan bersarang)", " nested calls)"));

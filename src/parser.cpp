@@ -226,6 +226,7 @@ std::unique_ptr<FnDeclStmt> Parser::fnDeclBody(std::string name) {
     expect(TokenType::LParen, i18n::tr("'(' diharapkan setelah nama fungsi", "Expected '(' after function name"));
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
+    std::vector<ExprPtr> defaults;  // parallel to params; null = no default
     // Python-style explicit receiver: `def m(self, x)` -- the instance is
     // already bound as `ini`, so `self` is not a real parameter.
     if (check(TokenType::This)) {
@@ -237,11 +238,13 @@ std::unique_ptr<FnDeclStmt> Parser::fnDeclBody(std::string name) {
         paramTypes.push_back(match(TokenType::Colon)
                                   ? expect(TokenType::Ident, i18n::tr("Nama tipe diharapkan setelah ':'", "Expected type name after ':'")).text
                                   : "");
+        defaults.push_back(match(TokenType::Eq) ? expression() : nullptr);
         while (match(TokenType::Comma)) {
             params.push_back(expect(TokenType::Ident, i18n::tr("Nama parameter diharapkan", "Expected parameter name")).text);
             paramTypes.push_back(match(TokenType::Colon)
                                       ? expect(TokenType::Ident, i18n::tr("Nama tipe diharapkan setelah ':'", "Expected type name after ':'")).text
                                       : "");
+            defaults.push_back(match(TokenType::Eq) ? expression() : nullptr);
         }
     }
     expect(TokenType::RParen, i18n::tr("')' diharapkan setelah parameter", "Expected ')' after parameters"));
@@ -250,8 +253,33 @@ std::unique_ptr<FnDeclStmt> Parser::fnDeclBody(std::string name) {
         returnType = expect(TokenType::Ident, i18n::tr("Tipe kembalian diharapkan setelah ':'", "Expected return type after ':'")).text;
     }
     auto body = block();
-    return std::make_unique<FnDeclStmt>(std::move(name), std::move(params), std::move(body),
-                                         std::move(paramTypes), std::move(returnType));
+    int minArgs = static_cast<int>(params.size());
+    for (size_t i = 0; i < defaults.size(); i++) {
+        if (defaults[i]) { minArgs = static_cast<int>(i); break; }
+    }
+    for (size_t i = static_cast<size_t>(minArgs); i < defaults.size(); i++) {
+        if (!defaults[i]) throw ParseError(i18n::tr("Parameter tanpa nilai default nggak boleh setelah yang punya default",
+                                                    "Non-default parameter follows a default one"), peek());
+    }
+    // `p = default` becomes `if p == None: p = default` at the top of the body (a missing
+    // argument arrives as None).
+    for (size_t i = defaults.size(); i-- > static_cast<size_t>(minArgs);) {
+        Span sp = defaults[i]->span;
+        ExprPtr cond = mkBin("==", mkIdent(params[i], sp), LiteralExpr::makeNull(), sp);
+        ExprPtr assign = std::make_unique<AssignExpr>(params[i], std::move(defaults[i]));
+        assign->span = sp;
+        std::vector<StmtPtr> thenStmts;
+        StmtPtr st = std::make_unique<ExprStmtNode>(std::move(assign));
+        st->span = sp;
+        thenStmts.push_back(std::move(st));
+        StmtPtr ifs = std::make_unique<IfStmt>(std::move(cond), std::make_unique<BlockStmt>(std::move(thenStmts)), nullptr);
+        ifs->span = sp;
+        body->statements.insert(body->statements.begin(), std::move(ifs));
+    }
+    auto decl = std::make_unique<FnDeclStmt>(std::move(name), std::move(params), std::move(body),
+                                              std::move(paramTypes), std::move(returnType));
+    if (minArgs < static_cast<int>(decl->params.size())) decl->minArgs = minArgs;
+    return decl;
 }
 
 StmtPtr Parser::classDecl() {
@@ -809,15 +837,33 @@ ExprPtr Parser::primary() {
                 // Python: lambda a, b: <expr>
                 advance();
                 std::vector<std::string> params;
+                std::vector<ExprPtr> defaults;
                 while (!check(TokenType::Colon)) {
                     params.push_back(expect(TokenType::Ident, i18n::tr("Nama parameter diharapkan", "Expected parameter name")).text);
+                    defaults.push_back(match(TokenType::Eq) ? expression() : nullptr);
                     if (!match(TokenType::Comma)) break;
                 }
                 expect(TokenType::Colon, i18n::tr("':' diharapkan setelah parameter lambda", "Expected ':' after lambda parameters"));
                 ExprPtr body = assignment();
                 std::vector<StmtPtr> stmts;
+                int minArgs = static_cast<int>(params.size());
+                for (size_t i = 0; i < defaults.size(); i++) {
+                    if (defaults[i]) { minArgs = static_cast<int>(i); break; }
+                }
+                for (size_t i = defaults.size(); i-- > static_cast<size_t>(minArgs);) {
+                    if (!defaults[i]) throw ParseError(i18n::tr("Parameter tanpa nilai default nggak boleh setelah yang punya default",
+                                                                "Non-default parameter follows a default one"), peek());
+                    Span sp = defaults[i]->span;
+                    ExprPtr cond = mkBin("==", mkIdent(params[i], sp), LiteralExpr::makeNull(), sp);
+                    ExprPtr assign = std::make_unique<AssignExpr>(params[i], std::move(defaults[i]));
+                    assign->span = sp;
+                    std::vector<StmtPtr> thenStmts;
+                    thenStmts.push_back(std::make_unique<ExprStmtNode>(std::move(assign)));
+                    stmts.insert(stmts.begin(), std::make_unique<IfStmt>(std::move(cond), std::make_unique<BlockStmt>(std::move(thenStmts)), nullptr));
+                }
                 stmts.push_back(std::make_unique<ReturnStmt>(std::move(body)));
                 auto decl = std::make_unique<FnDeclStmt>("", std::move(params), std::make_unique<BlockStmt>(std::move(stmts)));
+                if (minArgs < static_cast<int>(decl->params.size())) decl->minArgs = minArgs;
                 ExprPtr e = std::make_unique<FnExprNode>(std::move(decl));
                 e->span = start;
                 return e;

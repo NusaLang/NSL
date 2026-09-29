@@ -166,6 +166,10 @@ struct FnDeclStmt : Stmt {
     std::vector<std::string> paramTypes;
     std::string returnType;
     std::unique_ptr<BlockStmt> body;
+    // Parameters from index `minArgs` on have defaults (filled in by a prologue the parser
+    // prepends to the body); -1 = all parameters are required.
+    int minArgs = -1;
+    int requiredArgs() const { return minArgs < 0 ? static_cast<int>(params.size()) : minArgs; }
     FnDeclStmt(std::string n, std::vector<std::string> p, std::unique_ptr<BlockStmt> b,
                std::vector<std::string> pt = {}, std::string rt = "")
         : Stmt(StmtKind::FnDecl), name(std::move(n)), params(std::move(p)),

@@ -344,10 +344,21 @@ func convertArg(raw json.RawMessage, t reflect.Type) (reflect.Value, error) {
 	// handle reference / callback marker
 	if strings.HasPrefix(trimmed, "{") {
 		var marker struct {
-			H  string `json:"$h"`
-			Cb string `json:"$cb"`
+			H     string  `json:"$h"`
+			Cb    string  `json:"$cb"`
+			Bytes *string `json:"$bytes"`
 		}
 		if err := json.Unmarshal(raw, &marker); err == nil {
+			if marker.Bytes != nil {
+				bv := reflect.ValueOf([]byte(*marker.Bytes))
+				if t.Kind() == reflect.Interface && !bv.Type().Implements(t) {
+					return reflect.Value{}, decodeError(t, "bytes_dari() tidak cocok dengan tipe ini")
+				}
+				if t.Kind() != reflect.Interface {
+					return bv.Convert(t), nil
+				}
+				return bv, nil
+			}
 			if marker.H != "" {
 				hv, ok := lookupHandle(marker.H)
 				if !ok {
@@ -393,6 +404,11 @@ func convertArg(raw json.RawMessage, t reflect.Type) (reflect.Value, error) {
 				return reflect.Value{}, err
 			}
 			return reflect.ValueOf(generic), nil
+		}
+		// Data given where an interface with methods is expected: use a registered concrete type
+		// that implements it and decodes this JSON (jwt.MapClaims for jwt.Claims, ...).
+		if v, ok := implementorFor(raw, t); ok {
+			return v, nil
 		}
 		return reflect.Value{}, decodeError(t, "butuh handle objek Go, bukan data JSON")
 	}
@@ -527,7 +543,10 @@ func makeCallback(t reflect.Type, queue string) reflect.Value {
 				return outs
 			}
 			var parts []json.RawMessage
-			if json.Unmarshal(reply.R, &parts) == nil {
+			if json.Unmarshal(reply.R, &parts) != nil || len(parts) != len(outs) {
+				parts = []json.RawMessage{reply.R} // a single value: the first result (the rest stay zero, e.g. a nil error)
+			}
+			{
 				for i := range outs {
 					if i < len(parts) {
 						if v, err := convertArg(parts[i], t.Out(i)); err == nil {
@@ -552,6 +571,44 @@ func deliverReply(id int64, payload string) {
 		default:
 		}
 	}
+}
+
+func implementorFor(raw json.RawMessage, iface reflect.Type) (reflect.Value, bool) {
+	names := make([]string, 0, len(typs))
+	for n := range typs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	isObj := strings.HasPrefix(strings.TrimSpace(string(raw)), "{")
+	try := func(ct reflect.Type) (reflect.Value, bool) {
+		p := reflect.New(ct)
+		if json.Unmarshal(raw, p.Interface()) != nil {
+			return reflect.Value{}, false
+		}
+		if ct.Implements(iface) {
+			return p.Elem(), true
+		}
+		if p.Type().Implements(iface) {
+			return p, true
+		}
+		return reflect.Value{}, false
+	}
+	// Maps first for JSON objects: they are the loosest fit.
+	for pass := 0; pass < 2; pass++ {
+		for _, n := range names {
+			ct := typs[n]
+			if ct.Kind() == reflect.Interface {
+				continue
+			}
+			if (pass == 0) != (isObj && ct.Kind() == reflect.Map) {
+				continue
+			}
+			if v, ok := try(ct); ok {
+				return v, true
+			}
+		}
+	}
+	return reflect.Value{}, false
 }
 
 // adaptCallbackToInterface lets a Nusantara function stand in for the few interfaces that std
@@ -653,7 +710,11 @@ func invoke(fv reflect.Value, rawArgs []json.RawMessage) (res callResult) {
 				filled[i] = string(e.Bytes())
 			}
 		}
-		vals = append(vals, filled)
+		if len(filled) == 1 && len(vals) == 0 {
+			vals = append(vals, filled[0]) // Unmarshal(data, ptr): the filled value itself
+		} else {
+			vals = append(vals, filled)
+		}
 	}
 	return callResult{Values: vals}
 }

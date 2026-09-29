@@ -130,6 +130,8 @@ struct VmProgram;
 struct VmFunction {
     std::string name;
     int arity = 0;
+    int minArity = -1;  // fewer arguments than `arity` are allowed down to this (defaults); -1 = arity
+    int requiredArity() const { return minArity < 0 ? arity : minArity; }
     int numLocals = 0;
     int numBoxedLocals = 0;
     std::vector<ParamSlot> paramSlots;

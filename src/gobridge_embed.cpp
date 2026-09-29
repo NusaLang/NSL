@@ -353,10 +353,21 @@ func convertArg(raw json.RawMessage, t reflect.Type) (reflect.Value, error) {
 	// handle reference / callback marker
 	if strings.HasPrefix(trimmed, "{") {
 		var marker struct {
-			H  string `json:"$h"`
-			Cb string `json:"$cb"`
+			H     string  `json:"$h"`
+			Cb    string  `json:"$cb"`
+			Bytes *string `json:"$bytes"`
 		}
 		if err := json.Unmarshal(raw, &marker); err == nil {
+			if marker.Bytes != nil {
+				bv := reflect.ValueOf([]byte(*marker.Bytes))
+				if t.Kind() == reflect.Interface && !bv.Type().Implements(t) {
+					return reflect.Value{}, decodeError(t, "bytes_dari() tidak cocok dengan tipe ini")
+				}
+				if t.Kind() != reflect.Interface {
+					return bv.Convert(t), nil
+				}
+				return bv, nil
+			}
 			if marker.H != "" {
 				hv, ok := lookupHandle(marker.H)
 				if !ok {
@@ -402,6 +413,11 @@ func convertArg(raw json.RawMessage, t reflect.Type) (reflect.Value, error) {
 				return reflect.Value{}, err
 			}
 			return reflect.ValueOf(generic), nil
+		}
+		// Data given where an interface with methods is expected: use a registered concrete type
+		// that implements it and decodes this JSON (jwt.MapClaims for jwt.Claims, ...).
+		if v, ok := implementorFor(raw, t); ok {
+			return v, nil
 		}
 		return reflect.Value{}, decodeError(t, "butuh handle objek Go, bukan data JSON")
 	}
@@ -520,7 +536,8 @@ func makeCallback(t reflect.Type, queue string) reflect.Value {
 		if err != nil {
 			return outs
 		}
-		q.push(string(b))
+		q.push(str)NSGO"
+         R"NSGO(ing(b))
 		select {
 		case r := <-ch:
 			var reply struct {
@@ -536,7 +553,10 @@ func makeCallback(t reflect.Type, queue string) reflect.Value {
 				return outs
 			}
 			var parts []json.RawMessage
-			if json.Unmarshal(reply.R, &parts) == nil {
+			if json.Unmarshal(reply.R, &parts) != nil || len(parts) != len(outs) {
+				parts = []json.RawMessage{reply.R} // a single value: the first result (the rest stay zero, e.g. a nil error)
+			}
+			{
 				for i := range outs {
 					if i < len(parts) {
 						if v, err := convertArg(parts[i], t.Out(i)); err == nil {
@@ -551,8 +571,7 @@ func makeCallback(t reflect.Type, queue string) reflect.Value {
 	})
 }
 
-fun)NSGO"
-         R"NSGO(c deliverReply(id int64, payload string) {
+func deliverReply(id int64, payload string) {
 	replyMu.Lock()
 	ch := replies[id]
 	replyMu.Unlock()
@@ -562,6 +581,44 @@ fun)NSGO"
 		default:
 		}
 	}
+}
+
+func implementorFor(raw json.RawMessage, iface reflect.Type) (reflect.Value, bool) {
+	names := make([]string, 0, len(typs))
+	for n := range typs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	isObj := strings.HasPrefix(strings.TrimSpace(string(raw)), "{")
+	try := func(ct reflect.Type) (reflect.Value, bool) {
+		p := reflect.New(ct)
+		if json.Unmarshal(raw, p.Interface()) != nil {
+			return reflect.Value{}, false
+		}
+		if ct.Implements(iface) {
+			return p.Elem(), true
+		}
+		if p.Type().Implements(iface) {
+			return p, true
+		}
+		return reflect.Value{}, false
+	}
+	// Maps first for JSON objects: they are the loosest fit.
+	for pass := 0; pass < 2; pass++ {
+		for _, n := range names {
+			ct := typs[n]
+			if ct.Kind() == reflect.Interface {
+				continue
+			}
+			if (pass == 0) != (isObj && ct.Kind() == reflect.Map) {
+				continue
+			}
+			if v, ok := try(ct); ok {
+				return v, true
+			}
+		}
+	}
+	return reflect.Value{}, false
 }
 
 // adaptCallbackToInterface lets a Nusantara function stand in for the few interfaces that std
@@ -663,7 +720,11 @@ func invoke(fv reflect.Value, rawArgs []json.RawMessage) (res callResult) {
 				filled[i] = string(e.Bytes())
 			}
 		}
-		vals = append(vals, filled)
+		if len(filled) == 1 && len(vals) == 0 {
+			vals = append(vals, filled[0]) // Unmarshal(data, ptr): the filled value itself
+		} else {
+			vals = append(vals, filled)
+		}
 	}
 	return callResult{Values: vals}
 }
@@ -779,7 +840,8 @@ func createValue(typeName, jsonInit string) string {
 	}
 	p := reflect.New(t)
 	if s := strings.TrimSpace(jsonInit); s != "" && s != "null" {
-		if err := json.Unmarshal([]byte(jsonInit), p.Interface()); err != nil {
+		if err := json.Unmarshal([]byte(jsonInit), p.Interface());)NSGO"
+         R"NSGO( err != nil {
 			return envelope(nil, decodeError(t, err.Error()))
 		}
 	}
@@ -855,8 +917,7 @@ func nsGoInvoke(op C.int, argc C.int, argv *C.NsValue) (ret C.NsValue) {
 		if err != nil {
 			return retString(envelope(nil, err))
 		}
-		return r)NSGO"
-         R"NSGO(etString(envelope(encode(f), nil))
+		return retString(envelope(encode(f), nil))
 	case 3:
 		f, err := fieldOf(argString(args, 0), argString(args, 1))
 		if err != nil {
@@ -1297,7 +1358,7 @@ func writeManifestAndIndex(module string, pkgs []*pkgInfo) {
 			}
 			args := "[" + strings.Join(params, ", ") + "]"
 			if f.Variadic {
-				params = append(params, "resto")
+				params = append(params, "resto = kosong")
 				args = "_gabung_arg(" + args + ", resto)"
 			}
 			fmt.Fprintf(&s, "%s[%q] = fungsi(%s) { hasil _panggil(\"\", %q, %s); };\n",
@@ -1371,6 +1432,13 @@ fungsi penunjuk(k) {
     hasil p;
 }
 
+// Teks sebagai []byte Go (mis. kunci HMAC: SignedString(bytes_dari("rahasia"))).
+fungsi bytes_dari(teks) {
+    buat p = peta_baru();
+    p["$bytes"] = teks;
+    hasil p;
+}
+
 fungsi _gabung_arg(dasar, resto) {
     jika resto != kosong {
         untuk (buat i = 0; i < panjang(resto); i = i + 1) { tambah(dasar, resto[i]); }
@@ -1393,11 +1461,11 @@ fungsi _konst(nama) { hasil _urai(_p.konst(nama)); }
 
 fungsi _metode(h, nama, jumlah) {
     // 100+n: metode variadik -- n argumen tetap lalu satu larik untuk sisanya.
-    jika jumlah == 100 { hasil fungsi(r) { hasil _panggil(h, nama, _gabung_arg([], r)); }; }
-    jika jumlah == 101 { hasil fungsi(a, r) { hasil _panggil(h, nama, _gabung_arg([a], r)); }; }
-    jika jumlah == 102 { hasil fungsi(a, b, r) { hasil _panggil(h, nama, _gabung_arg([a, b], r)); }; }
-    jika jumlah == 103 { hasil fungsi(a, b, c, r) { hasil _panggil(h, nama, _gabung_arg([a, b, c], r)); }; }
-    jika jumlah == 104 { hasil fungsi(a, b, c, d, r) { hasil _panggil(h, nama, _gabung_arg([a, b, c, d], r)); }; }
+    jika jumlah == 100 { hasil fungsi(r = kosong) { hasil _panggil(h, nama, _gabung_arg([], r)); }; }
+    jika jumlah == 101 { hasil fungsi(a, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a], r)); }; }
+    jika jumlah == 102 { hasil fungsi(a, b, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a, b], r)); }; }
+    jika jumlah == 103 { hasil fungsi(a, b, c, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a, b, c], r)); }; }
+    jika jumlah == 104 { hasil fungsi(a, b, c, d, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a, b, c, d], r)); }; }
     jika jumlah == 0 { hasil fungsi() { hasil _panggil(h, nama, []); }; }
     jika jumlah == 1 { hasil fungsi(a) { hasil _panggil(h, nama, [a]); }; }
     jika jumlah == 2 { hasil fungsi(a, b) { hasil _panggil(h, nama, [a, b]); }; }
@@ -1428,7 +1496,8 @@ fungsi _objek(v) {
     o["json"] = fungsi() { hasil _urai(_p.panggil(h, "$json", "[]")); };
     o["teks"] = fungsi() { hasil _urai(_p.panggil(h, "$str", "[]")); };
     o["field"] = fungsi(n) { hasil _urai(_p.field(h, n)); };
-    o["set"] = fungsi(n, x) { hasil _urai(_p.set_field(h, n, json_encode(_lepas(x)))); };
+    o[)NSGO"
+         R"NSGO("set"] = fungsi(n, x) { hasil _urai(_p.set_field(h, n, json_encode(_lepas(x)))); };
     o["bebas"] = fungsi() { _p.bebas(h); };
     hasil o;
 }
@@ -1436,8 +1505,7 @@ fungsi _objek(v) {
 fungsi _picu(f, a) {
     buat n = panjang(a);
     jika n == 0 { hasil f(); }
-    jik)NSGO"
-         R"NSGO(a n == 1 { hasil f(_bungkus(a[0])); }
+    jika n == 1 { hasil f(_bungkus(a[0])); }
     jika n == 2 { hasil f(_bungkus(a[0]), _bungkus(a[1])); }
     jika n == 3 { hasil f(_bungkus(a[0]), _bungkus(a[1]), _bungkus(a[2])); }
     jika n == 4 { hasil f(_bungkus(a[0]), _bungkus(a[1]), _bungkus(a[2]), _bungkus(a[3])); }

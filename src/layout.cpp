@@ -204,7 +204,7 @@ std::vector<Token> applyLayout(std::vector<Token> toks, const std::string& sourc
             if (t.type == TokenType::RParen) { d--; if (d == 0) break; continue; }
             if (d != 1) continue;
             if (t.type == TokenType::Comma) afterColon = false;
-            else if (t.type == TokenType::Colon) afterColon = true;
+            else if (t.type == TokenType::Colon || t.type == TokenType::Eq) afterColon = true;  // type or default
             else if (t.type == TokenType::Ident && !afterColon) ps.push_back(t.text);
         }
         return ps;

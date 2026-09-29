@@ -148,9 +148,11 @@ TypeChecker::StaticType TypeChecker::inferExpr(const Expr* expr) {
                 const std::string& calleeName = static_cast<const IdentifierExpr*>(n->callee.get())->name;
                 const StaticType* t = lookup(calleeName);
                 if (t && t->isFunction) {
-                    if (n->args.size() != t->paramTypes.size()) {
+                    size_t minArgs = t->requiredArgs >= 0 ? static_cast<size_t>(t->requiredArgs) : t->paramTypes.size();
+                    if (n->args.size() < minArgs || n->args.size() > t->paramTypes.size()) {
                         error(i18n::tr("fungsi '", "function '") + calleeName +
-                                  i18n::tr("' butuh ", "' needs ") + std::to_string(t->paramTypes.size()) +
+                                  i18n::tr("' butuh ", "' needs ") + std::to_string(minArgs) +
+                                  (minArgs != t->paramTypes.size() ? ".." + std::to_string(t->paramTypes.size()) : std::string()) +
                                   i18n::tr(" argumen, dipanggil dengan ", " arg(s), called with ") +
                                   std::to_string(n->args.size()),
                               n->span);
@@ -203,6 +205,7 @@ TypeChecker::StaticType TypeChecker::inferExpr(const Expr* expr) {
             sig.isFunction = true;
             sig.name = "fungsi";
             sig.paramTypes.resize(decl->paramTypes.size());
+            sig.requiredArgs = decl->minArgs;
             for (size_t i = 0; i < decl->paramTypes.size(); i++) {
                 if (decl->paramTypes[i].empty()) continue;
                 std::string canon;
@@ -264,6 +267,7 @@ void TypeChecker::checkStmt(const Stmt* stmt) {
             sig.isFunction = true;
             sig.name = "fungsi";
             sig.paramTypes.resize(n->paramTypes.size());
+            sig.requiredArgs = n->minArgs;
             for (size_t i = 0; i < n->paramTypes.size(); i++) {
                 if (n->paramTypes[i].empty()) continue;
                 std::string canon;

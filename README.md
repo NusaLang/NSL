@@ -135,7 +135,7 @@ Eksekusi lewat bytecode VM (`src/vm.cpp`, dengan JIT buat fungsi/loop aritmatika
 
 ## Sintaks gaya Python
 
-Blok berindentasi dengan `:`, `;` gak wajib (baris baru mengakhiri pernyataan, juga di gaya kurung kurawal), `def`/`class`/`if`/`elif`/`for x in ...`/`while`/`try`/`except`/`return`/`import`, `range()`, slice `a[1:3]`, `True/False/None`. Kata kunci Indonesia tetap jalan dan sengaja dipendekkan (`kem` = return, dst).
+Blok berindentasi dengan `:`, parameter default (`def f(a, b=1)`), literal peta `{"k": v}`, `;` gak wajib (baris baru mengakhiri pernyataan, juga di gaya kurung kurawal), `def`/`class`/`if`/`elif`/`for x in ...`/`while`/`try`/`except`/`return`/`import`, `range()`, slice `a[1:3]`, `True/False/None`. Kata kunci Indonesia tetap jalan dan sengaja dipendekkan (`kem` = return, dst).
 
 ## Modul Go
 
@@ -143,7 +143,16 @@ Blok berindentasi dengan `:`, `;` gak wajib (baris baru mengakhiri pernyataan, j
 nusa go add github.com/user/modul --pkg sub/paket --std strings --blank github.com/mattn/go-sqlite3
 ```
 
-Membangun `nusantara_modules/<nama>/` (plugin.so + index.ns) dari API Go lewat refleksi, lalu `import <nama>`. Go cuma dibutuhkan buat MEMBANGUN; hasilnya jalan di mesin tanpa Go. Metode variadik menerima satu larik buat argumen sisa (`db.Exec(sql, [a, b])`), `penunjuk("teks"|"angka"|"boolean"|"bytes"|"apa")` buat parameter keluaran seperti `rows.Scan`, objek Go dibebaskan otomatis begitu jadi sampah, dan callback (`AddEventHandler(fungsi)`) jalan di goroutine latar.
+Membangun `nusantara_modules/<nama>/` (plugin.so + index.ns) dari API Go lewat refleksi, lalu `import <nama>`. Go cuma dibutuhkan buat MEMBANGUN; hasilnya jalan di mesin tanpa Go. Kalau root modul bukan paket (mis. `mongo-driver`) atau kamu pakai `--semua`, semua sub-paket publiknya ikut.
+
+- Fungsi/metode variadik: argumen sisa satu larik dan boleh dilewat (`db.Exec(sql)`, `db.Exec(sql, [a, b])`).
+- `penunjuk("teks"|"angka"|"boolean"|"bytes"|"apa")` buat parameter keluaran (`rows.Scan`, `yaml.Unmarshal`); hasil isinya dikembalikan.
+- `bytes_dari("teks")` buat parameter `[]byte`/`any` yang butuh bytes (kunci HMAC).
+- Fungsi NSL bisa jadi callback Go: yang punya nilai balik atau menerima objek (`sort`, `strings.Map`, `http.HandlerFunc`, `gin`) ditunggu Go sampai selesai; handler event (`AddEventHandler`) jalan di goroutine latar. Untuk parameter `http.Handler`, `io.Writer`, `fmt.Stringer` cukup kirim fungsi.
+- Field objek Go (`r.URL.Path`, `resp.Body`) bisa diakses langsung, objek Go dibebaskan otomatis begitu jadi sampah.
+- Belum didukung: fungsi generik (`samber/lo`), channel Go, dan antarmuka kustom yang diimplementasikan dari NSL.
+
+Sudah dicoba bangun & pakai: uuid, cast, jwt, decimal, yaml, toml, zerolog, goquery, goldmark, go-qrcode, imaging, go-redis, mysql/pq driver, gorilla/mux, gin, resty, viper, mongo-driver, golang.org/x/{text,net}, go-sqlite3 (`database/sql`), hypermeow (WhatsApp).
 
 ## Tanpa pustaka luar
 
