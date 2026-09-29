@@ -130,7 +130,7 @@ plugins/    plugin native (muat_plugin, .so via dlopen)
 tests/      regression/golden test suite
 ```
 
-Eksekusi lewat bytecode VM dulu (`src/vm.cpp`, dengan JIT buat fungsi/loop aritmatika murni di `src/jit.cpp`), fallback ke tree-walking langsung di AST (`src/interpreter.cpp`) buat konstruksi yang belum didukung VM (kelas, struct, enum, try/catch, fungsi anonim).
+Eksekusi lewat bytecode VM dulu (`src/vm.cpp`, dengan JIT buat fungsi/loop aritmatika murni di `src/jit.cpp`), fallback ke tree-walking langsung di AST (`src/interpreter.cpp`) buat konstruksi yang belum didukung VM (struct, enum, try/catch, fungsi anonim, `induk`, dan kelas yang dideklarasi di dalam fungsi/blok). Kelas top-level jalan di VM.
 
 ## Lisensi
 
