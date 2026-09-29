@@ -851,6 +851,21 @@ struct VmContext {
     std::vector<std::unique_ptr<VmFunction>>* functions = nullptr;
     Environment* globals = nullptr;
     int depth = 0;
+
+    // Recycled buffers for call args / locals / operand stacks: a call would
+    // otherwise pay 3 malloc+free pairs. Pooled vectors are always empty, so
+    // the GC never needs to scan them.
+    std::vector<std::vector<Value>> pool;
+    std::vector<Value> acquire(size_t n) {
+        std::vector<Value> v;
+        if (!pool.empty()) { v = std::move(pool.back()); pool.pop_back(); }
+        v.resize(n);
+        return v;
+    }
+    void release(std::vector<Value>&& v) {
+        v.clear();
+        if (pool.size() < 64) pool.push_back(std::move(v));
+    }
 };
 
 Value runFrame(const VmFunction* fn, VmClosure* closure, std::vector<Value> locals,
@@ -913,7 +928,7 @@ Value callValue(const Value& callee, std::vector<Value>& args, VmContext& ctx) {
         }
         // Fall through: non-numeric args, or arity above 4 (can't happen).
     }
-    std::vector<Value> locals(static_cast<size_t>(fn->numLocals));
+    std::vector<Value> locals = ctx.acquire(static_cast<size_t>(fn->numLocals));
     std::vector<Cell*> boxedLocals(static_cast<size_t>(fn->numBoxedLocals));
     for (size_t i = 0; i < args.size(); i++) {
         const ParamSlot& ps = fn->paramSlots[i];
@@ -934,8 +949,15 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, std::vector<Value> loca
         ~DepthPop() { c.depth--; }
     } depthPop{ctx};
 
-    std::vector<Value> stack;
+    std::vector<Value> stack = ctx.acquire(0);
     stack.reserve(16);
+    // Declared before vmRootGuard, so it runs after the GC roots are popped.
+    struct BufRelease {
+        VmContext& c;
+        std::vector<Value>& a;
+        std::vector<Value>& b;
+        ~BufRelease() { c.release(std::move(a)); c.release(std::move(b)); }
+    } bufRelease{ctx, stack, locals};
     size_t ip = 0;
     const std::vector<uint8_t>& code = fn->code;
 
@@ -1178,11 +1200,12 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, std::vector<Value> loca
                         }
                     }
                 }
-                std::vector<Value> args(argCount);
+                std::vector<Value> args = ctx.acquire(argCount);
                 for (int i = argCount - 1; i >= 0; i--) args[static_cast<size_t>(i)] = pop();
                 Value callee = pop();
                 Value result = callValue(callee, args, ctx);
-                stack.push_back(result);
+                ctx.release(std::move(args));
+                stack.push_back(std::move(result));
                 break;
             }
             case Op::CallMethod: {
