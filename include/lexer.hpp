@@ -62,7 +62,7 @@ private:
     Token readSymbol(size_t start, int line, int col);
     // Unlike other read* methods, produces several tokens (a desugared
     // `+`/`ke_teks(...)` chain) -- see lexer.cpp.
-    std::vector<Token> readBacktickTemplate(size_t start, int line, int col);
+    std::vector<Token> readBacktickTemplate(size_t start, int line, int col, char close = '`', bool fstr = false);
     // One token, except for a template string. Shared by tokenize()'s
     // main loop and readBacktickTemplate()'s ${...} scan (nested
     // templates work via ordinary recursion).

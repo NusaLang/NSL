@@ -95,7 +95,8 @@ def luas(p: angka, l: angka) -> angka:
 - `for x in larik:`, `for i in range(a, b, step):`, slice `a[1:3]`, `a[-1]`, `a[::2]`, `lambda a, b=2: a * b`.
 - `import modul`, `from modul import nama as alias`, `import a.b` (paket dengan `__init__`/`index.ns`).
 - Metode bawaan gaya Python di teks/larik/peta (`"a,b".split(",")`, `xs.append(v)`, `m.keys()`, dst).
-- `and` / `or` / `not`, `in`, `is None`.
+- `and` / `or` / `not`, `in` / `not in` (teks, larik, peta), `is` / `is not` (kesamaan nilai, mis. `x is None`).
+- Ekspresi kondisional `a if cond else b` (bersarang boleh), f-string `f"halo {nama}, {x + 1}"` (`{{` `}}` untuk kurung literal; tanpa format spec), string kutip tunggal `'...'` dan triple-quote `"""..."""` multi-baris.
 
 ## OOP
 
@@ -267,7 +268,7 @@ make tls-test                     # vektor kripto TLS (dari implementasi indepen
 - `angka` selalu `double` (bilangan bulat tepat sampai 2^53).
 - Satu GIL: goroutine tidak paralel untuk CPU murni.
 - Parameter default: argumen yang tidak diisi bernilai `None`, jadi `None` eksplisit ikut memicu nilai default.
-- Belum ada: operator ternary `x if c else y`, f-string, `in` sebagai operator umum di semua konteks, `yield`/generator.
+- Belum ada: `yield`/generator, format spec di f-string (`{x:.2f}`), `with`, dekorator.
 - WASM/browser: plugin native tidak tersedia.
 
 ## Lisensi

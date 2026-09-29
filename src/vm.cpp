@@ -521,6 +521,17 @@ public:
             }
             case ExprKind::Binary: {
                 auto* n = static_cast<const BinaryExpr*>(e);
+                if (n->op == "?") {  // cond ? (then : else)
+                    auto* branches = static_cast<const BinaryExpr*>(n->right.get());
+                    compileExpr(n->left.get());
+                    int jElse = current->emitJump(Op::JumpIfFalse);
+                    compileExpr(branches->left.get());
+                    int jEnd = current->emitJump(Op::Jump);
+                    current->patchJump(jElse);
+                    compileExpr(branches->right.get());
+                    current->patchJump(jEnd);
+                    return;
+                }
                 if (n->op == "&&") {
                     compileExpr(n->left.get());
                     int j = current->emitJump(Op::JumpIfFalseKeep);

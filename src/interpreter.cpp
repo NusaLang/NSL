@@ -251,7 +251,7 @@ bool isRegularFile(const std::string& path) {
 const std::vector<std::string>& builtinNames() {
     static const std::vector<std::string> names = {
         "cetak", "panjang", "tambah", "hapus_akhir", "potong", "gabung", "pisah",
-        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "pegang", "_peta",
+        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "pegang", "_peta", "_in",
         "base64_encode", "base64_decode",
         "baca_file", "tulis_file", "file_ada",
         "tcp_konek", "tcp_kirim", "tcp_terima", "tcp_tutup",
@@ -589,6 +589,11 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
             auto* node = static_cast<const BinaryExpr*>(expr);
             const std::string& op = node->op;
 
+            if (op == "?") {  // cond ? (then : else)
+                Value cond = eval(node->left.get(), env);
+                auto* branches = static_cast<const BinaryExpr*>(node->right.get());
+                return eval(cond.truthy() ? branches->left.get() : branches->right.get(), env);
+            }
             if (op == "&&") {
                 Value left = eval(node->left.get(), env);
                 if (!left.truthy()) return left;
@@ -1139,6 +1144,36 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
             if (r.type == NS_STRING && r.str) free(r.str);
         };
         return Value::fromNative(nf);
+    }
+
+    if (name == "_in") {
+        // `a in b`: substring, array element, or map key.
+        need(2);
+        const Value& needle = args[0];
+        const Value& hay = args[1];
+        if (hay.type == ValueType::String) {
+            if (needle.type != ValueType::String) throw RuntimeError(i18n::tr("'in' pada teks butuh teks di kiri", "'in' on a string needs a string on the left"));
+            return Value::fromBool(hay.str().find(needle.str()) != std::string::npos);
+        }
+        if (hay.type == ValueType::Map) {
+            std::string key = needle.type == ValueType::String ? needle.str() : needle.stringify();
+            return Value::fromBool(hay.map()->find(key) != hay.map()->end());
+        }
+        if (hay.type == ValueType::Array) {
+            for (const Value& el : *hay.array()) if (valuesEqual(el, needle)) return Value::fromBool(true);
+            return Value::fromBool(false);
+        }
+        if (hay.type == ValueType::VmArray) {
+            auto* st = hay.vmArray();
+            if (st->numeric) {
+                if (needle.type != ValueType::Number) return Value::fromBool(false);
+                for (double d : st->nums) if (d == needle.number) return Value::fromBool(true);
+                return Value::fromBool(false);
+            }
+            for (const Value& el : *st->boxed) if (valuesEqual(el, needle)) return Value::fromBool(true);
+            return Value::fromBool(false);
+        }
+        throw RuntimeError(i18n::tr("'in' butuh teks, larik, atau peta di kanan", "'in' needs a string, array, or map on the right"));
     }
 
     if (name == "_peta") {

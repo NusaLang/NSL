@@ -595,6 +595,18 @@ ExprPtr Parser::assignment() {
     Span start = peek().span;
     ExprPtr expr = logicOr();
 
+    // Python conditional expression: `a if cond else b` (the `if` must be on the same line).
+    if (check(TokenType::If) && pos_ > 0 && peek().span.line == tokens_[pos_ - 1].span.line) {
+        advance();
+        ExprPtr cond = logicOr();
+        expect(TokenType::Else, i18n::tr("'else' diharapkan dalam ekspresi kondisional", "Expected 'else' in conditional expression"));
+        ExprPtr other = assignment();
+        ExprPtr branches = std::make_unique<BinaryExpr>(":", std::move(expr), std::move(other));
+        branches->span = start;
+        expr = std::make_unique<BinaryExpr>("?", std::move(cond), std::move(branches));
+        expr->span = start;
+    }
+
     if (match(TokenType::Eq)) {
         ExprPtr value = assignment();
         if (expr->kind == ExprKind::Identifier) {
@@ -681,11 +693,38 @@ ExprPtr Parser::equality() {
 ExprPtr Parser::comparison() {
     Span start = peek().span;
     ExprPtr expr = term();
-    while (check(TokenType::Lt) || check(TokenType::Lte) || check(TokenType::Gt) || check(TokenType::Gte)) {
-        std::string op = advance().text;
-        ExprPtr right = term();
-        expr = std::make_unique<BinaryExpr>(std::move(op), std::move(expr), std::move(right));
-        expr->span = start;
+    for (;;) {
+        if (check(TokenType::Lt) || check(TokenType::Lte) || check(TokenType::Gt) || check(TokenType::Gte)) {
+            std::string op = advance().text;
+            ExprPtr right = term();
+            expr = std::make_unique<BinaryExpr>(std::move(op), std::move(expr), std::move(right));
+            expr->span = start;
+        } else if (isWord(peek(), "in", "dalam")) {  // a in b
+            advance();
+            ExprPtr right = term();
+            std::vector<ExprPtr> args;
+            args.push_back(std::move(expr));
+            args.push_back(std::move(right));
+            expr = mkCall("_in", std::move(args), start);
+        } else if (check(TokenType::Not) && peek().text == "not" && isWord(peekAt(1), "in", "dalam")) {  // a not in b
+            advance();
+            advance();
+            ExprPtr right = term();
+            std::vector<ExprPtr> args;
+            args.push_back(std::move(expr));
+            args.push_back(std::move(right));
+            expr = std::make_unique<UnaryExpr>("!", mkCall("_in", std::move(args), start));
+            expr->span = start;
+        } else if (isWord(peek(), "is", "adalah")) {  // a is b / a is not b  (value equality)
+            advance();
+            bool negate = false;
+            if (check(TokenType::Not) && peek().text == "not") { advance(); negate = true; }
+            ExprPtr right = term();
+            expr = std::make_unique<BinaryExpr>(negate ? "!=" : "==", std::move(expr), std::move(right));
+            expr->span = start;
+        } else {
+            break;
+        }
     }
     return expr;
 }

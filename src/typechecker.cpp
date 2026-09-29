@@ -98,7 +98,7 @@ TypeChecker::StaticType TypeChecker::inferExpr(const Expr* expr) {
             StaticType r = inferExpr(n->right.get());
             const std::string& op = n->op;
 
-            if (op == "&&" || op == "||") return {};  // result mirrors whichever operand short-circuits to
+            if (op == "&&" || op == "||" || op == "?" || op == ":") return {};  // result mirrors whichever operand short-circuits to
             if (op == "==" || op == "!=") return {"boolean"};
             if (op == "<" || op == "<=" || op == ">" || op == ">=") {
                 checkComparable(l, r, op, n->span);

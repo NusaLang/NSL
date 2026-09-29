@@ -112,6 +112,9 @@ std::vector<Token> Lexer::nextTokens() {
 
     if (std::isdigit(static_cast<unsigned char>(ch))) {
         return {readNumber(start, line, col)};
+    } else if ((ch == 'f' || ch == 'F') && (peek(1) == '"' || peek(1) == '\'')) {
+        advance();  // the f prefix
+        return readBacktickTemplate(start, line, col, peek(), true);
     } else if (std::isalpha(static_cast<unsigned char>(ch)) || ch == '_') {
         Token id = readIdent(start, line, col);
         if (id.text == "elif" || id.text == "lj") {
@@ -121,7 +124,7 @@ std::vector<Token> Lexer::nextTokens() {
             return {els, iff};
         }
         return {id};
-    } else if (ch == '"') {
+    } else if (ch == '"' || ch == '\'') {
         return {readString(start, line, col)};
     } else if (ch == '`') {
         return readBacktickTemplate(start, line, col);
@@ -136,9 +139,11 @@ static void markDictBraces(std::vector<Token>& toks) {
     for (size_t i = 1; i < toks.size(); i++) {
         if (toks[i].type != TokenType::LBrace) continue;
         TokenType prev = toks[i - 1].type;
+        bool inWord = prev == TokenType::Ident && (toks[i - 1].text == "in" || toks[i - 1].text == "dalam");
         if (prev != TokenType::Eq && prev != TokenType::LParen && prev != TokenType::LBracket &&
             prev != TokenType::Comma && prev != TokenType::Colon && prev != TokenType::Return &&
-            prev != TokenType::LDict) continue;
+            prev != TokenType::LDict && prev != TokenType::Else && prev != TokenType::And &&
+            prev != TokenType::Or && !inWord) continue;
         // Find the matching `}` and whether a top-level ':' sits before it.
         int nest = 0;
         bool colon = false;
@@ -215,12 +220,15 @@ Token Lexer::readIdent(size_t start, int line, int col) {
 }
 
 Token Lexer::readString(size_t start, int line, int col) {
-    advance();  // opening quote
+    char quote = advance();  // opening quote: double or single
+    bool triple = peek() == quote && peek(1) == quote;  // triple-quoted strings may span lines
+    if (triple) { advance(); advance(); }
     std::string value;
-    while (peek() != '"') {
+    for (;;) {
         if (pos_ >= source_.size()) {
             throw LexError(i18n::tr("Teks nggak ditutup", "Unterminated string"), line, col);
         }
+        if (peek() == quote && (!triple || (peek(1) == quote && peek(2) == quote))) break;
         char ch = advance();
         if (ch == '\\') {
             char esc = advance();
@@ -229,15 +237,15 @@ Token Lexer::readString(size_t start, int line, int col) {
                 case 't': value += '\t'; break;
                 case 'r': value += '\r'; break;
                 case '0': value += '\0'; break;
-                case '"': value += '"'; break;
                 case '\\': value += '\\'; break;
-                default: value += esc; break;
+                default: value += esc; break;  // includes escaped quotes
             }
         } else {
             value += ch;
         }
     }
     advance();  // closing quote
+    if (triple) { advance(); advance(); }
     Token tok;
     tok.type = TokenType::String;
     tok.str = value;
@@ -250,8 +258,8 @@ Token Lexer::readString(size_t start, int line, int col) {
 // `${...}` keep normal spans. Brace depth for `${...}` tracks
 // LBrace/RBrace TOKENS, not raw chars, so nested strings/templates
 // work correctly.
-std::vector<Token> Lexer::readBacktickTemplate(size_t start, int line, int col) {
-    advance();  // opening backtick
+std::vector<Token> Lexer::readBacktickTemplate(size_t start, int line, int col, char close, bool fstr) {
+    advance();  // opening backtick / quote
 
     struct Part {
         bool isLiteral;
@@ -270,14 +278,16 @@ std::vector<Token> Lexer::readBacktickTemplate(size_t start, int line, int col) 
             throw LexError(i18n::tr("Template string nggak ditutup", "Unterminated template string"), line, col);
         }
         char ch = peek();
-        if (ch == '`') {
-            advance();  // closing backtick
+        if (ch == close) {
+            advance();  // closing backtick / quote
             break;
         }
-        if (ch == '$' && peek(1) == '{') {
+        if (fstr && ch == '{' && peek(1) == '{') { advance(); advance(); currentLiteral += '{'; continue; }
+        if (fstr && ch == '}' && peek(1) == '}') { advance(); advance(); currentLiteral += '}'; continue; }
+        if ((!fstr && ch == '$' && peek(1) == '{') || (fstr && ch == '{')) {
             flushLiteral();
             advance();
-            advance();  // consume "${"
+            if (!fstr) advance();  // consume "${" (f-strings: just "{")
             std::vector<Token> exprTokens;
             int braceDepth = 1;
             while (true) {
@@ -309,6 +319,7 @@ std::vector<Token> Lexer::readBacktickTemplate(size_t start, int line, int col) 
                 case 'r': currentLiteral += '\r'; break;
                 case '`': currentLiteral += '`'; break;
                 case '$': currentLiteral += '$'; break;
+                case '0': currentLiteral += '\0'; break;
                 case '\\': currentLiteral += '\\'; break;
                 default: currentLiteral += esc; break;
             }
