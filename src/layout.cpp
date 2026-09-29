@@ -295,7 +295,9 @@ std::vector<Token> applyLayout(std::vector<Token> toks, const std::string& sourc
                 prevEndLine = lines.lineOf(std::max(toks[i].span.end - 1, toks[i].span.start));
                 continue;  // swallowed: emits nothing, opens no logical line
             }
-            if (t.type == TokenType::Ident && i + 1 < toks.size() && toks[i + 1].type == TokenType::Eq) {
+            if (t.type == TokenType::Ident && i + 1 < toks.size() && toks[i + 1].type == TokenType::Eq && blocks.back().isClass) {
+                // class attribute `count = 0`: not a variable of the enclosing scope
+            } else if (t.type == TokenType::Ident && i + 1 < toks.size() && toks[i + 1].type == TokenType::Eq) {
                 Scope& sc = scopes.back();
                 if (!sc.names.count(t.text) && !sc.outer.count(t.text)) {
                     sc.names.insert(t.text);

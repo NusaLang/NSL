@@ -996,21 +996,24 @@ public:
                 if (!(topLevel && current == topCompiler)) {
                     throw VmCompileError("kelas di dalam fungsi/blok belum didukung mode --vm");
                 }
-                std::vector<std::pair<int, int>> methods;  // (name constant, function index)
+                struct MethodRef { int nameConst, funcIdx, kind; };
+                std::vector<MethodRef> methods;
                 for (auto& m : n->methods) {
                     VmFunction* mf = newFunction(n->name + "." + m->name);
-                    compileFunctionBody(m.get(), mf, /*isMethod=*/true);
+                    // static/class methods take no implicit receiver: they are plain functions
+                    compileFunctionBody(m.get(), mf, /*isMethod=*/m->kind != 1 && m->kind != 2);
                     if (!mf->upvalues.empty()) throw VmCompileError("metode yang nangkep variabel belum didukung mode --vm");
-                    methods.push_back({current->addConstant(Value::fromString(m->name)), indexOfFunction(mf)});
+                    methods.push_back({current->addConstant(Value::fromString(m->name)), indexOfFunction(mf), m->kind});
                 }
                 if (n->parentName.empty()) current->emitOp(Op::Null);
                 else compileIdentifierGet(n->parentName);
                 current->emitOp(Op::MakeClass);
                 current->emitU16(static_cast<uint16_t>(current->addConstant(Value::fromString(n->name))));
                 current->emitU16(static_cast<uint16_t>(methods.size()));
-                for (auto& [nameConst, funcIdx] : methods) {
-                    current->emitU16(static_cast<uint16_t>(nameConst));
-                    current->emitU16(static_cast<uint16_t>(funcIdx));
+                for (auto& mr : methods) {
+                    current->emitU16(static_cast<uint16_t>(mr.nameConst));
+                    current->emitU16(static_cast<uint16_t>(mr.funcIdx));
+                    current->emitByte(static_cast<uint8_t>(mr.kind));
                 }
                 current->emitOp(Op::DefineGlobal);
                 current->emitU16(static_cast<uint16_t>(current->addConstant(Value::fromString(n->name))));
@@ -1216,6 +1219,9 @@ std::shared_ptr<Function> vmLookupMethod(const std::shared_ptr<ClassInfo>& start
 // heap objects (arrays, maps, instances, closures, ...) by identity.
 inline bool vmValuesEqual(const Value& a, const Value& b) { return valuesDeepEqual(a, b); }
 
+std::atomic<Interpreter*> g_vmInterpreter{nullptr};
+inline Interpreter* vmActiveInterpreter() { return g_vmInterpreter.load(std::memory_order_acquire); }
+
 // Nearest bytecode-compiled method `name` along the class chain, or nullptr.
 // `astShadow` is set when the nearest definition is a tree-walker (AST)
 // method instead, so the caller knows to take the interpreter path.
@@ -1270,9 +1276,24 @@ Value vmGetIndex(const Value& target, const Value& idxv) {
         if (idxv.type != ValueType::String) throw VmRuntimeError("Kunci objek harus teks");
         auto fit = target.instance()->fields->find(idxv.str());
         if (fit != target.instance()->fields->end()) return fit->second;
+        if (target.instance()->classInfo->hasSpecial && methodKindOf(target.instance()->classInfo.get(), idxv.str()) == 3) {
+            std::vector<Value> none;
+            Value tcopy = target;
+            return vmCallMethod(tcopy, idxv.str(), none, vmActiveInterpreter());
+        }
         bool astShadow = false;
         if (const Value* vmv = findVmMethod(target.instance()->classInfo.get(), idxv.str(), astShadow)) return *vmv;
         auto method = vmLookupMethod(target.instance()->classInfo, idxv.str());
+        if (method) return Value::fromFunction(method);
+        if (Value* attr = classAttrOf(target.instance()->classInfo.get(), idxv.str())) return *attr;
+        return Value::null();
+    }
+    if (target.type == ValueType::Class && idxv.type == ValueType::String) {
+        // Class.member: class attributes, static and class methods
+        if (Value* attr = classAttrOf(target.klass(), idxv.str())) return *attr;
+        bool astShadow = false;
+        if (const Value* vmv = findVmMethod(target.klass(), idxv.str(), astShadow)) return *vmv;
+        auto method = vmLookupMethod(target.klassShared(), idxv.str());
         if (method) return Value::fromFunction(method);
         return Value::null();
     }
@@ -1482,6 +1503,14 @@ Value callMethodSlow(Value& target, const Value& idxv, std::vector<Value>& args,
         if (idxv.type != ValueType::String) throw VmRuntimeError("Kunci objek harus teks");
         bool astShadow = false;
         const Value* vmMethod = findVmMethod(target.instance()->classInfo.get(), idxv.str(), astShadow);
+        if (vmMethod && target.instance()->classInfo->hasSpecial) {
+            uint8_t kind = methodKindOf(target.instance()->classInfo.get(), idxv.str());
+            if (kind == 1) return callValue(*vmMethod, args, ctx);
+            if (kind == 2) {
+                args.insert(args.begin(), Value::fromClass(target.instance()->classInfo));
+                return callValue(*vmMethod, args, ctx);
+            }
+        }
         if (vmMethod) return callVmWithSelf(vmMethod->vmClosure(), target, args, ctx);
         std::shared_ptr<ClassInfo> owner;
         auto method = vmLookupMethod(target.instance()->classInfo, idxv.str(), &owner);
@@ -1496,6 +1525,14 @@ Value callMethodSlow(Value& target, const Value& idxv, std::vector<Value>& args,
         auto fit = target.instance()->fields->find(idxv.str());
         Value fieldVal = fit != target.instance()->fields->end() ? fit->second : Value::null();
         return callValue(fieldVal, args, ctx);
+    }
+    if (target.type == ValueType::Class && idxv.type == ValueType::String) {
+        bool astShadow = false;
+        uint8_t kind = methodKindOf(target.klass(), idxv.str());
+        if (const Value* vmMethod = findVmMethod(target.klass(), idxv.str(), astShadow)) {
+            if (kind == 2) args.insert(args.begin(), target);
+            return callValue(*vmMethod, args, ctx);
+        }
     }
     if (idxv.type == ValueType::String) {
         bool receiverLast = false;
@@ -1992,7 +2029,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 if (stack.len >= static_cast<size_t>(argCount) + 2) {
                     Value& targetSlot = stack[stack.len - argCount - 2];
                     Value& nameSlot = stack[stack.len - argCount - 1];
-                    if (targetSlot.type == ValueType::Instance && nameSlot.type == ValueType::String) {
+                    if (targetSlot.type == ValueType::Instance && nameSlot.type == ValueType::String && !targetSlot.instance()->classInfo->hasSpecial) {
                         bool astShadow = false;
                         const Value* mv = findVmMethod(targetSlot.instance()->classInfo.get(), nameSlot.str(), astShadow);
                         if (mv && mv->vmClosure()->function->arity == argCount + 1 && !mv->vmClosure()->function->variadic()) {
@@ -2045,7 +2082,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 // CallMethod, with the method found via a per-site class cache.
                 if (stack.len >= static_cast<size_t>(argCount) + 1) {
                     Value& targetSlot = stack[stack.len - argCount - 1];
-                    if (targetSlot.type == ValueType::Instance) {
+                    if (targetSlot.type == ValueType::Instance && !targetSlot.instance()->classInfo->hasSpecial) {
                         const ClassInfo* ci = targetSlot.instance()->classInfo.get();
                         if (fn->methodCache.size() != fn->constants.size()) fn->methodCache.assign(fn->constants.size(), {});
                         VmFunction::MethodCacheEntry& mc = fn->methodCache[nameIdx];
@@ -2140,11 +2177,17 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 for (uint16_t i = 0; i < count; i++) {
                     uint16_t mName = readU16();
                     uint16_t mFunc = readU16();
+                    uint8_t mKind = readByte();
                     auto vc = std::make_shared<VmClosure>();
                     vc->function = fn->program->functions[mFunc].get();
                     vc->owner = info.get();
                     info->vmMethods[fn->constants[mName].str()] = Value::fromVmClosure(vc);
+                    if (mKind) {
+                        info->methodKind[fn->constants[mName].str()] = mKind;
+                        info->hasSpecial = true;
+                    }
                 }
+                if (info->parent && info->parent->hasSpecial) info->hasSpecial = true;
                 stack.push_back(Value::fromClass(info));
                 break;
             }
@@ -2218,7 +2261,8 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
             }
             case Op::SetField: {
                 uint16_t nameIdx = readU16();
-                if (stack.len >= 2 && stack.data[stack.len - 2].type == ValueType::Instance) {
+                if (stack.len >= 2 && stack.data[stack.len - 2].type == ValueType::Instance &&
+                    !stack.data[stack.len - 2].instance()->classInfo->hasSpecial) {
                     Value& target = stack.data[stack.len - 2];
                     (*target.instance()->fields)[fn->constants[nameIdx].str()] = stack.back();
                     target = std::move(stack.back());  // result of the assignment is the value; drops the receiver
@@ -2326,9 +2370,21 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                     auto m = target.mapShared();
                     (*m)[idxv.str()] = val;
                     GC::instance().noteStore(target, val);
+                } else if (target.type == ValueType::Class) {
+                    if (idxv.type != ValueType::String) throw VmRuntimeError("Nama atribut kelas harus teks");
+                    target.klass()->classAttrs[idxv.str()] = val;
+                    GC::instance().noteStore(Value::null(), val);
                 } else if (target.type == ValueType::Instance) {
                     if (idxv.type != ValueType::String) throw VmRuntimeError("Kunci objek harus teks");
-                    (*target.instance()->fields)[idxv.str()] = val;
+                    if (target.instance()->classInfo->hasSpecial &&
+                        methodKindOf(target.instance()->classInfo.get(), "__set_" + idxv.str()) == 4) {
+                        std::vector<Value> setArgs{val};
+                        syncTop();
+                        Value tcopy = target;
+                        callMethodSlow(tcopy, Value::fromString("__set_" + idxv.str()), setArgs, ctx);
+                    } else {
+                        (*target.instance()->fields)[idxv.str()] = val;
+                    }
                 } else {
                     throw VmRuntimeError("Tipe '" + std::string(target.typeName()) + "' nggak bisa di-index pakai []");
                 }
@@ -2654,6 +2710,7 @@ static void vmBind(VmProgram& program, Environment* globals) {
 
 bool vmIsActive() { return g_activeVm.load(std::memory_order_acquire) != nullptr; }
 
+
 bool vmVarargInfo(const Value& fn, int& restIdx, int& kwIdx) {
     if (fn.type != ValueType::VmFn || !fn.vmClosure()) return false;
     restIdx = fn.vmClosure()->function->restIndex;
@@ -2724,6 +2781,7 @@ int vmRun(VmProgram& program, Interpreter* interpreter) {
     ctx.interpreter = interpreter;
     if (interpreter) ctx.globals = interpreter->getGlobalsEnv();
     vmBind(program, ctx.globals);
+    g_vmInterpreter.store(interpreter, std::memory_order_release);
     static ActiveVmState activeState;
     activeState.functions = ctx.functions;
     activeState.nativeLoops = ctx.nativeLoops;
@@ -2755,7 +2813,7 @@ int vmRun(VmProgram& program, Interpreter* interpreter) {
 namespace {
 
 constexpr uint32_t kCacheMagic = 0x4E534256; // "NSBV"
-constexpr uint32_t kCacheVersion = 9;  // 6: + MakeClass, BinLK, BinLL, GetField, SetField, CallMethodK, Throw, handlers, lines, MakeStruct, MakeEnum, MakeSuper
+constexpr uint32_t kCacheVersion = 10;  // 6: + MakeClass, BinLK, BinLL, GetField, SetField, CallMethodK, Throw, handlers, lines, MakeStruct, MakeEnum, MakeSuper
 
 void writeU32(std::ofstream& f, uint32_t v) { f.write(reinterpret_cast<const char*>(&v), sizeof(v)); }
 void writeI32(std::ofstream& f, int32_t v) { f.write(reinterpret_cast<const char*>(&v), sizeof(v)); }

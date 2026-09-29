@@ -91,6 +91,8 @@ std::shared_ptr<Function> lookupMethod(const std::shared_ptr<ClassInfo>& start, 
     return nullptr;
 }
 
+Interpreter* g_propInterpreter = nullptr;  // set by the constructor: property getters/setters run through it
+
 Value indexGet(const Value& target, const Value& idx) {
     if (target.type == ValueType::VmArray) {
         if (idx.type != ValueType::Number) throw RuntimeError(i18n::tr("Index larik harus angka", "Array index must be a number"));
@@ -131,7 +133,20 @@ Value indexGet(const Value& target, const Value& idx) {
         if (idx.type != ValueType::String) throw RuntimeError(i18n::tr("Kunci objek harus teks", "Object key must be a string"));
         auto fit = target.instance()->fields->find(idx.str());
         if (fit != target.instance()->fields->end()) return fit->second;
-        auto method = lookupMethod(target.instance()->classInfo, idx.str());
+        std::shared_ptr<ClassInfo> owner;
+        auto method = lookupMethod(target.instance()->classInfo, idx.str(), &owner);
+        if (method && target.instance()->classInfo->hasSpecial && methodKindOf(target.instance()->classInfo.get(), idx.str()) == 3 && g_propInterpreter) {
+            std::vector<Value> none;
+            Value self = target;
+            return g_propInterpreter->callFunction(method, none, Span{}, &self, owner);
+        }
+        if (method) return Value::fromFunction(method);
+        if (Value* attr = classAttrOf(target.instance()->classInfo.get(), idx.str())) return *attr;
+        return Value::null();
+    }
+    if (target.type == ValueType::Class && idx.type == ValueType::String) {
+        if (Value* attr = classAttrOf(target.klass(), idx.str())) return *attr;
+        auto method = lookupMethod(target.klassShared(), idx.str());
         if (method) return Value::fromFunction(method);
         return Value::null();
     }
@@ -180,8 +195,23 @@ void indexSet(Value& target, const Value& idx, const Value& value) {
         (*target.map())[idx.type == ValueType::String ? idx.str() : idx.stringify()] = value;
         return;
     }
+    if (target.type == ValueType::Class) {
+        if (idx.type != ValueType::String) throw RuntimeError(i18n::tr("Nama atribut kelas harus teks", "Class attribute name must be a string"));
+        target.klass()->classAttrs[idx.str()] = value;
+        return;
+    }
     if (target.type == ValueType::Instance) {
         if (idx.type != ValueType::String) throw RuntimeError(i18n::tr("Kunci objek harus teks", "Object key must be a string"));
+        if (target.instance()->classInfo->hasSpecial && g_propInterpreter &&
+            methodKindOf(target.instance()->classInfo.get(), "__set_" + idx.str()) == 4) {
+            std::shared_ptr<ClassInfo> owner;
+            auto setter = lookupMethod(target.instance()->classInfo, "__set_" + idx.str(), &owner);
+            if (setter) {
+                std::vector<Value> a{value};
+                g_propInterpreter->callFunction(setter, a, Span{}, &target, owner);
+                return;
+            }
+        }
         (*target.instance()->fields)[idx.str()] = value;
         return;
     }
@@ -311,6 +341,7 @@ void Interpreter::registerCurrentThread() { GC::instance().registerThread(&exprD
 void Interpreter::unregisterCurrentThread() { GC::instance().unregisterThread(&exprDepth_); }
 
 Interpreter::Interpreter(std::string entryDir) {
+    g_propInterpreter = this;
     globals_ = GC::instance().alloc(nullptr);
     GC::instance().setGlobals(globals_);
     for (const std::string& name : builtinNames()) {
@@ -386,7 +417,12 @@ void Interpreter::execInner(const Stmt* stmt, Environment* env) {
                 fn->decl = m.get();
                 fn->closure = env;
                 info->methods[m->name] = fn;
+                if (m->kind) {
+                    info->methodKind[m->name] = static_cast<uint8_t>(m->kind);
+                    info->hasSpecial = true;
+                }
             }
+            if (info->parent && info->parent->hasSpecial) info->hasSpecial = true;
             env->define(node->name, Value::fromClass(info));
             return;
         }
@@ -691,6 +727,14 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
                     for (const auto& a : node->args) args.push_back(eval(a.get(), env));
                     std::shared_ptr<ClassInfo> owner;
                     auto method = lookupMethod(target.instance()->classInfo, keyVal.str(), &owner);
+                    if (method && target.instance()->classInfo->hasSpecial) {
+                        uint8_t kind = methodKindOf(target.instance()->classInfo.get(), keyVal.str());
+                        if (kind == 1) return callFunction(method, args, node->span, nullptr, owner);
+                        if (kind == 2) {
+                            args.insert(args.begin(), Value::fromClass(target.instance()->classInfo));
+                            return callFunction(method, args, node->span, nullptr, owner);
+                        }
+                    }
                     if (method) return callFunction(method, args, node->span, &target, owner);
                     auto fit = target.instance()->fields->find(keyVal.str());
                     Value fieldVal = fit != target.instance()->fields->end() ? fit->second : Value::null();
@@ -698,6 +742,18 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
                 }
                 Value keyVal = eval(idxNode->index.get(), env);
                 ValueRootGuard keyGuard(keyVal);
+                if (target.type == ValueType::Class && keyVal.type == ValueType::String) {
+                    std::vector<Value> args;
+                    ValueVectorRootGuard argsGuard(args);
+                    for (const auto& a : node->args) args.push_back(eval(a.get(), env));
+                    std::shared_ptr<ClassInfo> owner;
+                    auto method = lookupMethod(target.klassShared(), keyVal.str(), &owner);
+                    if (method) {
+                        if (methodKindOf(target.klass(), keyVal.str()) == 2) args.insert(args.begin(), target);
+                        return callFunction(method, args, node->span, nullptr, owner);
+                    }
+                    throw RuntimeError(i18n::tr("kelas tidak punya metode statis '", "class has no static method '") + keyVal.str() + "'");
+                }
                 if (keyVal.type == ValueType::String) {
                     bool receiverLast = false;
                     if (const char* builtin = builtinMethodName(target, keyVal.str(), &receiverLast)) {

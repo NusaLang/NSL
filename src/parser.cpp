@@ -87,6 +87,9 @@ StmtPtr Parser::statement() {
         advance();
         result = fromImportStmt();
     }
+    else if (check(TokenType::At)) {
+        result = decoratedStmt();
+    }
     else if (isWord(peek(), "with", "dengan") && peekAt(1).type != TokenType::Eq && peekAt(1).type != TokenType::LParen) {
         advance();
         result = withStmt();
@@ -348,19 +351,65 @@ StmtPtr Parser::classDecl() {
     }
     expect(TokenType::LBrace, i18n::tr("'{' diharapkan setelah nama kelas", "Expected '{' after class name"));
     std::vector<std::unique_ptr<FnDeclStmt>> methods;
+    std::vector<std::pair<std::string, ExprPtr>> classAttrs;
     while (!check(TokenType::RBrace) && !atEnd()) {
         if (isWord(peek(), "pass") && peekAt(1).type == TokenType::Semi) {  // empty class body
             advance();
             advance();
             continue;
         }
+        // class attribute: `name = value` (or `name: type = value`)
+        if (check(TokenType::Ident) && (peekAt(1).type == TokenType::Eq || peekAt(1).type == TokenType::Colon)) {
+            std::string attr = advance().text;
+            if (match(TokenType::Colon)) expect(TokenType::Ident, i18n::tr("Nama tipe diharapkan setelah ':'", "Expected type name after ':'"));
+            if (match(TokenType::Eq)) {
+                classAttrs.emplace_back(attr, expression());
+            } else {
+                classAttrs.emplace_back(attr, LiteralExpr::makeNull());
+            }
+            expectEnd(i18n::tr("';' diharapkan setelah atribut kelas", "Expected end of line after class attribute"));
+            continue;
+        }
+        int memberKind = 0;
+        std::string setterFor;
+        while (match(TokenType::At)) {
+            ExprPtr dec = expression();
+            expectEnd(i18n::tr("';' diharapkan setelah dekorator", "Expected end of line after decorator"));
+            if (dec->kind == ExprKind::Identifier) {
+                const std::string& dn = static_cast<IdentifierExpr*>(dec.get())->name;
+                if (dn == "staticmethod") memberKind = 1;
+                else if (dn == "classmethod") memberKind = 2;
+                else if (dn == "property") memberKind = 3;
+                else throw ParseError(std::string(i18n::tr("Dekorator metode kelas belum didukung (yang ada: staticmethod, classmethod, property, x.setter): ",
+                                                           "This class method decorator is not supported (available: staticmethod, classmethod, property, x.setter): ")) + dn, peek());
+            } else if (dec->kind == ExprKind::Index &&
+                       static_cast<IndexExpr*>(dec.get())->index->kind == ExprKind::Literal &&
+                       static_cast<LiteralExpr*>(static_cast<IndexExpr*>(dec.get())->index.get())->str == "setter" &&
+                       static_cast<IndexExpr*>(dec.get())->target->kind == ExprKind::Identifier) {
+                memberKind = 4;
+                setterFor = static_cast<IdentifierExpr*>(static_cast<IndexExpr*>(dec.get())->target.get())->name;
+            } else {
+                throw ParseError(i18n::tr("Dekorator metode kelas nggak dikenal", "Unknown class method decorator"), peek());
+            }
+        }
         expect(TokenType::Fn, i18n::tr("Cuma deklarasi fungsi yang boleh di dalam kelas", "Only function declarations are allowed inside a class"));
         StmtPtr m = fnDecl();
         auto* fnNode = static_cast<FnDeclStmt*>(m.get());
         if (fnNode->name == "__init__") fnNode->name = "konstruktor";
+        fnNode->kind = memberKind;
+        if (memberKind == 4) fnNode->name = "__set_" + setterFor;
         methods.push_back(std::unique_ptr<FnDeclStmt>(static_cast<FnDeclStmt*>(m.release())));
     }
     expect(TokenType::RBrace, i18n::tr("'}' diharapkan setelah isi kelas", "Expected '}' after class body"));
+    // Class attributes are assigned right after the class exists: Name.attr = value
+    for (auto& [attr, value] : classAttrs) {
+        Span sp = value->span;
+        ExprPtr set = std::make_unique<IndexAssignExpr>(mkIdent(name, sp), LiteralExpr::makeString(attr), std::move(value));
+        set->span = sp;
+        StmtPtr st = std::make_unique<ExprStmtNode>(std::move(set));
+        st->span = sp;
+        pendingStmts_.push_back(std::move(st));
+    }
     return std::make_unique<ClassDeclStmt>(std::move(name), std::move(parentName), std::move(methods));
 }
 
@@ -425,6 +474,40 @@ StmtPtr Parser::tryStmt() {
         finallyBlock = block();
     }
     return std::make_unique<TryStmt>(std::move(tryBlock), std::move(catchVar), std::move(catchBlock), std::move(finallyBlock));
+}
+
+// `@dec` lines before a def or class: `f = dec(f)` right after the definition.
+StmtPtr Parser::decoratedStmt() {
+    Span sp = peek().span;
+    std::vector<ExprPtr> decorators;
+    while (match(TokenType::At)) {
+        decorators.push_back(expression());
+        expectEnd(i18n::tr("';' diharapkan setelah dekorator", "Expected end of line after decorator"));
+    }
+    StmtPtr def;
+    std::string name;
+    if (match(TokenType::Fn)) {
+        def = fnDecl();
+        name = static_cast<FnDeclStmt*>(def.get())->name;
+    } else if (match(TokenType::Class)) {
+        def = classDecl();
+        name = static_cast<ClassDeclStmt*>(def.get())->name;
+    } else {
+        throw ParseError(i18n::tr("Dekorator harus diikuti def atau class", "A decorator must be followed by def or class"), peek());
+    }
+    ExprPtr value = mkIdent(name, sp);
+    for (size_t i = decorators.size(); i-- > 0;) {
+        std::vector<ExprPtr> a;
+        a.push_back(std::move(value));
+        value = std::make_unique<CallExpr>(std::move(decorators[i]), std::move(a));
+        value->span = sp;
+    }
+    ExprPtr assign = std::make_unique<AssignExpr>(name, std::move(value));
+    assign->span = sp;
+    StmtPtr st = std::make_unique<ExprStmtNode>(std::move(assign));
+    st->span = sp;
+    pendingStmts_.push_back(std::move(st));
+    return def;
 }
 
 // `with open(p) as f: body` -> { let f = open(p); try { body } catch (e) { throw e } finally { _close(f) } }

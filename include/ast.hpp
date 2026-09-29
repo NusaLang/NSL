@@ -169,6 +169,7 @@ struct FnDeclStmt : Stmt {
     // Parameters from index `minArgs` on have defaults (filled in by a prologue the parser
     // prepends to the body); -1 = all parameters are required.
     int minArgs = -1;
+    int kind = 0;        // class members: 1 @staticmethod, 2 @classmethod, 3 @property getter, 4 @x.setter
     int restIndex = -1;  // index of the `*args` parameter in `params`, or -1
     int kwIndex = -1;    // index of the `**kwargs` parameter, or -1
     bool variadic() const { return restIndex >= 0 || kwIndex >= 0; }

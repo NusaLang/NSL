@@ -361,9 +361,31 @@ struct ClassInfo {
     // the tree-walker only has `methods`.
     std::unordered_map<std::string, Value> vmMethods;
     std::vector<std::string> structFields;
+    // @staticmethod (1), @classmethod (2), @property (3); a setter is stored as "__set_<name>" (4).
+    std::unordered_map<std::string, uint8_t> methodKind;
+    ValueMap classAttrs;  // `Class.count = 0` style attributes, shared by instances
+    bool hasSpecial = false;  // this class or an ancestor has a non-plain method: skip the fast call paths
     bool isStruct = false;
     bool isEnum = false;
 };
+
+// Kind of member `name` along the class chain (0 = ordinary method).
+inline uint8_t methodKindOf(const ClassInfo* c, const std::string& name) {
+    for (; c; c = c->parent.get()) {
+        auto it = c->methodKind.find(name);
+        if (it != c->methodKind.end()) return it->second;
+    }
+    return 0;
+}
+
+// Class attribute `name` along the class chain, or nullptr.
+inline Value* classAttrOf(ClassInfo* c, const std::string& name) {
+    for (; c; c = c->parent.get()) {
+        auto it = c->classAttrs.find(name);
+        if (it != c->classAttrs.end()) return &it->second;
+    }
+    return nullptr;
+}
 
 struct InstanceState {
     std::shared_ptr<ClassInfo> classInfo;

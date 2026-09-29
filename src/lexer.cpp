@@ -528,7 +528,7 @@ Token Lexer::readSymbol(size_t start, int line, int col) {
         {'}', TokenType::RBrace},{',', TokenType::Comma}, {';', TokenType::Semi},
         {'[', TokenType::LBracket},{']', TokenType::RBracket},{'.', TokenType::Dot},
         {':', TokenType::Colon},  {'&', TokenType::Amp},   {'|', TokenType::Pipe},
-        {'^', TokenType::Caret}, {'~', TokenType::Tilde},
+        {'^', TokenType::Caret}, {'~', TokenType::Tilde}, {'@', TokenType::At},
     };
     char one = peek();
     unsigned char uc = static_cast<unsigned char>(one);

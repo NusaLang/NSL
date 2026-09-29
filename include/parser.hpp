@@ -69,6 +69,7 @@ private:
     std::unique_ptr<BlockStmt> block();
     StmtPtr exprStmt();
     StmtPtr withStmt();
+    StmtPtr decoratedStmt();
     StmtPtr tupleAssign(ExprPtr first, Span sp);
     // Shared by `untuk (init; ...` and plain statements: a let or bare
     // expression, without consuming the trailing ';' itself.
