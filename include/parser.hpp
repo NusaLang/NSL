@@ -51,6 +51,10 @@ private:
     std::vector<std::string> forTargets();
     ExprPtr comprehension(ExprPtr element, ExprPtr valueOrNull, bool isDict, Span sp);
     ExprPtr power();
+    ExprPtr bitOrExpr();
+    ExprPtr bitXorExpr();
+    ExprPtr bitAndExpr();
+    ExprPtr shiftExpr();
     StmtPtr importStmt();           // `import a.b [as c]`
     StmtPtr fromImportStmt();       // `from a.b import x [as y], ...`
     bool isWord(const Token& t, const char* a, const char* b = nullptr) const;

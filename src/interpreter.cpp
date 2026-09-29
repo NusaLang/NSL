@@ -650,6 +650,11 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
             if (left.type != ValueType::Number || right.type != ValueType::Number) {
                 Value rep;
                 if (op == "*" && repeatValue(left, right, rep)) return rep;
+                if (op == "-" && (left.type == ValueType::Array || left.type == ValueType::VmArray) &&
+                    (right.type == ValueType::Array || right.type == ValueType::VmArray)) {
+                    std::vector<Value> pa{left, right};
+                    return pylib::call("_setdiff", pa, nullptr, nullptr);
+                }
                 if (op == "%" && left.type == ValueType::String) {
                     std::vector<Value> pa{left, right};
                     try {

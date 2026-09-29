@@ -138,6 +138,30 @@ ExprPtr mkBin(const std::string& op, ExprPtr l, ExprPtr r, Span sp) {
     e->span = sp;
     return e;
 }
+// Copy of an expression made only of names, literals and x[k] / x.k chains; nullptr for anything else.
+ExprPtr cloneSimple(const Expr* e) {
+    if (e->kind == ExprKind::Identifier) return mkIdent(static_cast<const IdentifierExpr*>(e)->name, e->span);
+    if (e->kind == ExprKind::Literal) {
+        auto* l = static_cast<const LiteralExpr*>(e);
+        ExprPtr c;
+        if (l->litKind == LiteralExpr::Kind::Number) c = LiteralExpr::makeNumber(l->number);
+        else if (l->litKind == LiteralExpr::Kind::String) c = LiteralExpr::makeString(l->str);
+        else if (l->litKind == LiteralExpr::Kind::Bool) c = LiteralExpr::makeBool(l->boolean);
+        else c = LiteralExpr::makeNull();
+        c->span = e->span;
+        return c;
+    }
+    if (e->kind == ExprKind::Index) {
+        auto* ix = static_cast<const IndexExpr*>(e);
+        ExprPtr t = cloneSimple(ix->target.get());
+        ExprPtr i = t ? cloneSimple(ix->index.get()) : nullptr;
+        if (!t || !i) return nullptr;
+        ExprPtr r = std::make_unique<IndexExpr>(std::move(t), std::move(i));
+        r->span = e->span;
+        return r;
+    }
+    return nullptr;
+}
 ExprPtr mkNum(double n, Span sp) {
     ExprPtr e = LiteralExpr::makeNumber(n);
     e->span = sp;
@@ -355,6 +379,14 @@ StmtPtr Parser::enumDecl() {
 
 StmtPtr Parser::tryStmt() {
     auto tryBlock = block();
+    if (check(TokenType::Finally)) {
+        // try/finally with no except: run the cleanup, then let the error keep going
+        advance();
+        auto fin = block();
+        std::vector<StmtPtr> rethrow;
+        rethrow.push_back(std::make_unique<ThrowStmt>(mkIdent("__fe", peek().span)));
+        return std::make_unique<TryStmt>(std::move(tryBlock), "__fe", std::make_unique<BlockStmt>(std::move(rethrow)), std::move(fin));
+    }
     expect(TokenType::Catch, i18n::tr("'tangkap' diharapkan setelah blok 'coba'", "Expected 'tangkap' after 'coba' block"));
     std::string catchVar = "_e";
     if (match(TokenType::LParen)) {
@@ -759,27 +791,70 @@ ExprPtr Parser::assignment() {
         case TokenType::MinusEq: compoundOp = "-"; break;
         case TokenType::StarEq: compoundOp = "*"; break;
         case TokenType::SlashEq: compoundOp = "/"; break;
+        case TokenType::CompoundAssign: compoundOp = peek().text; break;
         default: break;
     }
     if (!compoundOp.empty()) {
-        if (expr->kind != ExprKind::Identifier) {
-            throw ParseError(
-                i18n::tr("Compound assignment (+=/-=/*=//=) baru didukung buat variabel biasa, "
-                          "belum buat larik/peta -- tulis 'x[i] = x[i] + ...' manual",
-                          "Compound assignment (+=/-=/*=//=) is only supported for plain "
-                          "variables, not array/map yet -- write 'x[i] = x[i] + ...' manually"),
-                peek());
+        if (expr->kind != ExprKind::Identifier && expr->kind != ExprKind::Index) {
+            throw ParseError(i18n::tr("Target penugasan nggak valid", "Invalid assignment target"), peek());
         }
         advance();
-        std::string name = static_cast<IdentifierExpr*>(expr.get())->name;
         ExprPtr rhs = assignment();
-        ExprPtr current = std::make_unique<IdentifierExpr>(name);
-        current->span = start;
-        ExprPtr combined = std::make_unique<BinaryExpr>(compoundOp, std::move(current), std::move(rhs));
-        combined->span = start;
-        ExprPtr result = std::make_unique<AssignExpr>(std::move(name), std::move(combined));
-        result->span = start;
-        return result;
+        auto combine = [&](ExprPtr l, ExprPtr r) -> ExprPtr {
+            ExprPtr e;
+            if (compoundOp == "//") { std::vector<ExprPtr> a; a.push_back(std::move(l)); a.push_back(std::move(r)); e = mkCall("_floordiv", std::move(a), start); }
+            else if (compoundOp == "**") { std::vector<ExprPtr> a; a.push_back(std::move(l)); a.push_back(std::move(r)); e = mkCall("_pow", std::move(a), start); }
+            else if (compoundOp == "|" || compoundOp == "&" || compoundOp == "^" || compoundOp == "<<" || compoundOp == ">>") {
+                const char* fn = compoundOp == "|" ? "_bitor" : compoundOp == "&" ? "_bitand" : compoundOp == "^" ? "_bitxor" : compoundOp == "<<" ? "_shl" : "_shr";
+                std::vector<ExprPtr> a; a.push_back(std::move(l)); a.push_back(std::move(r)); e = mkCall(fn, std::move(a), start);
+            } else {
+                e = std::make_unique<BinaryExpr>(compoundOp, std::move(l), std::move(r));
+            }
+            e->span = start;
+            return e;
+        };
+        if (expr->kind == ExprKind::Identifier) {
+            std::string name = static_cast<IdentifierExpr*>(expr.get())->name;
+            ExprPtr current = mkIdent(name, start);
+            ExprPtr result = std::make_unique<AssignExpr>(std::move(name), combine(std::move(current), std::move(rhs)));
+            result->span = start;
+            return result;
+        }
+        // x[i] op= v   /   obj.field op= v
+        auto* idx = static_cast<IndexExpr*>(expr.get());
+        ExprPtr t2 = cloneSimple(idx->target.get());
+        ExprPtr i2 = cloneSimple(idx->index.get());
+        if (t2 && i2) {
+            ExprPtr read = std::make_unique<IndexExpr>(std::move(t2), std::move(i2));
+            read->span = start;
+            ExprPtr result = std::make_unique<IndexAssignExpr>(std::move(idx->target), std::move(idx->index), combine(std::move(read), std::move(rhs)));
+            result->span = start;
+            return result;
+        }
+        // Complex target: evaluate its parts once inside a function called on the spot.
+        std::string tn = "__ct" + std::to_string(hiddenCounter_), in = "__ci" + std::to_string(hiddenCounter_);
+        hiddenCounter_++;
+        std::vector<StmtPtr> body;
+        body.push_back(mkLet(tn, std::move(idx->target), start));
+        body.push_back(mkLet(in, std::move(idx->index), start));
+        ExprPtr read = std::make_unique<IndexExpr>(mkIdent(tn, start), mkIdent(in, start));
+        read->span = start;
+        ExprPtr write = std::make_unique<IndexAssignExpr>(mkIdent(tn, start), mkIdent(in, start), combine(std::move(read), std::move(rhs)));
+        write->span = start;
+        StmtPtr ws = std::make_unique<ExprStmtNode>(std::move(write));
+        ws->span = start;
+        body.push_back(std::move(ws));
+        ExprPtr rd2 = std::make_unique<IndexExpr>(mkIdent(tn, start), mkIdent(in, start));
+        rd2->span = start;
+        StmtPtr ret = std::make_unique<ReturnStmt>(std::move(rd2));
+        ret->span = start;
+        body.push_back(std::move(ret));
+        auto decl = std::make_unique<FnDeclStmt>("", std::vector<std::string>{}, std::make_unique<BlockStmt>(std::move(body)));
+        ExprPtr fn = std::make_unique<FnExprNode>(std::move(decl));
+        fn->span = start;
+        ExprPtr call = std::make_unique<CallExpr>(std::move(fn), std::vector<ExprPtr>{});
+        call->span = start;
+        return call;
     }
 
     return expr;
@@ -819,9 +894,58 @@ ExprPtr Parser::equality() {
     return expr;
 }
 
-ExprPtr Parser::comparison() {
+// | ^ & << >> (Python precedence, looser than + -, tighter than comparisons).
+static ExprPtr bitCall(const char* fn, ExprPtr l, ExprPtr r, Span sp) {
+    std::vector<ExprPtr> a;
+    a.push_back(std::move(l));
+    a.push_back(std::move(r));
+    return mkCall(fn, std::move(a), sp);
+}
+
+ExprPtr Parser::shiftExpr() {
     Span start = peek().span;
     ExprPtr expr = term();
+    while (check(TokenType::Shl) || check(TokenType::Shr)) {
+        bool left = check(TokenType::Shl);
+        advance();
+        expr = bitCall(left ? "_shl" : "_shr", std::move(expr), term(), start);
+    }
+    return expr;
+}
+
+ExprPtr Parser::bitAndExpr() {
+    Span start = peek().span;
+    ExprPtr expr = shiftExpr();
+    while (check(TokenType::Amp)) {
+        advance();
+        expr = bitCall("_bitand", std::move(expr), shiftExpr(), start);
+    }
+    return expr;
+}
+
+ExprPtr Parser::bitXorExpr() {
+    Span start = peek().span;
+    ExprPtr expr = bitAndExpr();
+    while (check(TokenType::Caret)) {
+        advance();
+        expr = bitCall("_bitxor", std::move(expr), bitAndExpr(), start);
+    }
+    return expr;
+}
+
+ExprPtr Parser::bitOrExpr() {
+    Span start = peek().span;
+    ExprPtr expr = bitXorExpr();
+    while (check(TokenType::Pipe)) {
+        advance();
+        expr = bitCall("_bitor", std::move(expr), bitXorExpr(), start);
+    }
+    return expr;
+}
+
+ExprPtr Parser::comparison() {
+    Span start = peek().span;
+    ExprPtr expr = bitOrExpr();
     for (;;) {
         auto relational = [&]() {
             return check(TokenType::Lt) || check(TokenType::Lte) || check(TokenType::Gt) || check(TokenType::Gte);
@@ -833,7 +957,7 @@ ExprPtr Parser::comparison() {
             operands.push_back(std::move(expr));
             while (relational()) {
                 ops.push_back(advance().text);
-                operands.push_back(term());
+                operands.push_back(bitOrExpr());
             }
             if (ops.size() == 1) {
                 expr = std::make_unique<BinaryExpr>(std::move(ops[0]), std::move(operands[0]), std::move(operands[1]));
@@ -901,7 +1025,7 @@ ExprPtr Parser::comparison() {
             expr = std::move(chain);
         } else if (isWord(peek(), "in", "dalam")) {  // a in b
             advance();
-            ExprPtr right = term();
+            ExprPtr right = bitOrExpr();
             std::vector<ExprPtr> args;
             args.push_back(std::move(expr));
             args.push_back(std::move(right));
@@ -909,7 +1033,7 @@ ExprPtr Parser::comparison() {
         } else if (check(TokenType::Not) && peek().text == "not" && isWord(peekAt(1), "in", "dalam")) {  // a not in b
             advance();
             advance();
-            ExprPtr right = term();
+            ExprPtr right = bitOrExpr();
             std::vector<ExprPtr> args;
             args.push_back(std::move(expr));
             args.push_back(std::move(right));
@@ -919,7 +1043,7 @@ ExprPtr Parser::comparison() {
             advance();
             bool negate = false;
             if (check(TokenType::Not) && peek().text == "not") { advance(); negate = true; }
-            ExprPtr right = term();
+            ExprPtr right = bitOrExpr();
             expr = std::make_unique<BinaryExpr>(negate ? "!=" : "==", std::move(expr), std::move(right));
             expr->span = start;
         } else {
@@ -970,6 +1094,12 @@ ExprPtr Parser::unary() {
         ExprPtr result = std::make_unique<UnaryExpr>("!", std::move(operand));
         result->span = start;
         return result;
+    }
+    if (check(TokenType::Tilde)) {
+        advance();
+        std::vector<ExprPtr> a;
+        a.push_back(unary());
+        return mkCall("_bitnot", std::move(a), start);
     }
     if (check(TokenType::Minus) || check(TokenType::Not)) {
         std::string op = advance().text;
@@ -1225,6 +1355,26 @@ ExprPtr Parser::primary() {
             std::vector<ExprPtr> flat;  // k1, v1, k2, v2, ...
             while (!check(TokenType::RDict)) {
                 flat.push_back(expression());
+                if (flat.size() == 1 && !check(TokenType::Colon)) {
+                    // {a, b, c} / {x for ...}: a set (a list without duplicates)
+                    std::vector<ExprPtr> items;
+                    ExprPtr setArg;
+                    if (check(TokenType::For)) {
+                        setArg = comprehension(std::move(flat[0]), nullptr, false, start);
+                    } else {
+                        items.push_back(std::move(flat[0]));
+                        while (match(TokenType::Comma)) {
+                            if (check(TokenType::RDict)) break;
+                            items.push_back(expression());
+                        }
+                        setArg = std::make_unique<ArrayLitExpr>(std::move(items));
+                        setArg->span = start;
+                    }
+                    expect(TokenType::RDict, i18n::tr("'}' diharapkan setelah himpunan", "Expected '}' after set"));
+                    std::vector<ExprPtr> a;
+                    a.push_back(std::move(setArg));
+                    return mkCall("set", std::move(a), start);
+                }
                 expect(TokenType::Colon, i18n::tr("':' diharapkan setelah kunci peta", "Expected ':' after dict key"));
                 flat.push_back(expression());
                 if (flat.size() == 2 && check(TokenType::For)) {

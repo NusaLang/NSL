@@ -1683,6 +1683,12 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                         stack.push_back(std::move(rep));
                         break;
                     }
+                    if (op == Op::Sub && (a.type == ValueType::Array || a.type == ValueType::VmArray) &&
+                        (b.type == ValueType::Array || b.type == ValueType::VmArray)) {  // set difference
+                        std::vector<Value> pa{a, b};
+                        stack.push_back(pylib::call("_setdiff", pa, nullptr, nullptr));
+                        break;
+                    }
                     if (op == Op::Mod && a.type == ValueType::String) {  // "fmt %d" % args
                         std::vector<Value> pa{a, b};
                         try {

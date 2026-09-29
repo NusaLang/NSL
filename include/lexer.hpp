@@ -11,7 +11,8 @@ enum class TokenType {
     Struct, EnumKw, Try, Catch, Finally, Throw,
     Plus, Minus, Star, Slash, Percent, StarStar, SlashSlash,
     Eq, EqEq, Neq, Lt, Lte, Gt, Gte,
-    PlusEq, MinusEq, StarEq, SlashEq,
+    PlusEq, MinusEq, StarEq, SlashEq, CompoundAssign,
+    Pipe, Amp, Caret, Tilde, Shl, Shr,
     And, Or, Not,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Semi, Dot, Colon,
     LDict, RDict,  // `{k: v}` literal braces (told apart from block braces by markDictBraces)

@@ -324,7 +324,8 @@ const char* const kStrMethods[] = {"strip", "lstrip", "rstrip", "replace", "star
     "isupper", "islower", "splitlines", "zfill", "center", "ljust", "rjust", "partition", "swapcase", "casefold",
     "removeprefix", "removesuffix", "upper", "lower", "join", "encode"};
 const char* const kListMethods[] = {"extend", "insert", "remove", "pop", "index", "count", "sort", "reverse", "copy",
-    "clear", "append"};
+    "clear", "append", "add", "discard", "union", "intersection", "difference", "symmetric_difference", "issubset",
+    "issuperset", "isdisjoint", "update"};
 const char* const kDictMethods[] = {"values", "items", "get", "setdefault", "pop", "update", "clear", "copy", "keys"};
 
 const std::vector<std::string>& allNames() {
@@ -332,7 +333,7 @@ const std::vector<std::string>& allNames() {
         std::vector<std::string> n = {"abs", "min", "max", "sum", "round", "pow", "divmod", "chr", "ord", "hex", "bin",
             "oct", "bool", "list", "tuple", "set", "dict", "sorted", "reversed", "enumerate", "zip", "map", "filter",
             "any", "all", "isinstance", "callable", "int", "_floordiv", "_pow", "_percent", "_fmt", "_delitem",
-            "_assert", "frozenset"};
+            "_assert", "frozenset", "_bitor", "_bitand", "_bitxor", "_bitnot", "_shl", "_shr", "_setdiff"};
         for (const char* m : kStrMethods) n.push_back(std::string("_m_s_") + m);
         for (const char* m : kListMethods) n.push_back(std::string("_m_a_") + m);
         for (const char* m : kDictMethods) n.push_back(std::string("_m_d_") + m);
@@ -600,8 +601,49 @@ Value strMethod(const std::string& m, std::vector<Value>& a, const ValueMap* kw)
     fail("metode teks tidak dikenal: " + m);
 }
 
+bool containsValue(const std::vector<Value>& v, const Value& x) {
+    for (const Value& e : v) if (valuesDeepEqual(e, x)) return true;
+    return false;
+}
+
+std::vector<Value> uniqueValues(const std::vector<Value>& v) {
+    std::vector<Value> out;
+    for (const Value& e : v) if (!containsValue(out, e)) out.push_back(e);
+    return out;
+}
+
+Value setOp(const std::string& op, const std::vector<Value>& x, const std::vector<Value>& y) {
+    std::vector<Value> out;
+    if (op == "union") { out = uniqueValues(x); for (const Value& e : y) if (!containsValue(out, e)) out.push_back(e); }
+    else if (op == "intersection") { for (const Value& e : uniqueValues(x)) if (containsValue(y, e)) out.push_back(e); }
+    else if (op == "difference") { for (const Value& e : uniqueValues(x)) if (!containsValue(y, e)) out.push_back(e); }
+    else {  // symmetric_difference
+        for (const Value& e : uniqueValues(x)) if (!containsValue(y, e)) out.push_back(e);
+        for (const Value& e : uniqueValues(y)) if (!containsValue(x, e)) out.push_back(e);
+    }
+    return mkArr(std::move(out));
+}
+
 Value listMethod(const std::string& m, std::vector<Value>& a, const ValueMap* kw, const CallFn& callFn) {
     const Value& self = a[0];
+    if (m == "add") { auto& v = mutElems(self); if (!containsValue(v, a.at(1))) v.push_back(a[1]); return Value::null(); }
+    if (m == "discard") { auto& v = mutElems(self); for (size_t i = 0; i < v.size(); i++) if (valuesDeepEqual(v[i], a.at(1))) { v.erase(v.begin() + static_cast<long>(i)); break; } return Value::null(); }
+    if (m == "union" || m == "intersection" || m == "difference" || m == "symmetric_difference") {
+        std::vector<Value> other = a.size() > 1 ? elems(a[1]) : std::vector<Value>{};
+        return setOp(m, elems(self), other);
+    }
+    if (m == "issubset" || m == "issuperset" || m == "isdisjoint") {
+        std::vector<Value> x = elems(self), y = elems(a.at(1));
+        if (m == "issubset") { for (const Value& e : x) if (!containsValue(y, e)) return Value::fromBool(false); return Value::fromBool(true); }
+        if (m == "issuperset") { for (const Value& e : y) if (!containsValue(x, e)) return Value::fromBool(false); return Value::fromBool(true); }
+        for (const Value& e : x) if (containsValue(y, e)) return Value::fromBool(false);
+        return Value::fromBool(true);
+    }
+    if (m == "update") {
+        auto& v = mutElems(self);
+        for (const Value& e : elems(a.at(1))) if (!containsValue(v, e)) v.push_back(e);
+        return Value::null();
+    }
     if (m == "append") { mutElems(self).push_back(a.at(1)); return Value::null(); }
     if (m == "extend") { std::vector<Value> add = elems(a.at(1), "extend"); auto& v = mutElems(self); v.insert(v.end(), add.begin(), add.end()); return Value::null(); }
     if (m == "insert") {
@@ -852,6 +894,25 @@ Value call(const std::string& name, std::vector<Value>& a, const ValueMap* kw, c
         ValueType t = a[0].type;
         return Value::fromBool(t == ValueType::Fn || t == ValueType::VmFn || t == ValueType::Builtin || t == ValueType::Native || t == ValueType::Class);
     }
+    if (name == "_bitor" || name == "_bitand" || name == "_bitxor") {
+        needArgs(a, 2, 2, "operator bit");
+        if (isSeq(a[0]) && isSeq(a[1])) return setOp(name == "_bitor" ? "union" : name == "_bitand" ? "intersection" : "symmetric_difference", elems(a[0]), elems(a[1]));
+        if (a[0].type == ValueType::Map && a[1].type == ValueType::Map && name == "_bitor") {
+            auto m = std::make_shared<ValueMap>(*a[0].map());
+            for (const auto& e : *a[1].map()) (*m)[e.first] = e.second;
+            return Value::fromMap(m);
+        }
+        long long x = static_cast<long long>(numArg(a[0], "bit")), y = static_cast<long long>(numArg(a[1], "bit"));
+        return Value::fromNumber(static_cast<double>(name == "_bitor" ? (x | y) : name == "_bitand" ? (x & y) : (x ^ y)));
+    }
+    if (name == "_shl" || name == "_shr") {
+        needArgs(a, 2, 2, "shift");
+        long long x = static_cast<long long>(numArg(a[0], "shift")), n = static_cast<long long>(numArg(a[1], "shift"));
+        if (n < 0 || n > 62) fail("jumlah geser tidak valid");
+        return Value::fromNumber(static_cast<double>(name == "_shl" ? (x << n) : (x >> n)));
+    }
+    if (name == "_bitnot") { needArgs(a, 1, 1, "~"); return Value::fromNumber(static_cast<double>(~static_cast<long long>(numArg(a[0], "~")))); }
+    if (name == "_setdiff") { needArgs(a, 2, 2, "-"); return setOp("difference", elems(a[0]), elems(a[1])); }
     if (name == "_percent") { needArgs(a, 2, 2, "%"); return Value::fromString(percentFormat(a[0].str(), a[1])); }
     if (name == "_fmt") { needArgs(a, 2, 2, "format"); return Value::fromString(formatValue(a[0], a[1].str())); }
     if (name == "_delitem") {

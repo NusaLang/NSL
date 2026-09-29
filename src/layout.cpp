@@ -24,7 +24,9 @@ bool continuesLine(const Token& t) {
         case TokenType::Plus: case TokenType::Minus: case TokenType::Star: case TokenType::Slash:
         case TokenType::Percent: case TokenType::Eq: case TokenType::EqEq: case TokenType::Neq:
         case TokenType::Lt: case TokenType::Lte: case TokenType::Gt: case TokenType::Gte:
-        case TokenType::PlusEq: case TokenType::MinusEq: case TokenType::StarEq: case TokenType::SlashEq:
+        case TokenType::PlusEq: case TokenType::MinusEq: case TokenType::StarEq: case TokenType::SlashEq: case TokenType::CompoundAssign:
+        case TokenType::Pipe: case TokenType::Amp: case TokenType::Caret: case TokenType::Shl: case TokenType::Shr:
+        case TokenType::StarStar: case TokenType::SlashSlash:
         case TokenType::And: case TokenType::Or: case TokenType::Comma: case TokenType::Dot:
         case TokenType::LParen: case TokenType::LBracket:
             return true;
