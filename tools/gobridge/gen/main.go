@@ -57,14 +57,26 @@ func main() {
 	module := flag.String("module", "", "module path (documentation only)")
 	var blanks multiFlag
 	flag.Var(&blanks, "blank", "package to import for side effects only (e.g. a database driver); repeatable")
+	all := flag.Bool("all", false, "include every public sub-package of each given module path")
 	flag.Parse()
 	if flag.NArg() == 0 {
 		fatal("tidak ada paket yang diberikan")
 	}
+	paths := expandPaths(flag.Args(), *all)
+	explicit := map[string]bool{}
+	for _, a := range flag.Args() {
+		explicit[a] = true
+	}
 
 	var pkgs []*pkgInfo
 	usedNS := map[string]int{}
-	for i, path := range flag.Args() {
+	for i, path := range paths {
+		if !explicit[path] {
+			// expanded sub-package: skip the ones that are not importable libraries
+			if !softListable(path) {
+				continue
+			}
+		}
 		lp := goList(path)
 		info := &pkgInfo{Alias: "pk" + strconv.Itoa(i+1), ImportPath: lp.ImportPath}
 		ns := sanitize(lp.Name)
@@ -107,6 +119,63 @@ func sanitize(s string) string {
 		s = "p_" + s
 	}
 	return s
+}
+
+// expandPaths adds a module's public sub-packages: always with -all, and also when the module
+// root itself has no package (mongo-driver, golang.org/x/...), where the root alone is unusable.
+func expandPaths(args []string, all bool) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(p string) {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	for _, a := range args {
+		rootOK := exec.Command("go", "list", a).Run() == nil
+		if rootOK {
+			add(a)
+		}
+		if all || !rootOK {
+			raw, err := exec.Command("go", "list", a+"/...").Output()
+			if err != nil {
+				if !rootOK {
+					fatal("paket %s tidak ditemukan (go list %s/... gagal)", a, a)
+				}
+				continue
+			}
+			n := 0
+			for _, line := range strings.Fields(string(raw)) {
+				if publicPackage(line) && n < 60 {
+					add(line)
+					n++
+				}
+			}
+		}
+	}
+	return out
+}
+
+func softListable(path string) bool {
+	out, err := exec.Command("go", "list", "-json", path).Output()
+	if err != nil {
+		return false
+	}
+	var lp listedPkg
+	if json.Unmarshal(out, &lp) != nil {
+		return false
+	}
+	return lp.Name != "main" && len(lp.GoFiles)+len(lp.CgoFiles) > 0
+}
+
+func publicPackage(p string) bool {
+	for _, bad := range []string{"/internal", "/cmd/", "/examples", "/example", "/testdata", "/test/", "/vendor/", "/tools", "/bench", "/_"} {
+		if strings.Contains(p+"/", bad) {
+			return false
+		}
+	}
+	return true
 }
 
 func goList(path string) listedPkg {
@@ -414,7 +483,7 @@ fungsi _objek(v) {
     untuk (buat i = 0; i < panjang(nama); i = i + 1) { o[nama[i]] = _metode(h, nama[i], daftar[nama[i]]); }
     jika v["f"] != kosong {
         buat kf = peta_kunci(v["f"]);
-        untuk (buat i = 0; i < panjang(kf); i = i + 1) { o[kf[i]] = v["f"][kf[i]]; }
+        untuk (buat i = 0; i < panjang(kf); i = i + 1) { o[kf[i]] = _bungkus(v["f"][kf[i]]); }
     }
     jika v["d"] != kosong { o["nilai"] = _bungkus(v["d"]); }
     o["json"] = fungsi() { hasil _urai(_p.panggil(h, "$json", "[]")); };
@@ -427,11 +496,13 @@ fungsi _objek(v) {
 
 fungsi _picu(f, a) {
     buat n = panjang(a);
-    jika n == 0 { f(); }
-    jika n == 1 { f(_bungkus(a[0])); }
-    jika n == 2 { f(_bungkus(a[0]), _bungkus(a[1])); }
-    jika n == 3 { f(_bungkus(a[0]), _bungkus(a[1]), _bungkus(a[2])); }
-    jika n == 4 { f(_bungkus(a[0]), _bungkus(a[1]), _bungkus(a[2]), _bungkus(a[3])); }
+    jika n == 0 { hasil f(); }
+    jika n == 1 { hasil f(_bungkus(a[0])); }
+    jika n == 2 { hasil f(_bungkus(a[0]), _bungkus(a[1])); }
+    jika n == 3 { hasil f(_bungkus(a[0]), _bungkus(a[1]), _bungkus(a[2])); }
+    jika n == 4 { hasil f(_bungkus(a[0]), _bungkus(a[1]), _bungkus(a[2]), _bungkus(a[3])); }
+    jika n == 5 { hasil f(_bungkus(a[0]), _bungkus(a[1]), _bungkus(a[2]), _bungkus(a[3]), _bungkus(a[4])); }
+    hasil kosong;
 }
 
 fungsi _dengarkan(nama, f) {
@@ -439,7 +510,17 @@ fungsi _dengarkan(nama, f) {
         latar();
         selama _aktif {
             buat e = _p.event(nama, 500);
-            jika e != "" { _picu(f, json_decode(e)); }
+            jika e != "" {
+                buat d = json_decode(e);
+                jika tipe(d) == "peta" {
+                    // callback sinkron: Go menunggu hasilnya lewat balas()
+                    buat r = kosong;
+                    coba { r = _picu(f, d["a"]); } tangkap (err) { cetak("kesalahan di callback:", err); }
+                    _p.balas(ke_teks(d["$id"]), json_encode({"r": _lepas(r)}));
+                } lain {
+                    _picu(f, d);
+                }
+            }
         }
     });
 }

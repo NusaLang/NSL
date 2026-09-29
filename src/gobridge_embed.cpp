@@ -38,6 +38,7 @@ static NsValue t_konst(int argc, const NsValue* argv) { return nsGoInvoke(4, arg
 static NsValue t_event(int argc, const NsValue* argv) { return nsGoInvoke(5, argc, (NsValue*)argv); }
 static NsValue t_daftar(int argc, const NsValue* argv) { return nsGoInvoke(6, argc, (NsValue*)argv); }
 static NsValue t_bebas(int argc, const NsValue* argv) { return nsGoInvoke(7, argc, (NsValue*)argv); }
+static NsValue t_balas(int argc, const NsValue* argv) { return nsGoInvoke(8, argc, (NsValue*)argv); }
 
 static void register_all(void* r, NsRegisterFn reg) {
     reg(r, "panggil", t_panggil);
@@ -48,6 +49,7 @@ static void register_all(void* r, NsRegisterFn reg) {
     reg(r, "event", t_event);
     reg(r, "daftar", t_daftar);
     reg(r, "bebas", t_bebas);
+    reg(r, "balas", t_balas);
 }
 
 static NsValue make_string(const char* s, int n) {
@@ -70,12 +72,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 )
@@ -160,7 +165,11 @@ func hasMethods(t reflect.Type) bool {
 
 // fieldSnapshot: the exported scalar fields of a struct (or pointer to one), so Nusantara code can
 // read `obj.Name` directly. It is a snapshot; obj.field("Name") always reads the live value.
-func fieldSnapshot(v reflect.Value) map[string]interface{} {
+func fieldSnapshot(v reflect.Value) map[string]interface{} { return fieldSnapshotDepth(v, 0) }
+
+// Scalars always; at the top level also pointer/interface/struct fields as handles (so r.URL.Path,
+// resp.Body work) and small maps/slices as data. Nested handles only carry scalars.
+func fieldSnapshotDepth(v reflect.Value, depth int) map[string]interface{} {
 	e := indirectValue(v)
 	if e.Kind() != reflect.Struct {
 		return nil
@@ -178,6 +187,22 @@ func fieldSnapshot(v reflect.Value) map[string]interface{} {
 			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32,
 			reflect.Float64, reflect.String:
 			m[sf.Name] = encodeOpt(fv, false)
+		case reflect.Ptr, reflect.Interface:
+			if depth == 0 && !fv.IsNil() && fv.CanInterface() {
+				m[sf.Name] = handleRefDepth(fv, depth+1)
+			}
+		case reflect.Struct:
+			if depth == 0 && fv.CanInterface() {
+				if hasMethods(fv.Type()) {
+					m[sf.Name] = handleRefDepth(fv, depth+1)
+				} else {
+					m[sf.Name] = encodeOpt(fv, false)
+				}
+			}
+		case reflect.Map, reflect.Slice:
+			if depth == 0 && fv.CanInterface() && fv.Len() > 0 && fv.Len() <= 1000 {
+				m[sf.Name] = encodeOpt(fv, false)
+			}
 		}
 	}
 	return m
@@ -185,9 +210,11 @@ func fieldSnapshot(v reflect.Value) map[string]interface{} {
 
 // handleRef stores v and describes it: "m" = its methods (name -> arity), "f" = scalar field snapshot,
 // "d" = its data view when it isn't a pointer ("nilai" on the Nusantara side).
-func handleRef(v reflect.Value) map[string]interface{} {
+func handleRef(v reflect.Value) map[string]interface{} { return handleRefDepth(v, 0) }
+
+func handleRefDepth(v reflect.Value, depth int) map[string]interface{} {
 	ref := map[string]interface{}{"$h": newHandle(v), "tipe": v.Type().String(), "m": methodTable(v.Type())}
-	if f := fieldSnapshot(v); len(f) > 0 {
+	if f := fieldSnapshotDepth(v, depth); len(f) > 0 {
 		ref["f"] = f
 	}
 	if k := v.Kind(); k != reflect.Ptr && k != reflect.Func && k != reflect.Chan && k != reflect.Interface {
@@ -224,7 +251,8 @@ func encodeOpt(v reflect.Value, methodsAsHandle bool) interface{} {
 	switch v.Kind() {
 	case reflect.Bool:
 		return v.Bool()
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+	case reflect.Int, reflect.Int8, reflect.Int16,)NSGO"
+         R"NSGO( reflect.Int32, reflect.Int64:
 		n := v.Int()
 		if n > maxSafeInt || n < -maxSafeInt {
 			return strconv.FormatInt(n, 10)
@@ -265,8 +293,7 @@ func encodeOpt(v reflect.Value, methodsAsHandle bool) interface{} {
 		out := make(map[string]interface{}, v.Len())
 		iter := v.MapRange()
 		for iter.Next() {
-			out[fmt.Sprint(iter.Key().Interface())] = encode(iter.V)NSGO"
-         R"NSGO(alue())
+			out[fmt.Sprint(iter.Key().Interface())] = encode(iter.Value())
 		}
 		return out
 	case reflect.Struct:
@@ -336,6 +363,11 @@ func convertArg(raw json.RawMessage, t reflect.Type) (reflect.Value, error) {
 					return reflect.Value{}, fmt.Errorf("handle %s sudah dibebaskan atau tidak ada", marker.H)
 				}
 				return adaptHandle(hv, t)
+			}
+			if marker.Cb != "" && t.Kind() == reflect.Interface {
+				if v, ok := adaptCallbackToInterface(t, marker.Cb); ok {
+					return v, nil
+				}
 			}
 			if marker.Cb != "" {
 				if t.Kind() != reflect.Func {
@@ -433,24 +465,135 @@ func (q *eventQueue) push(s string) {
 	}
 }
 
+var (
+	replyMu  sync.Mutex
+	replies  = map[int64]chan string{}
+	replySeq int64
+)
+
+// syncCallback: a callback that returns values, or takes an object/pointer (an http handler's
+// writer and request, a gin context), must finish on the Nusantara side before Go continues.
+// Plain event handlers (func(evt interface{})) stay fire-and-forget.
+func syncCallback(t reflect.Type) bool {
+	if t.NumOut() > 0 {
+		return true
+	}
+	for i := 0; i < t.NumIn(); i++ {
+		in := t.In(i)
+		if in.Kind() == reflect.Ptr || (in.Kind() == reflect.Interface && in.NumMethod() > 0) {
+			return true
+		}
+	}
+	return false
+}
+
 // makeCallback builds a Go func of type t that turns each call into a queued event.
 func makeCallback(t reflect.Type, queue string) reflect.Value {
 	q := queueFor(queue)
+	sync := syncCallback(t)
 	return reflect.MakeFunc(t, func(args []reflect.Value) []reflect.Value {
 		enc := make([]interface{}, len(args))
 		for i, a := range args {
 			enc[i] = encode(a)
 		}
-		if b, err := json.Marshal(enc); err == nil {
-			q.push(string(b))
-		}
 		outs := make([]reflect.Value, t.NumOut())
 		for i := range outs {
 			outs[i] = reflect.Zero(t.Out(i))
 		}
+		if !sync {
+			if b, err := json.Marshal(enc); err == nil {
+				q.push(string(b))
+			}
+			return outs
+		}
+		id := atomic.AddInt64(&replySeq, 1)
+		ch := make(chan string, 1)
+		replyMu.Lock()
+		replies[id] = ch
+		replyMu.Unlock()
+		defer func() {
+			replyMu.Lock()
+			delete(replies, id)
+			replyMu.Unlock()
+		}()
+		b, err := json.Marshal(map[string]interface{}{"$id": id, "a": enc})
+		if err != nil {
+			return outs
+		}
+		q.push(string(b))
+		select {
+		case r := <-ch:
+			var reply struct {
+				R json.RawMessage `json:"r"`
+			}
+			if json.Unmarshal([]byte(r), &reply) != nil || len(outs) == 0 {
+				return outs
+			}
+			if len(outs) == 1 {
+				if v, err := convertArg(reply.R, t.Out(0)); err == nil {
+					outs[0] = v
+				}
+				return outs
+			}
+			var parts []json.RawMessage
+			if json.Unmarshal(reply.R, &parts) == nil {
+				for i := range outs {
+					if i < len(parts) {
+						if v, err := convertArg(parts[i], t.Out(i)); err == nil {
+							outs[i] = v
+						}
+					}
+				}
+			}
+		case <-time.After(60 * time.Second):
+		}
 		return outs
 	})
 }
+
+fun)NSGO"
+         R"NSGO(c deliverReply(id int64, payload string) {
+	replyMu.Lock()
+	ch := replies[id]
+	replyMu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- payload:
+		default:
+		}
+	}
+}
+
+// adaptCallbackToInterface lets a Nusantara function stand in for the few interfaces that std
+// packages wrap functions into (http.HandlerFunc and friends).
+func adaptCallbackToInterface(t reflect.Type, queue string) (reflect.Value, bool) {
+	switch t {
+	case handlerType:
+		fn := makeCallback(reflect.TypeOf(func(http.ResponseWriter, *http.Request) {}), queue).Interface().(func(http.ResponseWriter, *http.Request))
+		return reflect.ValueOf(http.HandlerFunc(fn)), true
+	case writerType:
+		fn := makeCallback(reflect.TypeOf(func([]byte) (int, error) { return 0, nil }), queue).Interface().(func([]byte) (int, error))
+		return reflect.ValueOf(writerFunc(fn)), true
+	case stringerType:
+		fn := makeCallback(reflect.TypeOf(func() string { return "" }), queue).Interface().(func() string)
+		return reflect.ValueOf(stringerFunc(fn)), true
+	}
+	return reflect.Value{}, false
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+type stringerFunc func() string
+
+func (f stringerFunc) String() string { return f() }
+
+var (
+	handlerType  = reflect.TypeOf((*http.Handler)(nil)).Elem()
+	writerType   = reflect.TypeOf((*io.Writer)(nil)).Elem()
+	stringerType = reflect.TypeOf((*fmt.Stringer)(nil)).Elem()
+)
 
 // ----------------------------------------------------------------- calls ----
 
@@ -569,8 +712,7 @@ func callTarget(target, name, argsJSON string) string {
 	if target == "" {
 		fv, ok := funcs[name]
 		if !ok {
-			return envelope(nil, )NSGO"
-         R"NSGO(fmt.Errorf("fungsi Go '%s' tidak ada", name))
+			return envelope(nil, fmt.Errorf("fungsi Go '%s' tidak ada", name))
 		}
 		r := invoke(fv, args)
 		return envelope(resultValue(r), r.Err)
@@ -713,7 +855,8 @@ func nsGoInvoke(op C.int, argc C.int, argv *C.NsValue) (ret C.NsValue) {
 		if err != nil {
 			return retString(envelope(nil, err))
 		}
-		return retString(envelope(encode(f), nil))
+		return r)NSGO"
+         R"NSGO(etString(envelope(encode(f), nil))
 	case 3:
 		f, err := fieldOf(argString(args, 0), argString(args, 1))
 		if err != nil {
@@ -737,6 +880,10 @@ func nsGoInvoke(op C.int, argc C.int, argv *C.NsValue) (ret C.NsValue) {
 			return retString(envelope(encode(get()), nil))
 		}
 		return retString(envelope(nil, fmt.Errorf("konstanta/variabel Go '%s' tidak ada", name)))
+	case 8:
+		n, _ := strconv.ParseInt(argString(args, 0), 10, 64)
+		deliverReply(n, argString(args, 1))
+		return retString(envelope(nil, nil))
 	case 5:
 		q := queueFor(argString(args, 0))
 		ms := 0
@@ -848,14 +995,26 @@ func main() {
 	module := flag.String("module", "", "module path (documentation only)")
 	var blanks multiFlag
 	flag.Var(&blanks, "blank", "package to import for side effects only (e.g. a database driver); repeatable")
+	all := flag.Bool("all", false, "include every public sub-package of each given module path")
 	flag.Parse()
 	if flag.NArg() == 0 {
 		fatal("tidak ada paket yang diberikan")
 	}
+	paths := expandPaths(flag.Args(), *all)
+	explicit := map[string]bool{}
+	for _, a := range flag.Args() {
+		explicit[a] = true
+	}
 
 	var pkgs []*pkgInfo
 	usedNS := map[string]int{}
-	for i, path := range flag.Args() {
+	for i, path := range paths {
+		if !explicit[path] {
+			// expanded sub-package: skip the ones that are not importable libraries
+			if !softListable(path) {
+				continue
+			}
+		}
 		lp := goList(path)
 		info := &pkgInfo{Alias: "pk" + strconv.Itoa(i+1), ImportPath: lp.ImportPath}
 		ns := sanitize(lp.Name)
@@ -898,6 +1057,63 @@ func sanitize(s string) string {
 		s = "p_" + s
 	}
 	return s
+}
+
+// expandPaths adds a module's public sub-packages: always with -all, and also when the module
+// root itself has no package (mongo-driver, golang.org/x/...), where the root alone is unusable.
+func expandPaths(args []string, all bool) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(p string) {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	for _, a := range args {
+		rootOK := exec.Command("go", "list", a).Run() == nil
+		if rootOK {
+			add(a)
+		}
+		if all || !rootOK {
+			raw, err := exec.Command("go", "list", a+"/...").Output()
+			if err != nil {
+				if !rootOK {
+					fatal("paket %s tidak ditemukan (go list %s/... gagal)", a, a)
+				}
+				continue
+			}
+			n := 0
+			for _, line := range strings.Fields(string(raw)) {
+				if publicPackage(line) && n < 60 {
+					add(line)
+					n++
+				}
+			}
+		}
+	}
+	return out
+}
+
+func softListable(path string) bool {
+	out, err := exec.Command("go", "list", "-json", path).Output()
+	if err != nil {
+		return false
+	}
+	var lp listedPkg
+	if json.Unmarshal(out, &lp) != nil {
+		return false
+	}
+	return lp.Name != "main" && len(lp.GoFiles)+len(lp.CgoFiles) > 0
+}
+
+func publicPackage(p string) bool {
+	for _, bad := range []string{"/internal", "/cmd/", "/examples", "/example", "/testdata", "/test/", "/vendor/", "/tools", "/bench", "/_"} {
+		if strings.Contains(p+"/", bad) {
+			return false
+		}
+	}
+	return true
 }
 
 func goList(path string) listedPkg {
@@ -1008,7 +1224,8 @@ func writeRegistry(path string, pkgs []*pkgInfo, blanks []string) {
 	}
 	b.WriteString("}\n")
 	if err := os.WriteFile(path, b.Bytes(), 0o644); err != nil {
-		fatal("tulis %s: %v", path, err)
+		fatal("tulis %s: %v", path)NSGO"
+         R"NSGO(, err)
 	}
 }
 
@@ -1062,8 +1279,7 @@ func writeManifestAndIndex(module string, pkgs []*pkgInfo) {
 	_ = os.WriteFile("manifest.json", b, 0o644)
 
 	var s strings.Builder
-	s.WriteString("// GENERATED by `nusa go add` -- jangan diedit )NSGO"
-         R"NSGO(manual.\n")
+	s.WriteString("// GENERATED by `nusa go add` -- jangan diedit manual.\n")
 	fmt.Fprintf(&s, "// Jembatan ke modul Go: %s\n", module)
 	s.WriteString("// plugin.so di folder ini sudah hasil build: MENJALANKAN modul ini TIDAK butuh Go terpasang.\n\n")
 	s.WriteString(nsRuntime)
@@ -1206,7 +1422,7 @@ fungsi _objek(v) {
     untuk (buat i = 0; i < panjang(nama); i = i + 1) { o[nama[i]] = _metode(h, nama[i], daftar[nama[i]]); }
     jika v["f"] != kosong {
         buat kf = peta_kunci(v["f"]);
-        untuk (buat i = 0; i < panjang(kf); i = i + 1) { o[kf[i]] = v["f"][kf[i]]; }
+        untuk (buat i = 0; i < panjang(kf); i = i + 1) { o[kf[i]] = _bungkus(v["f"][kf[i]]); }
     }
     jika v["d"] != kosong { o["nilai"] = _bungkus(v["d"]); }
     o["json"] = fungsi() { hasil _urai(_p.panggil(h, "$json", "[]")); };
@@ -1219,11 +1435,14 @@ fungsi _objek(v) {
 
 fungsi _picu(f, a) {
     buat n = panjang(a);
-    jika n == 0 { f(); }
-    jika n == 1 { f(_bungkus(a[0])); }
-    jika n == 2 { f(_bungkus(a[0]), _bungkus(a[1])); }
-    jika n == 3 { f(_bungkus(a[0]), _bungkus(a[1]), _bungkus(a[2])); }
-    jika n == 4 { f(_bungkus(a[0]), _bungkus(a[1]), _bungkus(a[2]), _bungkus(a[3])); }
+    jika n == 0 { hasil f(); }
+    jik)NSGO"
+         R"NSGO(a n == 1 { hasil f(_bungkus(a[0])); }
+    jika n == 2 { hasil f(_bungkus(a[0]), _bungkus(a[1])); }
+    jika n == 3 { hasil f(_bungkus(a[0]), _bungkus(a[1]), _bungkus(a[2])); }
+    jika n == 4 { hasil f(_bungkus(a[0]), _bungkus(a[1]), _bungkus(a[2]), _bungkus(a[3])); }
+    jika n == 5 { hasil f(_bungkus(a[0]), _bungkus(a[1]), _bungkus(a[2]), _bungkus(a[3]), _bungkus(a[4])); }
+    hasil kosong;
 }
 
 fungsi _dengarkan(nama, f) {
@@ -1231,7 +1450,17 @@ fungsi _dengarkan(nama, f) {
         latar();
         selama _aktif {
             buat e = _p.event(nama, 500);
-            jika e != "" { _picu(f, json_decode(e)); }
+            jika e != "" {
+                buat d = json_decode(e);
+                jika tipe(d) == "peta" {
+                    // callback sinkron: Go menunggu hasilnya lewat balas()
+                    buat r = kosong;
+                    coba { r = _picu(f, d["a"]); } tangkap (err) { cetak("kesalahan di callback:", err); }
+                    _p.balas(ke_teks(d["$id"]), json_encode({"r": _lepas(r)}));
+                } lain {
+                    _picu(f, d);
+                }
+            }
         }
     });
 }

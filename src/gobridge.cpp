@@ -63,6 +63,7 @@ void usage() {
         "\n"
         "opsi:\n"
         "  --pkg <sub>      paket lain di dalam modul (mis. --pkg store/sqlstore); boleh diulang\n"
+        "  --semua          ikutkan semua sub-paket publik modul (otomatis kalau root modul bukan paket)\n"
         "  --std <paket>    paket standar Go (mis. --std strings --std time); boleh diulang\n"
         "  --blank <paket>  import untuk efek samping saja, mis. driver database; boleh diulang\n"
         "  --nama <nama>    nama modul Nusantara (default: elemen terakhir path modul)\n"
@@ -75,6 +76,7 @@ void usage() {
         "\n"
         "options:\n"
         "  --pkg <sub>      another package inside the module (e.g. --pkg store/sqlstore); repeatable\n"
+        "  --all            include every public sub-package (automatic when the module root is not a package)\n"
         "  --std <pkg>      a Go standard library package (e.g. --std strings --std time); repeatable\n"
         "  --blank <pkg>    import for side effects only, e.g. a database driver; repeatable\n"
         "  --nama <name>    Nusantara module name (default: last element of the module path)\n"
@@ -106,6 +108,7 @@ std::string lastElement(const std::string& path) {
 int add(int argc, char** argv) {
     std::string moduleArg;
     std::vector<std::string> subPkgs, stdPkgs, blanks;
+    bool allPkgs = false;
     std::string name, outDir;
     for (int i = 0; i < argc; i++) {
         std::string a = argv[i];
@@ -121,6 +124,7 @@ int add(int argc, char** argv) {
         if (a == "--pkg") { if (!value(v)) return 1; subPkgs.push_back(v); }
         else if (a == "--std") { if (!value(v)) return 1; stdPkgs.push_back(v); }
         else if (a == "--blank") { if (!value(v)) return 1; blanks.push_back(v); }
+        else if (a == "--semua" || a == "--all") allPkgs = true;
         else if (a == "--nama") { if (!value(name)) return 1; }
         else if (a == "--keluar") { if (!value(outDir)) return 1; }
         else if (!a.empty() && a[0] == '-') {
@@ -197,6 +201,7 @@ int add(int argc, char** argv) {
     }
 
     std::string genCmd = "go run ./gen -module " + shellQuote(modulePath.empty() ? "std" : modulePath);
+    if (allPkgs) genCmd += " -all";
     for (const std::string& b : blanks) genCmd += " -blank " + shellQuote(b);
     for (const std::string& p : genPkgs) genCmd += " " + shellQuote(p);
     if (!step("baca API paket Go dan bikin registri", genCmd)) return 1;

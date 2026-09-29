@@ -30,6 +30,7 @@ static NsValue t_konst(int argc, const NsValue* argv) { return nsGoInvoke(4, arg
 static NsValue t_event(int argc, const NsValue* argv) { return nsGoInvoke(5, argc, (NsValue*)argv); }
 static NsValue t_daftar(int argc, const NsValue* argv) { return nsGoInvoke(6, argc, (NsValue*)argv); }
 static NsValue t_bebas(int argc, const NsValue* argv) { return nsGoInvoke(7, argc, (NsValue*)argv); }
+static NsValue t_balas(int argc, const NsValue* argv) { return nsGoInvoke(8, argc, (NsValue*)argv); }
 
 static void register_all(void* r, NsRegisterFn reg) {
     reg(r, "panggil", t_panggil);
@@ -40,6 +41,7 @@ static void register_all(void* r, NsRegisterFn reg) {
     reg(r, "event", t_event);
     reg(r, "daftar", t_daftar);
     reg(r, "bebas", t_bebas);
+    reg(r, "balas", t_balas);
 }
 
 static NsValue make_string(const char* s, int n) {
@@ -62,12 +64,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 )
@@ -152,7 +157,11 @@ func hasMethods(t reflect.Type) bool {
 
 // fieldSnapshot: the exported scalar fields of a struct (or pointer to one), so Nusantara code can
 // read `obj.Name` directly. It is a snapshot; obj.field("Name") always reads the live value.
-func fieldSnapshot(v reflect.Value) map[string]interface{} {
+func fieldSnapshot(v reflect.Value) map[string]interface{} { return fieldSnapshotDepth(v, 0) }
+
+// Scalars always; at the top level also pointer/interface/struct fields as handles (so r.URL.Path,
+// resp.Body work) and small maps/slices as data. Nested handles only carry scalars.
+func fieldSnapshotDepth(v reflect.Value, depth int) map[string]interface{} {
 	e := indirectValue(v)
 	if e.Kind() != reflect.Struct {
 		return nil
@@ -170,6 +179,22 @@ func fieldSnapshot(v reflect.Value) map[string]interface{} {
 			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32,
 			reflect.Float64, reflect.String:
 			m[sf.Name] = encodeOpt(fv, false)
+		case reflect.Ptr, reflect.Interface:
+			if depth == 0 && !fv.IsNil() && fv.CanInterface() {
+				m[sf.Name] = handleRefDepth(fv, depth+1)
+			}
+		case reflect.Struct:
+			if depth == 0 && fv.CanInterface() {
+				if hasMethods(fv.Type()) {
+					m[sf.Name] = handleRefDepth(fv, depth+1)
+				} else {
+					m[sf.Name] = encodeOpt(fv, false)
+				}
+			}
+		case reflect.Map, reflect.Slice:
+			if depth == 0 && fv.CanInterface() && fv.Len() > 0 && fv.Len() <= 1000 {
+				m[sf.Name] = encodeOpt(fv, false)
+			}
 		}
 	}
 	return m
@@ -177,9 +202,11 @@ func fieldSnapshot(v reflect.Value) map[string]interface{} {
 
 // handleRef stores v and describes it: "m" = its methods (name -> arity), "f" = scalar field snapshot,
 // "d" = its data view when it isn't a pointer ("nilai" on the Nusantara side).
-func handleRef(v reflect.Value) map[string]interface{} {
+func handleRef(v reflect.Value) map[string]interface{} { return handleRefDepth(v, 0) }
+
+func handleRefDepth(v reflect.Value, depth int) map[string]interface{} {
 	ref := map[string]interface{}{"$h": newHandle(v), "tipe": v.Type().String(), "m": methodTable(v.Type())}
-	if f := fieldSnapshot(v); len(f) > 0 {
+	if f := fieldSnapshotDepth(v, depth); len(f) > 0 {
 		ref["f"] = f
 	}
 	if k := v.Kind(); k != reflect.Ptr && k != reflect.Func && k != reflect.Chan && k != reflect.Interface {
@@ -328,6 +355,11 @@ func convertArg(raw json.RawMessage, t reflect.Type) (reflect.Value, error) {
 				}
 				return adaptHandle(hv, t)
 			}
+			if marker.Cb != "" && t.Kind() == reflect.Interface {
+				if v, ok := adaptCallbackToInterface(t, marker.Cb); ok {
+					return v, nil
+				}
+			}
 			if marker.Cb != "" {
 				if t.Kind() != reflect.Func {
 					return reflect.Value{}, decodeError(t, "callback hanya bisa dikirim ke parameter bertipe fungsi")
@@ -424,24 +456,134 @@ func (q *eventQueue) push(s string) {
 	}
 }
 
+var (
+	replyMu  sync.Mutex
+	replies  = map[int64]chan string{}
+	replySeq int64
+)
+
+// syncCallback: a callback that returns values, or takes an object/pointer (an http handler's
+// writer and request, a gin context), must finish on the Nusantara side before Go continues.
+// Plain event handlers (func(evt interface{})) stay fire-and-forget.
+func syncCallback(t reflect.Type) bool {
+	if t.NumOut() > 0 {
+		return true
+	}
+	for i := 0; i < t.NumIn(); i++ {
+		in := t.In(i)
+		if in.Kind() == reflect.Ptr || (in.Kind() == reflect.Interface && in.NumMethod() > 0) {
+			return true
+		}
+	}
+	return false
+}
+
 // makeCallback builds a Go func of type t that turns each call into a queued event.
 func makeCallback(t reflect.Type, queue string) reflect.Value {
 	q := queueFor(queue)
+	sync := syncCallback(t)
 	return reflect.MakeFunc(t, func(args []reflect.Value) []reflect.Value {
 		enc := make([]interface{}, len(args))
 		for i, a := range args {
 			enc[i] = encode(a)
 		}
-		if b, err := json.Marshal(enc); err == nil {
-			q.push(string(b))
-		}
 		outs := make([]reflect.Value, t.NumOut())
 		for i := range outs {
 			outs[i] = reflect.Zero(t.Out(i))
 		}
+		if !sync {
+			if b, err := json.Marshal(enc); err == nil {
+				q.push(string(b))
+			}
+			return outs
+		}
+		id := atomic.AddInt64(&replySeq, 1)
+		ch := make(chan string, 1)
+		replyMu.Lock()
+		replies[id] = ch
+		replyMu.Unlock()
+		defer func() {
+			replyMu.Lock()
+			delete(replies, id)
+			replyMu.Unlock()
+		}()
+		b, err := json.Marshal(map[string]interface{}{"$id": id, "a": enc})
+		if err != nil {
+			return outs
+		}
+		q.push(string(b))
+		select {
+		case r := <-ch:
+			var reply struct {
+				R json.RawMessage `json:"r"`
+			}
+			if json.Unmarshal([]byte(r), &reply) != nil || len(outs) == 0 {
+				return outs
+			}
+			if len(outs) == 1 {
+				if v, err := convertArg(reply.R, t.Out(0)); err == nil {
+					outs[0] = v
+				}
+				return outs
+			}
+			var parts []json.RawMessage
+			if json.Unmarshal(reply.R, &parts) == nil {
+				for i := range outs {
+					if i < len(parts) {
+						if v, err := convertArg(parts[i], t.Out(i)); err == nil {
+							outs[i] = v
+						}
+					}
+				}
+			}
+		case <-time.After(60 * time.Second):
+		}
 		return outs
 	})
 }
+
+func deliverReply(id int64, payload string) {
+	replyMu.Lock()
+	ch := replies[id]
+	replyMu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- payload:
+		default:
+		}
+	}
+}
+
+// adaptCallbackToInterface lets a Nusantara function stand in for the few interfaces that std
+// packages wrap functions into (http.HandlerFunc and friends).
+func adaptCallbackToInterface(t reflect.Type, queue string) (reflect.Value, bool) {
+	switch t {
+	case handlerType:
+		fn := makeCallback(reflect.TypeOf(func(http.ResponseWriter, *http.Request) {}), queue).Interface().(func(http.ResponseWriter, *http.Request))
+		return reflect.ValueOf(http.HandlerFunc(fn)), true
+	case writerType:
+		fn := makeCallback(reflect.TypeOf(func([]byte) (int, error) { return 0, nil }), queue).Interface().(func([]byte) (int, error))
+		return reflect.ValueOf(writerFunc(fn)), true
+	case stringerType:
+		fn := makeCallback(reflect.TypeOf(func() string { return "" }), queue).Interface().(func() string)
+		return reflect.ValueOf(stringerFunc(fn)), true
+	}
+	return reflect.Value{}, false
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+type stringerFunc func() string
+
+func (f stringerFunc) String() string { return f() }
+
+var (
+	handlerType  = reflect.TypeOf((*http.Handler)(nil)).Elem()
+	writerType   = reflect.TypeOf((*io.Writer)(nil)).Elem()
+	stringerType = reflect.TypeOf((*fmt.Stringer)(nil)).Elem()
+)
 
 // ----------------------------------------------------------------- calls ----
 
@@ -727,6 +869,10 @@ func nsGoInvoke(op C.int, argc C.int, argv *C.NsValue) (ret C.NsValue) {
 			return retString(envelope(encode(get()), nil))
 		}
 		return retString(envelope(nil, fmt.Errorf("konstanta/variabel Go '%s' tidak ada", name)))
+	case 8:
+		n, _ := strconv.ParseInt(argString(args, 0), 10, 64)
+		deliverReply(n, argString(args, 1))
+		return retString(envelope(nil, nil))
 	case 5:
 		q := queueFor(argString(args, 0))
 		ms := 0
