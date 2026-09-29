@@ -117,7 +117,12 @@ TypeChecker::StaticType TypeChecker::inferExpr(const Expr* expr) {
                 }
                 return {bothNum ? "angka" : "teks"};
             }
-            // - * / %
+            // - * / %   (`*` also repeats text and arrays: "ab" * 3)
+            if (op == "*" && ((l.name == "teks" && (r.name == "angka" || r.name.empty())) ||
+                              (r.name == "teks" && (l.name == "angka" || l.name.empty())) ||
+                              l.name == "larik" || r.name == "larik")) {
+                return {l.name == "angka" || l.name.empty() ? r.name : l.name};
+            }
             if (!l.name.empty() && l.name != "angka") {
                 error("operator '" + op + i18n::tr("' butuh angka, dapat ", "' needs a number, got ") + l.name +
                           i18n::tr(" di sisi kiri", " on the left side"),

@@ -2,6 +2,7 @@
 
 #include <string>
 
+#include "pylib.hpp"
 #include "value.hpp"
 
 // Python-style methods on built-in types: `xs.append(v)`, `s.upper()`,
@@ -17,20 +18,14 @@ inline const char* builtinMethodName(const Value& target, const std::string& nam
         case ValueType::Array:
         case ValueType::VmArray:
             if (name == "append" || name == "tambah") return "tambah";
-            if (name == "pop" || name == "hapus_akhir") return "hapus_akhir";
-            return nullptr;
+            return pylib::methodBuiltin(target, name);
         case ValueType::String:
             if (name == "upper") return "huruf_besar";
             if (name == "lower") return "huruf_kecil";
-            if (name == "split") return "pisah";
-            if (name == "join") {
-                if (receiverLast) *receiverLast = true;
-                return "gabung";
-            }
-            return nullptr;
+            return pylib::methodBuiltin(target, name);
         case ValueType::Map:
             if (name == "keys") return target.map()->count(name) ? nullptr : "peta_kunci";
-            return nullptr;
+            return pylib::methodBuiltin(target, name);
         default:
             return nullptr;
     }

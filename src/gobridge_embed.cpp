@@ -1753,7 +1753,10 @@ fungsi _buat(tipe_go, data) {
     hasil _urai(_p.buat(tipe_go, json_encode(_lepas(data))));
 }
 
-fungsi _konst(nama) { hasil _urai(_p.konst(nama)); }
+// Konstanta yang tidak bisa dijembatani (mis. math.MaxUint melewati int64) jadi kosong, bukan gagal impor.
+fungsi _konst(nama) {
+    coba { hasil _urai(_p.konst(nama)); } tangkap (e) { hasil kosong; }
+}
 
 fungsi _metode(h, nama, jumlah) {
     // 100+n: metode variadik -- n argumen tetap lalu satu larik untuk sisanya.
@@ -1761,9 +1764,9 @@ fungsi _metode(h, nama, jumlah) {
     jika jumlah == 101 { hasil fungsi(a, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a], r)); }; }
     jika jumlah == 102 { hasil fungsi(a, b, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a, b], r)); }; }
     jika jumlah == 103 { hasil fungsi(a, b, c, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a, b, c], r)); }; }
-    jika jumlah == 104 { hasil fungsi(a, b, c, d, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a, b, c, d], r)); }; }
-    jika jumlah == 0 { hasil fungsi() { hasil _panggil(h)NSGO"
-         R"NSGO(, nama, []); }; }
+    jika jumlah == 104 { hasi)NSGO"
+         R"NSGO(l fungsi(a, b, c, d, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a, b, c, d], r)); }; }
+    jika jumlah == 0 { hasil fungsi() { hasil _panggil(h, nama, []); }; }
     jika jumlah == 1 { hasil fungsi(a) { hasil _panggil(h, nama, [a]); }; }
     jika jumlah == 2 { hasil fungsi(a, b) { hasil _panggil(h, nama, [a, b]); }; }
     jika jumlah == 3 { hasil fungsi(a, b, c) { hasil _panggil(h, nama, [a, b, c]); }; }
@@ -1986,10 +1989,10 @@ func genericVariants(d *ast.FuncDecl) []genericVariant {
 // std interfaces worth being able to implement from Nusantara, besides the wrapped packages' own.
 var stdInterfaces = []ifaceRef{
 	{"sort", "Interface"}, {"container/heap", "Interface"}, {"io", "Closer"}, {"io", "ReadCloser"},
-	{"io", "WriteCloser"}, {"io", "ReadWriteCloser"}, {"io", "ReadWriter"}, {"io", "Seeker"},
+	{"io", "WriteCloser"}, {"io", "ReadWriteCloser"}, {"io", "ReadWriter"}, {)NSGO"
+         R"NSGO("io", "Seeker"},
 	{"net/http", "RoundTripper"}, {"net/http", "CookieJar"}, {"net/http", "Handler"},
-	{"encoding/json", "Marshaler"}, {"encoding/json", )NSGO"
-         R"NSGO("Unmarshaler"},
+	{"encoding/json", "Marshaler"}, {"encoding/json", "Unmarshaler"},
 	{"encoding", "TextMarshaler"}, {"encoding", "TextUnmarshaler"}, {"fmt", "Stringer"},
 	{"fmt", "Formatter"}, {"context", "Context"}, {"log/slog", "Handler"}, {"crypto", "Signer"},
 	{"hash", "Hash"}, {"net", "Conn"}, {"net", "Listener"}, {"database/sql/driver", "Valuer"},

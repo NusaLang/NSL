@@ -40,6 +40,8 @@ static const size_t kUkuranStackGoroutine = 512 * 1024;
 #include "plugin.hpp"
 #include "plugin_abi.h"
 #include "sysmod.hpp"
+#include "pylib.hpp"
+#include "repeat.hpp"
 #include "sysplugin.hpp"
 #include "vm.hpp"
 
@@ -294,7 +296,7 @@ const std::vector<std::pair<std::string, std::string>>& builtinAliases() {
         {"jwt_create", "jwt_buat"}, {"jwt_verify", "jwt_verifikasi"},
         {"select", "pilih_kanal"},
         {"load_plugin", "muat_plugin"},
-        {"len", "panjang"}, {"str", "ke_teks"}, {"float", "ke_angka"}, {"int", "ke_angka"},
+        {"len", "panjang"}, {"str", "ke_teks"}, {"float", "ke_angka"}, {"type", "tipe"},
         {"append", "tambah"}, {"range", "rentang"},
     };
     return aliases;
@@ -312,6 +314,9 @@ Interpreter::Interpreter(std::string entryDir) {
     globals_ = GC::instance().alloc(nullptr);
     GC::instance().setGlobals(globals_);
     for (const std::string& name : builtinNames()) {
+        globals_->define(name, Value::builtin(name));
+    }
+    for (const std::string& name : pylib::builtinNames()) {
         globals_->define(name, Value::builtin(name));
     }
     for (const auto& [aliasName, canonical] : builtinAliases()) {
@@ -640,6 +645,8 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
             }
 
             if (left.type != ValueType::Number || right.type != ValueType::Number) {
+                Value rep;
+                if (op == "*" && repeatValue(left, right, rep)) return rep;
                 throw RuntimeError(i18n::tr("Operand '", "Operands of '") + op + i18n::tr("' harus angka", "' must be numbers"));
             }
             if (op == "-") return Value::fromNumber(left.number - right.number);
@@ -854,6 +861,26 @@ void Interpreter::jalankanBadanGoroutine(Value fn, std::vector<Value> args, std:
 }
 
 Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args) {
+    // Keyword arguments arrive as one trailing map tagged "__kw__" (see _callkw).
+    const ValueMap* kw = nullptr;
+    std::shared_ptr<ValueMap> kwHold;
+    if (!args.empty() && args.back().type == ValueType::Map && args.back().map()->count("__kw__")) {
+        kwHold = args.back().mapShared();
+        kw = kwHold.get();
+        args.pop_back();
+    }
+    if (pylib::handles(name)) {
+        try {
+            return pylib::call(name, args, kw, [this](const Value& fn, std::vector<Value>& a) { return callValue(fn, a, Span{}); });
+        } catch (const pylib::PyError& e) {
+            throw RuntimeError(e.what());
+        }
+    }
+    if (kw && name != "cetak" && name != "_callkw" && name != "_callkwm") {
+        for (const auto& e : *kw) {
+            if (e.first != "__kw__") throw RuntimeError(name + "(): argumen bernama '" + e.first + "' tidak didukung");
+        }
+    }
     auto need = [&](size_t n) {
         if (args.size() != n) {
             throw RuntimeError(name + i18n::tr("() butuh ", "() expects ") + std::to_string(n) +
@@ -888,11 +915,16 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
 
     if (name == "cetak") {
         std::ostream& os = outStream_ ? *outStream_ : std::cout;
+        std::string sep = " ", end = "\n";
+        if (kw) {
+            if (auto it = kw->find("sep"); it != kw->end() && it->second.type != ValueType::Null) sep = it->second.stringify();
+            if (auto it = kw->find("end"); it != kw->end() && it->second.type != ValueType::Null) end = it->second.stringify();
+        }
         for (size_t i = 0; i < args.size(); i++) {
-            if (i > 0) os << ' ';
+            if (i > 0) os << sep;
             os << args[i].stringify();
         }
-        os << '\n';
+        os << end;
         os.flush();
         return Value::null();
     }

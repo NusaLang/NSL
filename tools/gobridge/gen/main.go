@@ -503,7 +503,10 @@ fungsi _buat(tipe_go, data) {
     hasil _urai(_p.buat(tipe_go, json_encode(_lepas(data))));
 }
 
-fungsi _konst(nama) { hasil _urai(_p.konst(nama)); }
+// Konstanta yang tidak bisa dijembatani (mis. math.MaxUint melewati int64) jadi kosong, bukan gagal impor.
+fungsi _konst(nama) {
+    coba { hasil _urai(_p.konst(nama)); } tangkap (e) { hasil kosong; }
+}
 
 fungsi _metode(h, nama, jumlah) {
     // 100+n: metode variadik -- n argumen tetap lalu satu larik untuk sisanya.

@@ -250,11 +250,8 @@ struct Value {
         return v;
     }
 
-    bool truthy() const {
-        if (type == ValueType::Null) return false;
-        if (type == ValueType::Bool) return boolean();
-        return true;
-    }
+    // Python truthiness: None, False, 0, "", and empty lists/dicts are false.
+    bool truthy() const;
 
     bool callable() const {
         return type == ValueType::Fn || type == ValueType::Builtin || type == ValueType::Native ||
@@ -378,6 +375,22 @@ struct VmArrayState {
     std::vector<double> nums;
     std::shared_ptr<std::vector<Value>> boxed;
 };
+
+inline bool Value::truthy() const {
+    switch (type) {
+        case ValueType::Null: return false;
+        case ValueType::Bool: return boolean();
+        case ValueType::Number: return number != 0.0;
+        case ValueType::String: return !str().empty();
+        case ValueType::Array: return !array()->empty();
+        case ValueType::Map: return !map()->empty();
+        case ValueType::VmArray: {
+            const VmArrayState* st = vmArray();
+            return st->numeric ? !st->nums.empty() : !st->boxed->empty();
+        }
+        default: return true;
+    }
+}
 
 inline const char* Value::typeName() const {
     switch (type) {

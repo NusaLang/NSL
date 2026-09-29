@@ -182,12 +182,16 @@ int runFile(const std::string& path) {
             }
         }
         
-        std::string combinedHash = "";
+        // Keyed on the CONTENT of every source file (an mtime has one-second granularity, so a
+        // quick edit kept the stale bytecode) and on this build, so a new compiler never reuses
+        // bytecode from an older one.
+        std::string combinedHash = std::string(__DATE__ " " __TIME__ " " NUSA_VERSION "|");
         for (const auto& d : deps) {
-            struct stat st;
-            if (stat(d.c_str(), &st) == 0) {
-                combinedHash += d + ":" + std::to_string(st.st_mtime) + ":" + std::to_string(st.st_size) + "|";
-            }
+            std::ifstream depFile(d, std::ios::binary);
+            if (!depFile) continue;
+            std::ostringstream depBuf;
+            depBuf << depFile.rdbuf();
+            combinedHash += d + ":" + std::to_string(std::hash<std::string>{}(depBuf.str())) + ":" + std::to_string(depBuf.str().size()) + "|";
         }
         // quick hash string
         size_t h = std::hash<std::string>{}(combinedHash);

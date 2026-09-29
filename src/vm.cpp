@@ -1,4 +1,5 @@
 #include "vm.hpp"
+#include "repeat.hpp"
 
 #include <atomic>
 #include <cmath>
@@ -1676,6 +1677,11 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 Value b = pop();
                 Value a = pop();
                 if (a.type != ValueType::Number || b.type != ValueType::Number) {
+                    Value rep;
+                    if (op == Op::Mul && repeatValue(a, b, rep)) {
+                        stack.push_back(std::move(rep));
+                        break;
+                    }
                     throw VmRuntimeError("Operand aritmetika harus angka");
                 }
                 double r = 0;
