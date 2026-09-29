@@ -678,8 +678,8 @@ extern "C" NsValue wsTutup(int argc, const NsValue* argv) {
     return nsStr("{\"ok\":true}");
 }
 
-extern "C" void ns_plugin_init(void* registry, NsRegisterFn reg);
-extern "C" void ns_plugin_init(void* registry, NsRegisterFn reg) {
+extern "C" void ns_plugin_init_ws(void* registry, NsRegisterFn reg);
+extern "C" void ns_plugin_init_ws(void* registry, NsRegisterFn reg) {
     reg(registry, "ws_buka",   wsBuka);
     reg(registry, "ws_kirim",  wsKirim);
     reg(registry, "ws_terima", wsTerima);

@@ -733,7 +733,7 @@ static std::string toStr(const NsValue& v) {
     return std::string(v.str);
 }
 
-extern "C" int nusa_abi_version() { return 2; }
+// ABI v2 (panjang string eksplisit): didaftarkan di plugin.cpp (loadBuiltin).
 
 NsValue nsBool(bool b) {
     NsValue v{};
@@ -1392,7 +1392,7 @@ NsValue cryptoCrc32(int argc, const NsValue* argv) {
 
 }  // namespace
 
-extern "C" void ns_plugin_init(void* registry, NsRegisterFn reg) {
+extern "C" void ns_plugin_init_crypto(void* registry, NsRegisterFn reg) {
     reg(registry, "md5_hex", cryptoMd5Hex);
     reg(registry, "sha1_hex", cryptoSha1Hex);
     reg(registry, "sha512_hex", cryptoSha512Hex);

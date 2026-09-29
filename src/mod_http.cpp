@@ -704,7 +704,7 @@ NsValue httpTutupStream(int argc, const NsValue* argv) {
 
 }  // namespace
 
-extern "C" void ns_plugin_init(void* registry, NsRegisterFn reg) {
+extern "C" void ns_plugin_init_http(void* registry, NsRegisterFn reg) {
     reg(registry, "minta", httpMinta);
     reg(registry, "minta_stream", httpMintaStream);
     reg(registry, "baca_stream", httpBacaStream);

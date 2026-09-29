@@ -103,9 +103,9 @@ Memori dikelola GC mark-sweep otomatis, gak ada alokasi/pembebasan manual.
 - `http_get`/`http_post` (HTTPS beneran, TLS 1.2/1.3 ditulis sendiri di `src/tls*.cpp`, tanpa pustaka luar), `tcp_konek`/`tcp_kirim`/`tcp_terima`, `http_dengar` buat bikin server
 - `json_encode`/`json_decode`, `base64_encode`/`decode`
 - `sha256_hex`, `hmac_sha256_hex`, `jwt_buat`/`jwt_verifikasi`
-- `qr_baca` — baca QR code dari gambar (PNG/JPEG/BMP/dst); dikerjakan plugin sistem `qr`
+- `qr_baca` — baca QR code dari gambar (PNG/JPEG/BMP/dst); dikerjakan plugin `qr`
 - `jalankan_perintah` — jalanin proses eksternal, argv-safe (gak lewat shell)
-- `impor()` buat modul lokal, `muat_plugin()` buat native plugin (`.so` lewat dlopen — ada plugin bawaan SQLite, HTTP, WebSocket, crypto lanjutan, forensik gambar BMP, `js` (QuickJS buat file `.js`) dan `qr`)
+- `impor()` buat modul lokal, `muat_plugin()` buat native plugin (`.so` lewat dlopen — `http`, `ws`, `crypto`, `audio`, `gambar` sudah tertanam di binary, jadi `muat_plugin("http")` gak butuh file `.so`; `sqlite`, `js` (QuickJS buat file `.js`) dan `qr` berupa `.so` yang ikut terbangun otomatis oleh `make`)
 
 Daftar lengkap + signature-nya ada di `src/interpreter.cpp` (cari `callBuiltin`).
 
@@ -147,7 +147,7 @@ Membangun `nusantara_modules/<nama>/` (plugin.so + index.ns) dari API Go lewat r
 
 ## Tanpa pustaka luar
 
-Inti (`nusa`) gak butuh OpenSSL, libcurl, atau kode C vendor: TLS 1.2/1.3 (X25519/P-256/P-384, AES-GCM, ChaCha20-Poly1305, verifikasi X.509) ditulis sendiri di `src/tls*.cpp` dan dipakai bareng oleh `http_get`, plugin `http` (dengan proxy `https_proxy`/`no_proxy`) dan plugin `ws`. `make` cuma butuh compiler C++17; `make plugins` membangun plugin (SQLite/QuickJS/quirc ikut divendor di foldernya masing-masing).
+Inti (`nusa`) gak butuh OpenSSL, libcurl, atau kode C vendor: TLS 1.2/1.3 (X25519/P-256/P-384, AES-GCM, ChaCha20-Poly1305, verifikasi X.509) ditulis sendiri di `src/tls*.cpp` dan dipakai bareng oleh `http_get`, plugin `http` (dengan proxy `https_proxy`/`no_proxy`) dan plugin `ws`. Satu perintah `make` sudah membangun binary dan plugin `.so` yang tersisa (SQLite/QuickJS/quirc divendor di foldernya masing-masing); butuh compiler C++17 dan `cc`.
 
 ## Lisensi
 

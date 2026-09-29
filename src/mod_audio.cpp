@@ -151,7 +151,7 @@ NsValue wavLsbExtract(int argc, const NsValue* argv) {
 
 }  // namespace
 
-extern "C" void ns_plugin_init(void* registry, NsRegisterFn reg) {
+extern "C" void ns_plugin_init_audio(void* registry, NsRegisterFn reg) {
     reg(registry, "wav_info", wavInfo);
     reg(registry, "wav_lsb_extract", wavLsbExtract);
 }

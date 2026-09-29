@@ -135,6 +135,46 @@ Value load(const std::string& path) {
 #endif
 }
 
+// Modules compiled into the core binary (src/mod_*.cpp): muat_plugin("http") etc. need no .so.
+#ifndef __EMSCRIPTEN__
+extern "C" {
+void ns_plugin_init_http(void*, NsRegisterFn);
+void ns_plugin_init_ws(void*, NsRegisterFn);
+void ns_plugin_init_crypto(void*, NsRegisterFn);
+void ns_plugin_init_audio(void*, NsRegisterFn);
+void ns_plugin_init_gambar(void*, NsRegisterFn);
+}
+
+bool loadBuiltin(const std::string& name, Value& out) {
+    struct Entry { const char* name; NsPluginInit init; int abi; };
+    static const Entry table[] = {
+        {"http", ns_plugin_init_http, 1},
+        {"ws", ns_plugin_init_ws, 1},
+        {"crypto", ns_plugin_init_crypto, 2},
+        {"audio", ns_plugin_init_audio, 1},
+        {"gambar", ns_plugin_init_gambar, 1},
+    };
+    for (const Entry& e : table) {
+        if (name != e.name) continue;
+        Registry registry;
+        e.init(&registry, registerTrampoline);
+        auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+        for (const auto& [fname, pf] : registry) {
+            auto nf = std::make_shared<NativeFunction>();
+            nf->fnPtr = reinterpret_cast<void*>(pf.fn);
+            nf->name = fname;
+            nf->abiVer = e.abi;
+            (*m)[fname] = Value::fromNative(nf);
+        }
+        out = Value::fromMap(m);
+        return true;
+    }
+    return false;
+}
+#else
+bool loadBuiltin(const std::string&, Value&) { return false; }
+#endif
+
 Value call(const NativeFunction& fn, std::vector<Value>& args) {
     std::vector<NsValue> argv;
     argv.reserve(args.size());

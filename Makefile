@@ -15,7 +15,7 @@ endif
 
 .PHONY: all clean run plugins clean-plugins test test-update opt sizeof bench
 
-all: $(BIN)
+all: $(BIN) plugins
 
 $(BIN): $(SRC)
 	$(CXX) $(CXXFLAGS) $(SRC) -o $(BIN) -ldl -lm
@@ -29,7 +29,7 @@ run: $(BIN)
 # ke build-opt/nusa, dan test runner default-nya nunjuk ke situ.
 OPT_BIN := build-opt/nusa
 
-opt: $(OPT_BIN)
+opt: $(OPT_BIN) plugins
 
 $(OPT_BIN): $(SRC) $(wildcard include/*.hpp)
 	@mkdir -p build-opt

@@ -320,7 +320,7 @@ NsValue bmpFilter(int argc, const NsValue* argv) {
 
 }  // namespace
 
-extern "C" void ns_plugin_init(void* registry, NsRegisterFn reg) {
+extern "C" void ns_plugin_init_gambar(void* registry, NsRegisterFn reg) {
     reg(registry, "bmp_info", bmpInfo);
     reg(registry, "bmp_pixel", bmpPixel);
     reg(registry, "bmp_channel_hex", bmpChannelHex);

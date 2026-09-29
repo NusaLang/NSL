@@ -1557,6 +1557,8 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         expectType(args[0], ValueType::String);
         std::string path;
         if (sysplugin::isBareName(args[0].str())) {
+            Value builtin;
+            if (plugin::loadBuiltin(args[0].str(), builtin)) return builtin;
             // Bare name (e.g. "http") -- a system module, resolved next to
             // the nusa binary itself.
             std::string dir = sysplugin::systemPluginDir();
