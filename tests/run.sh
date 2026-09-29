@@ -19,6 +19,13 @@ if command -v python3 >/dev/null 2>&1 && \
     exit 2
 fi
 
+# Idem buat pustaka standar bergaya Python di lib/*.ns.
+if command -v python3 >/dev/null 2>&1 && \
+   ! python3 tools/embed_lib.py | cmp -s - src/stdlib_embed.cpp; then
+    echo "src/stdlib_embed.cpp usang: jalankan  python3 tools/embed_lib.py > src/stdlib_embed.cpp" >&2
+    exit 2
+fi
+
 NUSA=${NUSA:-$ROOT/build-opt/nusa}
 GOLDEN=$ROOT/tests/golden
 TIMEOUT=${TIMEOUT:-120}

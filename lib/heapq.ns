@@ -1,0 +1,71 @@
+# heapq: binary min-heap on a plain list.
+def _siftdown(heap, start, pos):
+    newitem = heap[pos]
+    while pos > start:
+        parent = (pos - 1) >> 1
+        p = heap[parent]
+        if newitem < p:
+            heap[pos] = p
+            pos = parent
+            continue
+        break
+    heap[pos] = newitem
+
+def _siftup(heap, pos):
+    end = len(heap)
+    start = pos
+    newitem = heap[pos]
+    child = 2 * pos + 1
+    while child < end:
+        right = child + 1
+        if right < end and not (heap[child] < heap[right]):
+            child = right
+        heap[pos] = heap[child]
+        pos = child
+        child = 2 * pos + 1
+    heap[pos] = newitem
+    _siftdown(heap, start, pos)
+
+def heappush(heap, item):
+    heap.append(item)
+    _siftdown(heap, 0, len(heap) - 1)
+
+def heappop(heap):
+    last = heap.pop()
+    if heap:
+        ret = heap[0]
+        heap[0] = last
+        _siftup(heap, 0)
+        return ret
+    return last
+
+def heapreplace(heap, item):
+    ret = heap[0]
+    heap[0] = item
+    _siftup(heap, 0)
+    return ret
+
+def heappushpop(heap, item):
+    if heap and heap[0] < item:
+        item, heap[0] = heap[0], item
+        _siftup(heap, 0)
+    return item
+
+def heapify(heap):
+    n = len(heap)
+    for i in reversed(range(n // 2)):
+        _siftup(heap, i)
+
+def nlargest(n, iterable, key=None):
+    return sorted(iterable, key=key, reverse=True)[:n]
+
+def nsmallest(n, iterable, key=None):
+    return sorted(iterable, key=key)[:n]
+
+def merge(*iterables):
+    items = []
+    for it in iterables:
+        for x in it:
+            items.append(x)
+    for x in sorted(items):
+        yield x

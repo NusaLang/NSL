@@ -1,4 +1,5 @@
 #include "lexer.hpp"
+#include <algorithm>
 
 #include "layout.hpp"
 #include <cctype>
@@ -160,7 +161,7 @@ std::vector<Token> Lexer::nextTokens() {
     int line = line_, col = column_;
     char ch = peek();
 
-    if (std::isdigit(static_cast<unsigned char>(ch))) {
+    if (std::isdigit(static_cast<unsigned char>(ch)) || (ch == '.' && std::isdigit(static_cast<unsigned char>(peek(1))))) {
         return {readNumber(start, line, col)};
     } else if ((ch == 'r' || ch == 'R' || ch == 'b' || ch == 'B') && (peek(1) == '"' || peek(1) == '\'')) {
         // r"..." keeps backslashes as written; b"..." is an ordinary string here
@@ -240,12 +241,52 @@ std::vector<Token> Lexer::tokenize() {
 }
 
 Token Lexer::readNumber(size_t start, int line, int col) {
-    while (std::isdigit(static_cast<unsigned char>(peek()))) advance();
+    // 0x1F / 0b101 / 0o17
+    if (peek() == '0' && (peek(1) == 'x' || peek(1) == 'X' || peek(1) == 'b' || peek(1) == 'B' || peek(1) == 'o' || peek(1) == 'O')) {
+        char kind = static_cast<char>(std::tolower(static_cast<unsigned char>(peek(1))));
+        int base = kind == 'x' ? 16 : kind == 'b' ? 2 : 8;
+        auto okDigit = [&](char c) {
+            if (c == '_') return true;
+            if (base == 16) return std::isxdigit(static_cast<unsigned char>(c)) != 0;
+            return c >= '0' && c < '0' + base;
+        };
+        if (okDigit(peek(2)) && peek(2) != '_') {
+            advance();
+            advance();
+            std::string digits;
+            while (okDigit(peek())) {
+                char c = advance();
+                if (c != '_') digits += c;
+            }
+            errno = 0;
+            unsigned long long v = std::strtoull(digits.c_str(), nullptr, base);
+            if (errno == ERANGE || v > kMaxExactDoubleInt) {
+                throw LexError(i18n::tr("Angka kegedean", "Integer literal too large"), line, col);
+            }
+            Token tok;
+            tok.type = TokenType::Number;
+            tok.number = static_cast<double>(v);
+            tok.text = source_.substr(start, pos_ - start);
+            tok.span = {static_cast<int>(start), static_cast<int>(pos_), line, col};
+            return tok;
+        }
+    }
+    auto digitsWithUnderscores = [&]() {
+        while (std::isdigit(static_cast<unsigned char>(peek())) ||
+               (peek() == '_' && std::isdigit(static_cast<unsigned char>(peek(1))))) advance();
+    };
     bool isInteger = true;
-    if (peek() == '.' && std::isdigit(static_cast<unsigned char>(peek(1)))) {
+    if (peek() == '.') {  // .5
         isInteger = false;
         advance();
-        while (std::isdigit(static_cast<unsigned char>(peek()))) advance();
+        digitsWithUnderscores();
+    } else {
+        digitsWithUnderscores();
+        if (peek() == '.' && std::isdigit(static_cast<unsigned char>(peek(1)))) {
+            isInteger = false;
+            advance();
+            digitsWithUnderscores();
+        }
     }
     if ((peek() == 'e' || peek() == 'E') &&
         (std::isdigit(static_cast<unsigned char>(peek(1))) ||
@@ -256,6 +297,7 @@ Token Lexer::readNumber(size_t start, int line, int col) {
         while (std::isdigit(static_cast<unsigned char>(peek()))) advance();
     }
     std::string text = source_.substr(start, pos_ - start);
+    text.erase(std::remove(text.begin(), text.end(), '_'), text.end());
     if (isInteger && text.size() >= 16) {
         errno = 0;
         char* end = nullptr;
@@ -283,6 +325,14 @@ Token Lexer::readIdent(size_t start, int line, int col) {
     Token tok;
     auto it = kKeywords.find(text);
     tok.type = (it != kKeywords.end()) ? it->second : TokenType::Ident;
+    // In a Python-style file these English spellings are ordinary names (`func`, `struct`, `enum`, ...):
+    // they only mean a keyword in brace-style code.
+    if (pyStyle_ && tok.type != TokenType::Ident) {
+        static const char* const plain[] = {"func", "function", "let", "this", "extends", "struct", "enum", "catch", "throw"};
+        for (const char* w : plain) {
+            if (text == w) { tok.type = TokenType::Ident; break; }
+        }
+    }
     tok.text = text;
     tok.span = {static_cast<int>(start), static_cast<int>(pos_), line, col};
     return tok;

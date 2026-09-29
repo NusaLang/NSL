@@ -1,0 +1,20 @@
+INFO:app:hello world
+WARNING:app:careful
+["name,age,note", "Ann,30,"says ""hi"", ok""]
+[["name", "age", "note"], ["Ann", "30", "says "hi", ok"]]
+{a: "1", b: "2"}
+{a: "3", b: "4"}
+[0, 1, 4, 9]
+locked
+1 1 salah
+empty
+a%20b/c%3F%C3%A9 a bé q=x+y&n=1
+https example.com 8080 /p/a {x: ["1"], y: ["2"]} frag
+http://a.com/d
+f.txt f .txt /tmp/feat/pl benar hi there /tmp/feat/pl/f.txt
+["f.txt"]
+bob 3 benar ["x", "y"]
+..
+Ran 2 tests
+OK
+--- exit: 0

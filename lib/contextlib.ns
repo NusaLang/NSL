@@ -1,0 +1,75 @@
+class _GeneratorContextManager:
+    def __init__(self, gen):
+        self._gen = gen
+    def __enter__(self):
+        return next(self._gen)
+    def __exit__(self, t, value, tb):
+        if value is None:
+            try:
+                next(self._gen)
+            except StopIteration:
+                return False
+            return False
+        try:
+            self._gen.throw_(value)
+        except StopIteration:
+            return True
+        except Exception as e:
+            if e is value:
+                return False
+            raise
+        return True
+
+def contextmanager(fn):
+    def helper(*args, **kw):
+        return _GeneratorContextManager(fn(*args, **kw))
+    return helper
+
+class suppress:
+    def __init__(self, *exceptions):
+        self._exc = exceptions
+    def __enter__(self):
+        return None
+    def __exit__(self, t, value, tb):
+        if value is None:
+            return False
+        for cls in self._exc:
+            if isinstance(value, cls):
+                return True
+        return False
+
+class closing:
+    def __init__(self, thing):
+        self.thing = thing
+    def __enter__(self):
+        return self.thing
+    def __exit__(self, a, b, c):
+        self.thing.close()
+        return False
+
+class nullcontext:
+    def __init__(self, enter_result=None):
+        self.enter_result = enter_result
+    def __enter__(self):
+        return self.enter_result
+    def __exit__(self, a, b, c):
+        return False
+
+class ExitStack:
+    def __init__(self):
+        self._cbs = []
+    def enter_context(self, cm):
+        r = cm.__enter__()
+        self._cbs.append(cm)
+        return r
+    def callback(self, fn, *args, **kw):
+        self._cbs.append(lambda: fn(*args, **kw))
+    def __enter__(self):
+        return self
+    def __exit__(self, a, b, c):
+        for cm in reversed(self._cbs):
+            if callable(cm):
+                cm()
+            else:
+                cm.__exit__(None, None, None)
+        return False

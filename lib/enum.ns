@@ -1,0 +1,21 @@
+# Enum members are plain class attributes here (Color.RED is its value).
+class Enum:
+    pass
+
+class IntEnum(Enum):
+    pass
+
+class Flag(Enum):
+    pass
+
+class IntFlag(Flag):
+    pass
+
+_auto_counter = [0]
+
+def auto():
+    _auto_counter[0] += 1
+    return _auto_counter[0]
+
+def unique(cls):
+    return cls

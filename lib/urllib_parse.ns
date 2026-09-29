@@ -1,0 +1,184 @@
+_safe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-~"
+
+def quote(s, safe="/"):
+    s = str(s)
+    out = ""
+    for i in range(len(s)):
+        b = byte_di(s, i)
+        ch = chr(b) if b < 128 else ""
+        if b < 128 and (ch in _safe or ch in safe):
+            out += ch
+        else:
+            out += "%" + hex(b)[2:].upper().zfill(2)
+    return out
+
+def quote_plus(s, safe=""):
+    return quote(s, safe).replace("%20", "+")
+
+def unquote(s):
+    raw = []
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c == "%" and i + 2 < n + 1:
+            try:
+                raw.append(int(s[i + 1:i + 3], 16))
+                i += 3
+                continue
+            except Exception:
+                pass
+        for j in range(len(c)):
+            raw.append(byte_di(c, j))
+        i += 1
+    out = ""
+    k = 0
+    while k < len(raw):
+        b = raw[k]
+        if b < 0x80:
+            out += chr(b)
+            k += 1
+        elif b >= 0xF0 and k + 3 < len(raw) + 0:
+            out += chr(((b & 7) << 18) | ((raw[k + 1] & 63) << 12) | ((raw[k + 2] & 63) << 6) | (raw[k + 3] & 63))
+            k += 4
+        elif b >= 0xE0 and k + 2 < len(raw) + 0:
+            out += chr(((b & 15) << 12) | ((raw[k + 1] & 63) << 6) | (raw[k + 2] & 63))
+            k += 3
+        elif b >= 0xC0 and k + 1 < len(raw) + 0:
+            out += chr(((b & 31) << 6) | (raw[k + 1] & 63))
+            k += 2
+        else:
+            out += chr(b)
+            k += 1
+    return out
+
+def unquote_plus(s):
+    return unquote(s.replace("+", " "))
+
+def urlencode(query, doseq=False):
+    items = query.items() if isinstance(query, dict) else query
+    parts = []
+    for k, v in items:
+        if doseq and isinstance(v, (list, tuple)):
+            for x in v:
+                parts.append(quote_plus(k) + "=" + quote_plus(x))
+        else:
+            parts.append(quote_plus(k) + "=" + quote_plus(v))
+    return "&".join(parts)
+
+def parse_qs(qs, keep_blank_values=False):
+    out = {}
+    if qs == "":
+        return out
+    for pair in qs.split("&"):
+        if pair == "":
+            continue
+        k, _, v = pair.partition("=")
+        k = unquote_plus(k)
+        v = unquote_plus(v)
+        if v == "" and not keep_blank_values:
+            continue
+        if k not in out:
+            out[k] = []
+        out[k].append(v)
+    return out
+
+def parse_qsl(qs, keep_blank_values=False):
+    out = []
+    d = parse_qs(qs, keep_blank_values)
+    for k in d:
+        for v in d[k]:
+            out.append((k, v))
+    return out
+
+class ParseResult:
+    def __init__(self, scheme, netloc, path, params, query, fragment):
+        self.scheme = scheme
+        self.netloc = netloc
+        self.path = path
+        self.params = params
+        self.query = query
+        self.fragment = fragment
+    @property
+    def hostname(self):
+        h = self.netloc.split("@")[-1]
+        return h.split(":")[0] if h != "" else None
+    @property
+    def port(self):
+        h = self.netloc.split("@")[-1]
+        if ":" in h:
+            return int(h.split(":")[1])
+        return None
+    @property
+    def username(self):
+        return self.netloc.split("@")[0].split(":")[0] if "@" in self.netloc else None
+    @property
+    def password(self):
+        return self.netloc.split("@")[0].split(":")[1] if "@" in self.netloc and ":" in self.netloc.split("@")[0] else None
+    def geturl(self):
+        return urlunparse(self)
+    def __str__(self):
+        return self.geturl()
+
+def urlparse(url, scheme=""):
+    rest = url
+    fragment = ""
+    query = ""
+    netloc = ""
+    if "#" in rest:
+        rest, _, fragment = rest.partition("#")
+    if "?" in rest:
+        rest, _, query = rest.partition("?")
+    sch = scheme
+    i = rest.find(":")
+    if i > 0 and rest[:i].replace("+", "").replace("-", "").replace(".", "").isalnum():
+        sch = rest[:i].lower()
+        rest = rest[i + 1:]
+    if rest.startswith("//"):
+        rest = rest[2:]
+        j = rest.find("/")
+        if j < 0:
+            netloc = rest
+            rest = ""
+        else:
+            netloc = rest[:j]
+            rest = rest[j:]
+    return ParseResult(sch, netloc, rest, "", query, fragment)
+
+urlsplit = urlparse
+
+def urlunparse(p):
+    url = p.path
+    if p.netloc != "" or (p.scheme != "" and p.path.startswith("//")):
+        url = "//" + p.netloc + url
+    if p.scheme != "":
+        url = p.scheme + ":" + url
+    if p.query != "":
+        url = url + "?" + p.query
+    if p.fragment != "":
+        url = url + "#" + p.fragment
+    return url
+
+urlunsplit = urlunparse
+
+def urljoin(base, url):
+    if url == "":
+        return base
+    if "://" in url:
+        return url
+    b = urlparse(base)
+    if url.startswith("//"):
+        return b.scheme + ":" + url
+    if url.startswith("/"):
+        path = url
+    else:
+        dir = b.path[:b.path.rfind("/") + 1] if "/" in b.path else "/"
+        path = dir + url
+    segs = []
+    for s in path.split("/"):
+        if s == "..":
+            if len(segs) > 1:
+                segs.pop()
+        elif s != ".":
+            segs.append(s)
+    return b.scheme + "://" + b.netloc + "/".join(segs)

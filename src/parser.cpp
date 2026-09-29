@@ -65,7 +65,8 @@ const std::vector<std::string>& exceptionNames() {
         "OSError", "IOError", "FileNotFoundError", "PermissionError", "TimeoutError", "ConnectionError",
         "StopIteration", "AssertionError", "KeyboardInterrupt", "SystemExit", "ImportError", "ModuleNotFoundError",
         "RecursionError", "UnicodeError", "OverflowError", "EOFError", "Warning", "UserWarning",
-        "DeprecationWarning", "GeneratorExit", "StopAsyncIteration"};
+        "DeprecationWarning", "GeneratorExit", "StopAsyncIteration", "FileExistsError", "IsADirectoryError",
+        "NotADirectoryError", "BrokenPipeError", "UnicodeDecodeError", "UnicodeEncodeError"};
     return n;
 }
 }  // namespace
@@ -125,7 +126,13 @@ StmtPtr Parser::statement() {
     }
     else if (match(TokenType::Let)) result = letStmt();
     else if (match(TokenType::Fn)) result = fnDecl();
-    else if (match(TokenType::Class)) result = classDecl();
+    else if (match(TokenType::Class)) {
+        result = classDecl();
+        if (classPre_) {  // `class A(mod.B)`: the hidden alias of the parent goes first
+            pendingStmts_.insert(pendingStmts_.begin(), std::move(result));
+            result = std::move(classPre_);
+        }
+    }
     else if (match(TokenType::Struct)) result = structDecl();
     else if (match(TokenType::EnumKw)) result = enumDecl();
     else if (match(TokenType::Try)) result = tryStmt();
@@ -437,13 +444,21 @@ StmtPtr Parser::classDecl() {
     } else if (match(TokenType::LParen)) {  // Python: class A(B):
         if (!check(TokenType::RParen)) {
             parentName = expect(TokenType::Ident, i18n::tr("Nama kelas induk diharapkan", "Expected parent class name")).text;
-            bool dotted = false;
-            while (match(TokenType::Dot)) {  // abc.ABC, enum.Enum: a module attribute, not a class we can extend
-                expect(TokenType::Ident, i18n::tr("Nama kelas induk diharapkan", "Expected parent class name"));
-                dotted = true;
+            if (check(TokenType::Dot)) {  // unittest.TestCase: bind the module attribute to a hidden name first
+                Span psp = peek().span;
+                ExprPtr chain = mkIdent(parentName, psp);
+                while (match(TokenType::Dot)) {
+                    std::string field = expect(TokenType::Ident, i18n::tr("Nama kelas induk diharapkan", "Expected parent class name")).text;
+                    chain = std::make_unique<IndexExpr>(std::move(chain), LiteralExpr::makeString(field));
+                    chain->span = psp;
+                }
+                parentName = "__parent" + std::to_string(hiddenCounter_++);
+                classPre_ = mkLet(parentName, std::move(chain), psp);
+            } else if (parentName == "object") {
+                parentName.clear();
+            } else {
+                noteName(parentName);
             }
-            if (dotted || parentName == "object") parentName.clear();
-            else noteName(parentName);
             // more bases / keywords (class A(B, C), metaclass=M): only the first base is used
             int depth = 0;
             while (!atEnd() && !(depth == 0 && check(TokenType::RParen))) {
@@ -781,9 +796,13 @@ StmtPtr Parser::withStmt() {
     }
     outer.push_back(std::make_unique<TryStmt>(std::move(body), err, std::make_unique<BlockStmt>(std::move(onError)),
                                               std::make_unique<BlockStmt>(std::move(fin))));
-    StmtPtr blk = std::make_unique<BlockStmt>(std::move(outer));
-    blk->span = sp;
-    return blk;
+    // Spliced flat into the enclosing block: like Python, `as name` stays visible after the with.
+    StmtPtr first = std::move(outer.front());
+    for (size_t i = 1; i < outer.size(); i++) {
+        outer[i]->span = sp;
+        pendingStmts_.push_back(std::move(outer[i]));
+    }
+    return first;
 }
 
 StmtPtr Parser::throwStmt() {

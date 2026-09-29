@@ -34,6 +34,9 @@ Value call(const std::string& name, std::vector<Value>& args, const ValueMap* kw
 // Canonical builtin implementing method `name` on `target`, or nullptr.
 const char* methodBuiltin(const Value& target, const std::string& name);
 
+// Python ordering of two values (numbers, strings, lists/tuples element-wise): <0, 0, >0. Throws PyError.
+int compareValues(const Value& a, const Value& b);
+
 std::string formatValue(const Value& v, const std::string& spec);
 
 }  // namespace pylib

@@ -67,6 +67,7 @@ private:
     std::vector<std::string> catchVarStack_;      // innermost `except` handler's exception variable (bare `raise`)
     std::vector<std::string> usedExc_;            // exception class names this file mentions
     std::vector<std::string> declaredClasses_;    // classes this file defines itself
+    StmtPtr classPre_;
     void noteName(const std::string& name);
     void injectExceptionClasses(Program& program);
     StmtPtr yieldFromStmt(Span start);

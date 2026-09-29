@@ -199,6 +199,8 @@ std::string toBase(unsigned long long n, int base, bool upper) {
 
 void setMethodHook(MethodHook hook) { g_methodHook = std::move(hook); }
 
+int compareValues(const Value& a, const Value& b) { return cmpValues(a, b); }
+
 std::string formatValue(const Value& v, const std::string& spec) {
     if (spec.empty()) return v.stringify();
     size_t i = 0;

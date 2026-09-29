@@ -68,29 +68,6 @@ def dump(obj, f, indent=None):
 def load(f):
     return json_decode(f.read())
 )NSL"},
-{"os", R"NSL(
-getcwd = _os_getcwd
-chdir = _os_chdir
-listdir = _os_listdir
-mkdir = _os_mkdir
-makedirs = _os_makedirs
-remove = _os_remove
-unlink = _os_remove
-rmdir = _os_rmdir
-rename = _os_rename
-system = _os_system
-getpid = _os_getpid
-cpu_count = _os_cpu_count
-environ = _os_environ()
-sep = "/"
-name = "posix"
-linesep = "\n"
-def getenv(key, default=None):
-    return _os_getenv(key, default)
-path = {"join": _os_join, "exists": _os_exists, "isfile": _os_isfile, "isdir": _os_isdir,
-        "getsize": _os_getsize, "abspath": _os_abspath, "basename": _os_basename,
-        "dirname": _os_dirname, "splitext": _os_splitext, "expanduser": _os_expanduser, "sep": "/"}
-)NSL"},
 {"sys", R"NSL(
 argv = _sys_argv()
 platform = _sys_platform()
@@ -263,28 +240,6 @@ def deepcopy(x):
     if isinstance(x, dict):
         return {k: deepcopy(x[k]) for k in x}
     return x
-)NSL"},
-{"functools", R"NSL(
-def reduce(f, xs, init=None):
-    it = list(xs)
-    if init is None:
-        acc = it[0]
-        it = it[1:]
-    else:
-        acc = init
-    for x in it:
-        acc = f(acc, x)
-    return acc
-)NSL"},
-{"collections", R"NSL(
-def Counter(items=None):
-    c = {}
-    for x in (items or []):
-        c[x] = c.get(x, 0) + 1
-    return c
-OrderedDict = dict
-def defaultdict(factory=None):
-    return {}
 )NSL"},
 {"subprocess", R"NSL(
 class CompletedProcess:
@@ -461,6 +416,18 @@ class IOError(OSError):
 class FileNotFoundError(OSError):
     pass
 class PermissionError(OSError):
+    pass
+class FileExistsError(OSError):
+    pass
+class IsADirectoryError(OSError):
+    pass
+class NotADirectoryError(OSError):
+    pass
+class BrokenPipeError(OSError):
+    pass
+class UnicodeDecodeError(UnicodeError):
+    pass
+class UnicodeEncodeError(UnicodeError):
     pass
 class TimeoutError(OSError):
     pass
@@ -655,6 +622,16 @@ class NextIter(Iter):
 
 def adapt(obj):
     return NextIter(obj)
+class BoundMethod:
+    def __init__(self, obj, name):
+        self._obj = obj
+        self.__name__ = name
+    def __call__(self, *args):
+        return _callmeth(self._obj, self.__name__, list(args))
+
+def bound(obj, name):
+    return BoundMethod(obj, name)
+
 def mk(body):
     if _isvmgen(body):
         return VmGenerator(body)
@@ -668,21 +645,24 @@ def calliter(fn, sentinel):
 class File:
     def __init__(self, path, mode="r"):
         self.path = path
+        self.name = path
         self.mode = mode
         self.closed = False
         self._pos = 0
         self._buf = ""
         self._dirty = False
+        self._through = ("w" in mode or "a" in mode) and "+" not in mode
         if "r" in mode or "a" in mode:
             if file_ada(path):
                 self._buf = baca_file(path)
             elif "r" in mode:
-                raise "FileNotFoundError: " + path
+                raise FileNotFoundError("[Errno 2] No such file or directory: '" + path + "'")
         if "w" in mode:
-            self._dirty = True
+            tulis_file(path, "")
+            self._dirty = "+" in mode
     def read(self, n=None):
         rest = self._buf[self._pos:]
-        if n is not None:
+        if n is not None and n >= 0:
             rest = rest[:n]
         self._pos = self._pos + len(rest)
         return rest
@@ -698,12 +678,25 @@ class File:
             lines.append(self.readline())
         return lines
     def write(self, s):
-        self._buf = self._buf + str(s)
-        self._dirty = True
-        return len(str(s))
+        s = str(s)
+        if self._through:
+            _file_append(self.path, s)
+        else:
+            self._buf = self._buf + s
+            self._dirty = True
+        return len(s)
     def writelines(self, lines):
         for l in lines:
             self.write(l)
+    def seek(self, pos, whence=0):
+        self._pos = pos
+        return pos
+    def tell(self):
+        return self._pos
+    def readable(self):
+        return "r" in self.mode or "+" in self.mode
+    def writable(self):
+        return "w" in self.mode or "a" in self.mode or "+" in self.mode
     def flush(self):
         if self._dirty:
             tulis_file(self.path, self._buf)
@@ -712,6 +705,13 @@ class File:
         if not self.closed:
             self.flush()
         self.closed = True
+    def __iter__(self):
+        return iter(self.readlines())
+    def __enter__(self):
+        return self
+    def __exit__(self, a, b, c):
+        self.close()
+        return False
 )NSL"},
     };
     return m;
@@ -719,9 +719,14 @@ class File:
 
 }  // namespace
 
+const char* embeddedLibModule(const std::string& name);  // generated: stdlib_embed.cpp (from lib/*.ns)
+
 const char* embeddedModule(const std::string& name) {
     auto it = modules().find(name);
-    return it == modules().end() ? nullptr : it->second;
+    if (it != modules().end()) return it->second;
+    std::string flat = name;  // import urllib.parse -> lib/urllib_parse.ns
+    for (char& c : flat) if (c == '/' || c == '.') c = '_';
+    return embeddedLibModule(flat);
 }
 
 }  // namespace pystd

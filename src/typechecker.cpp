@@ -136,6 +136,7 @@ TypeChecker::StaticType TypeChecker::inferExpr(const Expr* expr) {
                               l.name == "larik" || r.name == "larik")) {
                 return {l.name == "angka" || l.name.empty() ? r.name : l.name};
             }
+            if (l.name.empty() || r.name.empty()) return {};  // one side unknown (maybe an object with __truediv__, ...)
             if (!l.name.empty() && l.name != "angka") {
                 error("operator '" + op + i18n::tr("' butuh angka, dapat ", "' needs a number, got ") + l.name +
                           i18n::tr(" di sisi kiri", " on the left side"),

@@ -94,7 +94,7 @@ const std::vector<std::string>& names() {
             "_sys_write", "_sys_platform", "_time_monotonic", "_time_strftime", "_time_parts", "_time_mktime",
             "_random_random", "_random_randint", "_random_uniform", "_random_choice", "_random_shuffle",
             "_random_sample", "_random_seed", "_random_gauss", "_re_exec", "_re_sub", "_re_split", "_re_findall",
-            "_stdin_read", "_readline", "_os_mtime", "_os_copyfile", "_os_rmtree", "_os_join", "_os_basename", "_os_dirname", "_os_splitext", "_os_expanduser"};
+            "_stdin_read", "_readline", "_file_append", "_os_mtime", "_os_copyfile", "_os_rmtree", "_os_join", "_os_basename", "_os_dirname", "_os_splitext", "_os_expanduser"};
         for (const auto& kv : mathUnary()) v.push_back("_math_" + kv.first);
         return v;
     }();
@@ -346,6 +346,12 @@ Value call(const std::string& name, std::vector<Value>& a, const ValueMap* kw, c
         char b[4096];
         std::string cwd = getcwd(b, sizeof b) ? b : "";
         return Value::fromString(cwd + "/" + p);
+    }
+    if (name == "_file_append") {
+        std::ofstream out(str(a, 0, "write"), std::ios::binary | std::ios::app);
+        if (!out) fail("OSError: tidak bisa menulis '" + str(a, 0, "write") + "'");
+        out << str(a, 1, "write");
+        return Value::null();
     }
     if (name == "_os_mtime") {
         struct stat st;

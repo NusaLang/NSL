@@ -304,7 +304,7 @@ bool isRegularFile(const std::string& path) {
 const std::vector<std::string>& builtinNames() {
     static const std::vector<std::string> names = {
         "cetak", "panjang", "tambah", "hapus_akhir", "potong", "gabung", "pisah",
-        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "iter", "next", "_with_enter", "_with_exit", "getattr", "setattr", "hasattr", "delattr", "vars", "dir", "id", "hash", "issubclass", "__get", "_exc_match", "_exc_wrap", "_defaultdict", "_namedtuple", "_gennew", "_genresume", "_genclose", "_isvmgen", "pegang", "_peta", "_in", "_callkw", "_callkwm", "_close", "_go",
+        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "iter", "next", "_callmeth", "_with_enter", "_with_exit", "getattr", "setattr", "hasattr", "delattr", "vars", "dir", "id", "hash", "issubclass", "__get", "_exc_match", "_exc_wrap", "_defaultdict", "_namedtuple", "_gennew", "_genresume", "_genclose", "_isvmgen", "pegang", "_peta", "_in", "_callkw", "_callkwm", "_close", "_go",
         "base64_encode", "base64_decode",
         "baca_file", "tulis_file", "file_ada",
         "tcp_konek", "tcp_kirim", "tcp_terima", "tcp_tutup",
@@ -768,6 +768,12 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
                     if (op == ">") return Value::fromBool(left.str() > right.str());
                     return Value::fromBool(left.str() >= right.str());
                 }
+                if ((left.type == ValueType::Array || left.type == ValueType::VmArray) &&
+                    (right.type == ValueType::Array || right.type == ValueType::VmArray)) {
+                    int c;
+                    try { c = pylib::compareValues(left, right); } catch (const pylib::PyError& e) { throw RuntimeError(e.what()); }
+                    return Value::fromBool(op == "<" ? c < 0 : op == "<=" ? c <= 0 : op == ">" ? c > 0 : c >= 0);
+                }
                 if (left.type == ValueType::Instance) {
                     Value r;
                     const char* dn = op == "<" ? "__lt__" : op == "<=" ? "__le__" : op == ">" ? "__gt__" : "__ge__";
@@ -1094,8 +1100,10 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         if (args[1].type == ValueType::Null) {
             ea = {Value::null(), Value::null(), Value::null()};
         } else {
-            Value t = args[1].type == ValueType::Instance ? Value::fromClass(args[1].instance()->classInfo) : Value::fromString(args[1].typeName());
-            ea = {t, args[1], Value::null()};
+            std::vector<Value> wa{args[1]};
+            Value err = callBuiltin("_exc_wrap", wa);  // __exit__ gets an exception object, as in Python
+            Value t = err.type == ValueType::Instance ? Value::fromClass(err.instance()->classInfo) : Value::fromString(err.typeName());
+            ea = {t, err, Value::null()};
         }
         Value r;
         if (callInstMethod(this, m, "__exit__", ea, &r)) return Value::fromBool(args[1].type != ValueType::Null && r.truthy());
@@ -1660,6 +1668,12 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
                     lookupMethod(o.instance()->classInfo, k) != nullptr || classAttrOf(o.instance()->classInfo.get(), k) != nullptr ||
                     methodKindOf(o.instance()->classInfo.get(), k) != 0;
             if (found) got = vmIsActive() ? vmIndexGet(o, args[1]) : indexGet(o, args[1]);
+            if (found && name == "getattr" && (got.type == ValueType::Fn || got.type == ValueType::VmFn) &&
+                !o.instance()->fields->count(k) && methodKindOf(o.instance()->classInfo.get(), k) == 0) {
+                Value mod = doImport("__gen");  // a method fetched by name stays bound to its object
+                std::vector<Value> ba{o, args[1]};
+                got = vmIsActive() ? vmCallValue((*mod.map())["bound"], ba, this) : callValue((*mod.map())["bound"], ba, Span{});
+            }
         } else if (o.type == ValueType::Map) {
             auto it = o.map()->find(args[1].str());
             found = it != o.map()->end();
@@ -1673,6 +1687,13 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         if (found) return got;
         if (args.size() == 3) return args[2];
         throw RuntimeError("AttributeError: '" + std::string(o.typeName()) + "' object has no attribute '" + args[1].str() + "'");
+    }
+    if (name == "_callmeth") {  // (object, name, [args]) -> object.name(*args)
+        need(3);
+        std::vector<Value> a = arrayElements(args[2]);
+        Value r;
+        if (!callInstMethod(this, args[0], args[1].str().c_str(), a, &r)) throw RuntimeError("AttributeError: objek tidak punya metode '" + args[1].str() + "'");
+        return r;
     }
     if (name == "setattr") {
         need(3);
@@ -1745,6 +1766,8 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
             {"StopIteration", "Exception"}, {"StopAsyncIteration", "Exception"}, {"AssertionError", "Exception"},
             {"ImportError", "Exception"}, {"ModuleNotFoundError", "ImportError"}, {"EOFError", "Exception"},
             {"Warning", "Exception"}, {"UserWarning", "Warning"}, {"DeprecationWarning", "Warning"},
+            {"FileExistsError", "OSError"}, {"IsADirectoryError", "OSError"}, {"NotADirectoryError", "OSError"},
+            {"BrokenPipeError", "OSError"}, {"UnicodeDecodeError", "UnicodeError"}, {"UnicodeEncodeError", "UnicodeError"},
             {"KeyboardInterrupt", "BaseException"}, {"SystemExit", "BaseException"}, {"GeneratorExit", "BaseException"}};
         // What kind of error a thrown non-object is: a plain string counts as Exception; the interpreter's
         // own errors ({pesan: "..."}) are told apart by their message.

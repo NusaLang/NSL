@@ -1,0 +1,29 @@
+import random
+
+class UUID:
+    def __init__(self, hex):
+        self.hex = hex.replace("-", "")
+    def __str__(self):
+        h = self.hex
+        return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
+    def __repr__(self):
+        return "UUID('" + str(self) + "')"
+    def __eq__(self, o):
+        return isinstance(o, UUID) and self.hex == o.hex
+    @property
+    def int(self):
+        n = 0
+        for c in self.hex:
+            n = n * 16 + "0123456789abcdef".index(c)
+        return n
+
+def uuid4():
+    digits = "0123456789abcdef"
+    h = ""
+    for i in range(32):
+        h += digits[random.randint(0, 15)]
+    h = h[0:12] + "4" + h[13:16] + digits[8 + random.randint(0, 3)] + h[17:32]
+    return UUID(h)
+
+def UUID_from(text):
+    return UUID(text)

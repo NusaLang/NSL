@@ -1902,7 +1902,13 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 } else {
                     Value ov;
                     const char* dn = op == Op::Lt ? "__lt__" : op == Op::Lte ? "__le__" : op == Op::Gt ? "__gt__" : "__ge__";
-                    if (a.type == ValueType::Instance && instanceOpHook() && (syncTop(), instanceOpHook()(dn, a, b, ov))) {
+                    bool seqs = (a.type == ValueType::Array || a.type == ValueType::VmArray) &&
+                                (b.type == ValueType::Array || b.type == ValueType::VmArray);
+                    if (seqs) {  // tuples / lists compare element by element
+                        int c;
+                        try { c = pylib::compareValues(a, b); } catch (const pylib::PyError& e) { throw VmRuntimeError(e.what()); }
+                        r = op == Op::Lt ? c < 0 : op == Op::Lte ? c <= 0 : op == Op::Gt ? c > 0 : c >= 0;
+                    } else if (a.type == ValueType::Instance && instanceOpHook() && (syncTop(), instanceOpHook()(dn, a, b, ov))) {
                         r = ov.truthy();
                     } else {
                         throw VmRuntimeError("Operand perbandingan harus dua angka atau dua teks");

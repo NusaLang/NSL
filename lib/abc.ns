@@ -1,0 +1,10 @@
+class ABC:
+    pass
+
+ABCMeta = ABC
+
+def abstractmethod(fn):
+    return fn
+
+def abstractproperty(fn):
+    return fn

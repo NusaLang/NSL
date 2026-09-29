@@ -1,0 +1,203 @@
+# itertools: lazy iterators built from generators.
+def count(start=0, step=1):
+    n = start
+    while True:
+        yield n
+        n += step
+
+def cycle(iterable):
+    saved = []
+    for x in iterable:
+        yield x
+        saved.append(x)
+    while saved:
+        for x in saved:
+            yield x
+
+def repeat(obj, times=None):
+    if times is None:
+        while True:
+            yield obj
+    else:
+        for _ in range(times):
+            yield obj
+
+def chain(*iterables):
+    for it in iterables:
+        for x in it:
+            yield x
+
+def chain_from_iterable(iterables):
+    for it in iterables:
+        for x in it:
+            yield x
+
+def islice(iterable, *args):
+    start = 0
+    step = 1
+    if len(args) == 1:
+        stop = args[0]
+    elif len(args) == 2:
+        start = args[0]
+        stop = args[1]
+    else:
+        start = args[0]
+        stop = args[1]
+        step = args[2]
+    if start is None:
+        start = 0
+    if step is None:
+        step = 1
+    if stop is not None and start >= stop:
+        return
+    i = 0
+    nxt = start
+    for x in iterable:
+        if i == nxt:
+            yield x
+            nxt += step
+            if stop is not None and nxt >= stop:
+                return
+        i += 1
+
+def takewhile(pred, iterable):
+    for x in iterable:
+        if not pred(x):
+            return
+        yield x
+
+def dropwhile(pred, iterable):
+    dropping = True
+    for x in iterable:
+        if dropping and pred(x):
+            continue
+        dropping = False
+        yield x
+
+def filterfalse(pred, iterable):
+    for x in iterable:
+        if pred is None:
+            if not x:
+                yield x
+        elif not pred(x):
+            yield x
+
+def starmap(func, iterable):
+    for args in iterable:
+        yield func(*args)
+
+def compress(data, selectors):
+    for d, s in zip(data, selectors):
+        if s:
+            yield d
+
+def accumulate(iterable, func=None, initial=None):
+    total = initial
+    started = initial is not None
+    if started:
+        yield total
+    for x in iterable:
+        if not started:
+            total = x
+            started = True
+        elif func is None:
+            total = total + x
+        else:
+            total = func(total, x)
+        yield total
+
+def pairwise(iterable):
+    prev = None
+    first = True
+    for x in iterable:
+        if first:
+            first = False
+        else:
+            yield (prev, x)
+        prev = x
+
+def batched(iterable, n):
+    batch = []
+    for x in iterable:
+        batch.append(x)
+        if len(batch) == n:
+            yield tuple(batch)
+            batch = []
+    if batch:
+        yield tuple(batch)
+
+def groupby(iterable, key=None):
+    started = False
+    cur = None
+    group = []
+    for x in iterable:
+        k = x if key is None else key(x)
+        if started and k == cur:
+            group.append(x)
+        else:
+            if started:
+                yield (cur, group)
+            cur = k
+            group = [x]
+            started = True
+    if started:
+        yield (cur, group)
+
+def zip_longest(*iterables, **kw):
+    fill = kw.get("fillvalue", None)
+    lists = [list(it) for it in iterables]
+    n = 0
+    for l in lists:
+        if len(l) > n:
+            n = len(l)
+    for i in range(n):
+        yield tuple([l[i] if i < len(l) else fill for l in lists])
+
+def tee(iterable, n=2):
+    items = list(iterable)
+    return tuple([iter(items) for _ in range(n)])
+
+def product(*iterables, **kw):
+    reps = kw.get("repeat", 1)
+    pools = [list(p) for p in iterables] * reps
+    result = [[]]
+    for pool in pools:
+        result = [x + [y] for x in result for y in pool]
+    for prod in result:
+        yield tuple(prod)
+
+def permutations(iterable, r=None):
+    pool = list(iterable)
+    n = len(pool)
+    if r is None:
+        r = n
+    def rec(prefix, remaining):
+        if len(prefix) == r:
+            yield tuple(prefix)
+            return
+        for i in range(len(remaining)):
+            yield from rec(prefix + [remaining[i]], remaining[:i] + remaining[i + 1:])
+    if r <= n:
+        yield from rec([], pool)
+
+def combinations(iterable, r):
+    pool = list(iterable)
+    n = len(pool)
+    def rec(start, prefix):
+        if len(prefix) == r:
+            yield tuple(prefix)
+            return
+        for i in range(start, n):
+            yield from rec(i + 1, prefix + [pool[i]])
+    yield from rec(0, [])
+
+def combinations_with_replacement(iterable, r):
+    pool = list(iterable)
+    n = len(pool)
+    def rec(start, prefix):
+        if len(prefix) == r:
+            yield tuple(prefix)
+            return
+        for i in range(start, n):
+            yield from rec(i, prefix + [pool[i]])
+    yield from rec(0, [])

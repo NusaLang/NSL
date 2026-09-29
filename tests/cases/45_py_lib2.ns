@@ -1,0 +1,67 @@
+import collections
+from collections import Counter, defaultdict, deque, namedtuple, OrderedDict
+import functools
+from functools import partial, reduce, lru_cache
+import fnmatch, glob, shutil, uuid, io, tempfile, contextlib, os, platform, secrets
+from typing import List, Dict, Optional
+c = Counter("abracadabra")
+print(c.most_common(2), c["a"], c["z"], c.total())
+c.update("aa")
+print(c["a"])
+d = defaultdict(list)
+d["x"].append(1)
+d["x"].append(2)
+d["y"].append(3)
+print(d, len(d))
+dd = defaultdict(int)
+for w in "a b a c a".split():
+    dd[w] += 1
+print(dd)
+q = deque([1, 2, 3], maxlen=3)
+q.append(4)
+q.appendleft(0)
+print(q, len(q), q[0], list(q), q.popleft(), q.pop())
+while q:
+    q.popleft()
+print("empty", len(q))
+P = namedtuple("P", ["x", "y"])
+p = P(1, 2)
+print(p.x + p.y)
+add3 = partial(lambda a, b, c: a + b + c, 1, 2)
+print(add3(3), reduce(lambda a, b: a * b, [1, 2, 3, 4]))
+@lru_cache(maxsize=None)
+def fib(n):
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+print(fib(30))
+print(fnmatch.fnmatch("foo.py", "*.py"), fnmatch.filter(["a.py", "b.txt"], "*.py"))
+os.makedirs("/tmp/nusa_lib_gl/sub")
+open("/tmp/nusa_lib_gl/a.txt", "w").write("A")
+open("/tmp/nusa_lib_gl/sub/b.txt", "w").write("BB")
+print(glob.glob("/tmp/nusa_lib_gl/*.txt"), glob.glob("/tmp/nusa_lib_gl/**/*.txt", recursive=True))
+shutil.copy("/tmp/nusa_lib_gl/a.txt", "/tmp/nusa_lib_gl/c.txt")
+print(sorted(os.listdir("/tmp/nusa_lib_gl")))
+for root, dirs, files in os.walk("/tmp/nusa_lib_gl"):
+    print(root.replace("/tmp/nusa_lib_gl", "."), sorted(dirs), sorted(files))
+shutil.rmtree("/tmp/nusa_lib_gl")
+print(os.path.exists("/tmp/nusa_lib_gl"))
+u = uuid.uuid4()
+print(len(str(u)), str(u)[14])
+s = io.StringIO()
+s.write("hello\nworld\n")
+s.seek(0)
+print(s.readline().strip(), s.getvalue().count("o"))
+with tempfile.TemporaryDirectory() as td:
+    print(os.path.isdir(td))
+print(os.path.isdir(td))
+@contextlib.contextmanager
+def managed(x):
+    print("open", x)
+    try:
+        yield x * 2
+    finally:
+        print("close", x)
+with managed(4) as v:
+    print("in", v)
+with contextlib.suppress(KeyError):
+    raise KeyError("z")
+print(platform.system(), len(secrets.token_hex(8)))

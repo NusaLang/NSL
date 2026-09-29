@@ -1,0 +1,24 @@
+[["a", 5], ["b", 2]] 5 0 11
+7
+{x: [1, 2], y: [3]} 2
+{a: 3, b: 1, c: 1}
+deque([2]) 3 0 [0, 2, 3] 0 3
+empty 0
+3
+6 24
+832040
+benar ["a.py"]
+["/tmp/nusa_lib_gl/a.txt"] ["/tmp/nusa_lib_gl/a.txt", "/tmp/nusa_lib_gl/sub/b.txt"]
+["a.txt", "c.txt", "sub"]
+. ["sub"] ["a.txt", "c.txt"]
+./sub [] ["b.txt"]
+salah
+36 4
+hello 2
+benar
+salah
+open 4
+in 8
+close 4
+Linux 16
+--- exit: 0
