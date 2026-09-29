@@ -263,14 +263,27 @@ std::unique_ptr<FnDeclStmt> Parser::fnDeclBody(std::string name) {
         advance();
         match(TokenType::Comma);
     }
+    int restIndex = -1, kwIndex = -1;
+    auto paramName = [&]() {
+        // *args / **kwargs
+        if (check(TokenType::Star) || check(TokenType::StarStar)) {
+            bool kw = check(TokenType::StarStar);
+            advance();
+            std::string n = expect(TokenType::Ident, i18n::tr("Nama parameter diharapkan", "Expected parameter name")).text;
+            (kw ? kwIndex : restIndex) = static_cast<int>(params.size());
+            return n;
+        }
+        return expect(TokenType::Ident, i18n::tr("Nama parameter diharapkan", "Expected parameter name")).text;
+    };
     if (!check(TokenType::RParen)) {
-        params.push_back(expect(TokenType::Ident, i18n::tr("Nama parameter diharapkan", "Expected parameter name")).text);
+        params.push_back(paramName());
         paramTypes.push_back(match(TokenType::Colon)
                                   ? expect(TokenType::Ident, i18n::tr("Nama tipe diharapkan setelah ':'", "Expected type name after ':'")).text
                                   : "");
         defaults.push_back(match(TokenType::Eq) ? expression() : nullptr);
         while (match(TokenType::Comma)) {
-            params.push_back(expect(TokenType::Ident, i18n::tr("Nama parameter diharapkan", "Expected parameter name")).text);
+            if (check(TokenType::RParen)) break;
+            params.push_back(paramName());
             paramTypes.push_back(match(TokenType::Colon)
                                       ? expect(TokenType::Ident, i18n::tr("Nama tipe diharapkan setelah ':'", "Expected type name after ':'")).text
                                       : "");
@@ -288,12 +301,13 @@ std::unique_ptr<FnDeclStmt> Parser::fnDeclBody(std::string name) {
         if (defaults[i]) { minArgs = static_cast<int>(i); break; }
     }
     for (size_t i = static_cast<size_t>(minArgs); i < defaults.size(); i++) {
-        if (!defaults[i]) throw ParseError(i18n::tr("Parameter tanpa nilai default nggak boleh setelah yang punya default",
+        if (!defaults[i] && static_cast<int>(i) != restIndex && static_cast<int>(i) != kwIndex) throw ParseError(i18n::tr("Parameter tanpa nilai default nggak boleh setelah yang punya default",
                                                     "Non-default parameter follows a default one"), peek());
     }
     // `p = default` becomes `if p == None: p = default` at the top of the body (a missing
     // argument arrives as None).
     for (size_t i = defaults.size(); i-- > static_cast<size_t>(minArgs);) {
+        if (!defaults[i]) continue;  // the *args / **kwargs slots
         Span sp = defaults[i]->span;
         ExprPtr cond = mkBin("==", mkIdent(params[i], sp), LiteralExpr::makeNull(), sp);
         ExprPtr assign = std::make_unique<AssignExpr>(params[i], std::move(defaults[i]));
@@ -308,7 +322,16 @@ std::unique_ptr<FnDeclStmt> Parser::fnDeclBody(std::string name) {
     }
     auto decl = std::make_unique<FnDeclStmt>(std::move(name), std::move(params), std::move(body),
                                               std::move(paramTypes), std::move(returnType));
-    if (minArgs < static_cast<int>(decl->params.size())) decl->minArgs = minArgs;
+    decl->restIndex = restIndex;
+    decl->kwIndex = kwIndex;
+    // With *args/**kw the required count is the ordinary parameters that have no default.
+    if (restIndex >= 0 || kwIndex >= 0) {
+        int ordinary = restIndex >= 0 ? restIndex : kwIndex;
+        int req = std::min(minArgs, ordinary);
+        decl->minArgs = req;
+    } else if (minArgs < static_cast<int>(decl->params.size())) {
+        decl->minArgs = minArgs;
+    }
     return decl;
 }
 
@@ -1134,7 +1157,34 @@ ExprPtr Parser::call() {
             advance();
             std::vector<ExprPtr> args;
             std::vector<ExprPtr> kwFlat;  // name, value, name, value ... for name=value arguments
+            std::vector<ExprPtr> posParts;    // pieces of the positional list when *spread is used
+            std::vector<ExprPtr> kwParts;     // map pieces: named pairs and **spread maps
+            bool spread = false;
+            auto flushNamed = [&]() {
+                if (kwFlat.empty()) return;
+                kwParts.push_back(mkCall("_peta", std::move(kwFlat), start));
+                kwFlat.clear();
+            };
             auto parseArg = [&]() {
+                if (check(TokenType::Star)) {
+                    advance();
+                    spread = true;
+                    if (!args.empty()) {
+                        posParts.push_back(std::make_unique<ArrayLitExpr>(std::move(args)));
+                        args.clear();
+                    }
+                    std::vector<ExprPtr> one;
+                    one.push_back(expression());
+                    posParts.push_back(mkCall("list", std::move(one), start));
+                    return;
+                }
+                if (check(TokenType::StarStar)) {
+                    advance();
+                    spread = true;
+                    flushNamed();
+                    kwParts.push_back(expression());
+                    return;
+                }
                 if (check(TokenType::Ident) && peekAt(1).type == TokenType::Eq) {
                     kwFlat.push_back(LiteralExpr::makeString(peek().text));
                     kwFlat.back()->span = peek().span;
@@ -1142,7 +1192,7 @@ ExprPtr Parser::call() {
                     advance();
                     kwFlat.push_back(expression());
                 } else {
-                    if (!kwFlat.empty()) {
+                    if (!kwFlat.empty() || !kwParts.empty()) {
                         throw ParseError(i18n::tr("Argumen posisi nggak boleh setelah argumen bernama",
                                                   "Positional argument follows keyword argument"), peek());
                     }
@@ -1160,11 +1210,21 @@ ExprPtr Parser::call() {
                 }
             }
             expect(TokenType::RParen, i18n::tr("')' diharapkan setelah argumen", "Expected ')' after arguments"));
-            if (!kwFlat.empty()) {
+            if (!kwFlat.empty() || spread) {
                 // f(a, k=v) -> _callkw(f, [a], {k: v});  o.m(a, k=v) -> _callkwm(o, "m", [a], {k: v})
-                ExprPtr posList = std::make_unique<ArrayLitExpr>(std::move(args));
+                // f(*xs, **d) -> _callkw(f, _concat([..], list(xs)), _kwmerge({..}, d))
+                flushNamed();
+                ExprPtr posList;
+                if (!posParts.empty()) {
+                    if (!args.empty()) posParts.push_back(std::make_unique<ArrayLitExpr>(std::move(args)));
+                    posList = mkCall("_concat", std::move(posParts), start);
+                } else {
+                    posList = std::make_unique<ArrayLitExpr>(std::move(args));
+                }
                 posList->span = start;
-                ExprPtr kwMap = mkCall("_peta", std::move(kwFlat), start);
+                ExprPtr kwMap;
+                if (kwParts.size() == 1) kwMap = std::move(kwParts[0]);
+                else kwMap = mkCall("_kwmerge", std::move(kwParts), start);
                 std::vector<ExprPtr> outer;
                 bool isMethod = expr->kind == ExprKind::Index &&
                                 static_cast<IndexExpr*>(expr.get())->index->kind == ExprKind::Literal &&

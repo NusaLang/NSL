@@ -202,7 +202,8 @@ static void markDictBraces(std::vector<Token>& toks) {
         if (prev != TokenType::Eq && prev != TokenType::LParen && prev != TokenType::LBracket &&
             prev != TokenType::Comma && prev != TokenType::Colon && prev != TokenType::Return &&
             prev != TokenType::LDict && prev != TokenType::Else && prev != TokenType::And &&
-            prev != TokenType::Or && !inWord) continue;
+            prev != TokenType::Or && prev != TokenType::StarStar && prev != TokenType::Pipe && prev != TokenType::Amp &&
+            prev != TokenType::Caret && !inWord) continue;
         // Find the matching `}` and whether a top-level ':' sits before it.
         int nest = 0;
         bool colon = false;
@@ -363,6 +364,7 @@ std::vector<Token> Lexer::readBacktickTemplate(size_t start, int line, int col, 
             std::vector<Token> exprTokens;
             std::string spec;
             int braceDepth = 1, nest = 0;
+            bool skipConv = false;
             while (true) {
                 std::vector<Token> got = nextTokens();
                 for (Token& t : got) {
@@ -385,11 +387,11 @@ std::vector<Token> Lexer::readBacktickTemplate(size_t start, int line, int col, 
                         advance();  // the closing '}'
                         goto exprDone;
                     } else if (fstr && t.type == TokenType::Not && t.text == "!" && braceDepth == 1 && nest == 0) {
-                        continue;  // !r / !s conversions: value is shown as is
+                        skipConv = true;  // !r / !s conversions: the value is shown as is
+                        continue;
                     }
-                    if (fstr && t.type == TokenType::Ident && (t.text == "r" || t.text == "s" || t.text == "a") && !exprTokens.empty() &&
-                        exprTokens.back().type == TokenType::Not) {
-                        exprTokens.pop_back();
+                    if (skipConv && t.type == TokenType::Ident) {
+                        skipConv = false;
                         continue;
                     }
                     exprTokens.push_back(std::move(t));

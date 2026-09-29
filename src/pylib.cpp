@@ -333,7 +333,7 @@ const std::vector<std::string>& allNames() {
         std::vector<std::string> n = {"abs", "min", "max", "sum", "round", "pow", "divmod", "chr", "ord", "hex", "bin",
             "oct", "bool", "list", "tuple", "set", "dict", "sorted", "reversed", "enumerate", "zip", "map", "filter",
             "any", "all", "isinstance", "callable", "int", "_floordiv", "_pow", "_percent", "_fmt", "_delitem",
-            "_assert", "frozenset", "_bitor", "_bitand", "_bitxor", "_bitnot", "_shl", "_shr", "_setdiff"};
+            "_assert", "frozenset", "_bitor", "_bitand", "_bitxor", "_bitnot", "_shl", "_shr", "_setdiff", "_concat", "_kwmerge"};
         for (const char* m : kStrMethods) n.push_back(std::string("_m_s_") + m);
         for (const char* m : kListMethods) n.push_back(std::string("_m_a_") + m);
         for (const char* m : kDictMethods) n.push_back(std::string("_m_d_") + m);
@@ -913,6 +913,19 @@ Value call(const std::string& name, std::vector<Value>& a, const ValueMap* kw, c
     }
     if (name == "_bitnot") { needArgs(a, 1, 1, "~"); return Value::fromNumber(static_cast<double>(~static_cast<long long>(numArg(a[0], "~")))); }
     if (name == "_setdiff") { needArgs(a, 2, 2, "-"); return setOp("difference", elems(a[0]), elems(a[1])); }
+    if (name == "_concat") {
+        std::vector<Value> out;
+        for (const Value& part : a) { std::vector<Value> e = elems(part); out.insert(out.end(), e.begin(), e.end()); }
+        return mkArr(std::move(out));
+    }
+    if (name == "_kwmerge") {
+        auto m = std::make_shared<ValueMap>();
+        for (const Value& part : a) {
+            if (part.type != ValueType::Map) fail("**: butuh peta");
+            for (const auto& e : *part.map()) (*m)[e.first] = e.second;
+        }
+        return Value::fromMap(m);
+    }
     if (name == "_percent") { needArgs(a, 2, 2, "%"); return Value::fromString(percentFormat(a[0].str(), a[1])); }
     if (name == "_fmt") { needArgs(a, 2, 2, "format"); return Value::fromString(formatValue(a[0], a[1].str())); }
     if (name == "_delitem") {

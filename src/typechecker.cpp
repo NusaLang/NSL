@@ -156,7 +156,7 @@ TypeChecker::StaticType TypeChecker::inferExpr(const Expr* expr) {
                 const StaticType* t = lookup(calleeName);
                 if (t && t->isFunction) {
                     size_t minArgs = t->requiredArgs >= 0 ? static_cast<size_t>(t->requiredArgs) : t->paramTypes.size();
-                    if (n->args.size() < minArgs || n->args.size() > t->paramTypes.size()) {
+                    if (n->args.size() < minArgs || (!t->variadic && n->args.size() > t->paramTypes.size())) {
                         error(i18n::tr("fungsi '", "function '") + calleeName +
                                   i18n::tr("' butuh ", "' needs ") + std::to_string(minArgs) +
                                   (minArgs != t->paramTypes.size() ? ".." + std::to_string(t->paramTypes.size()) : std::string()) +
@@ -213,6 +213,7 @@ TypeChecker::StaticType TypeChecker::inferExpr(const Expr* expr) {
             sig.name = "fungsi";
             sig.paramTypes.resize(decl->paramTypes.size());
             sig.requiredArgs = decl->minArgs;
+            sig.variadic = decl->variadic();
             for (size_t i = 0; i < decl->paramTypes.size(); i++) {
                 if (decl->paramTypes[i].empty()) continue;
                 std::string canon;
@@ -275,6 +276,7 @@ void TypeChecker::checkStmt(const Stmt* stmt) {
             sig.name = "fungsi";
             sig.paramTypes.resize(n->paramTypes.size());
             sig.requiredArgs = n->minArgs;
+            sig.variadic = n->variadic();
             for (size_t i = 0; i < n->paramTypes.size(); i++) {
                 if (n->paramTypes[i].empty()) continue;
                 std::string canon;

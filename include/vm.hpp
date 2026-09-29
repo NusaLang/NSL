@@ -131,6 +131,9 @@ struct VmFunction {
     std::string name;
     int arity = 0;
     std::vector<std::string> paramNames;  // includes a method's leading "ini"
+    int restIndex = -1;  // *args parameter position among the declared params (excluding a method's ini)
+    int kwIndex = -1;    // **kwargs parameter position
+    bool variadic() const { return restIndex >= 0 || kwIndex >= 0; }
     int minArity = -1;  // fewer arguments than `arity` are allowed down to this (defaults); -1 = arity
     int requiredArity() const { return minArity < 0 ? arity : minArity; }
     int numLocals = 0;
@@ -228,7 +231,8 @@ bool vmIsActive();
 // bytecode function value (without a method's `ini`), of the bytecode method `name` on a class
 // chain, and a by-name method call on an instance.
 bool vmParamNames(const Value& fn, std::vector<std::string>& out);
-bool vmMethodParamNames(const ClassInfo* cls, const std::string& name, std::vector<std::string>& out);
+bool vmVarargInfo(const Value& fn, int& restIdx, int& kwIdx);
+bool vmMethodParamNames(const ClassInfo* cls, const std::string& name, std::vector<std::string>& out, int* restIdx = nullptr, int* kwIdx = nullptr);
 Value vmCallMethod(Value& target, const std::string& name, std::vector<Value>& args, class Interpreter* interpreter);
 
 // Runs a compiled module's top level with `moduleGlobals` as its global namespace.

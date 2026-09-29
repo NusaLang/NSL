@@ -169,6 +169,9 @@ struct FnDeclStmt : Stmt {
     // Parameters from index `minArgs` on have defaults (filled in by a prologue the parser
     // prepends to the body); -1 = all parameters are required.
     int minArgs = -1;
+    int restIndex = -1;  // index of the `*args` parameter in `params`, or -1
+    int kwIndex = -1;    // index of the `**kwargs` parameter, or -1
+    bool variadic() const { return restIndex >= 0 || kwIndex >= 0; }
     int requiredArgs() const { return minArgs < 0 ? static_cast<int>(params.size()) : minArgs; }
     FnDeclStmt(std::string n, std::vector<std::string> p, std::unique_ptr<BlockStmt> b,
                std::vector<std::string> pt = {}, std::string rt = "")

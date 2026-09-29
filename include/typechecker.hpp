@@ -27,6 +27,7 @@ private:
         bool isFunction = false;
         std::vector<std::string> paramTypes;  // meaningful only if isFunction
         std::string returnType;               // meaningful only if isFunction
+        bool variadic = false;                // has *args / **kwargs: any number of arguments
         int requiredArgs = -1;                // fewer arguments allowed down to this (defaults); -1 = all
 
         StaticType() = default;

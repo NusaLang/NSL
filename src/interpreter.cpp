@@ -41,6 +41,7 @@ static const size_t kUkuranStackGoroutine = 512 * 1024;
 #include "plugin_abi.h"
 #include "sysmod.hpp"
 #include "pylib.hpp"
+#include "varargs.hpp"
 #include "pystd.hpp"
 #include "repeat.hpp"
 #include "sysplugin.hpp"
@@ -809,6 +810,10 @@ Value Interpreter::callValue(const Value& callee, std::vector<Value>& args, Span
 Value Interpreter::callFunction(const std::shared_ptr<Function>& fn, std::vector<Value>& args, Span callSite,
                                  const Value* boundThis, const std::shared_ptr<ClassInfo>& methodOwner) {
     const FnDeclStmt* decl = fn->decl;
+    if (decl->variadic()) {
+        std::string err = packVarargs(args, decl->restIndex, decl->kwIndex, decl->requiredArgs());
+        if (!err.empty()) throw RuntimeError(i18n::tr("Fungsi '", "Function '") + decl->name + "': " + err);
+    }
     if (static_cast<int>(args.size()) < decl->requiredArgs() || args.size() > decl->params.size()) {
         throw RuntimeError(i18n::tr("Fungsi '", "Function '") + decl->name +
                             i18n::tr("' butuh ", "' expects ") + std::to_string(decl->requiredArgs()) +
@@ -1342,19 +1347,31 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
             p.push_back(Value::fromMap(m));
             return p;
         };
+        int bindRest = -1, bindKw = -1;  // *args / **kw positions of the target, when it has them
         auto bind = [&](const std::vector<std::string>& names, std::vector<Value> p, const std::string& who) {
             size_t maxIdx = p.size();
             std::vector<Value> out = p;
+            auto extraKw = std::make_shared<ValueMap>();
+            size_t ordinary = names.size();
+            if (bindRest >= 0) ordinary = std::min<size_t>(ordinary, static_cast<size_t>(bindRest));
+            if (bindKw >= 0) ordinary = std::min<size_t>(ordinary, static_cast<size_t>(bindKw));
             for (const auto& e : kwMap) {
                 size_t idx = names.size();
-                for (size_t k = 0; k < names.size(); k++) if (names[k] == e.first) { idx = k; break; }
-                if (idx == names.size()) throw RuntimeError(who + "(): argumen bernama '" + e.first + "' tidak dikenal");
+                for (size_t k = 0; k < ordinary; k++) if (names[k] == e.first) { idx = k; break; }
+                if (idx == names.size()) {
+                    if (bindKw >= 0) { (*extraKw)[e.first] = e.second; continue; }
+                    throw RuntimeError(who + "(): argumen bernama '" + e.first + "' tidak dikenal");
+                }
                 if (idx < p.size()) throw RuntimeError(who + "(): argumen '" + e.first + "' diberikan dua kali");
                 if (out.size() <= idx) out.resize(idx + 1, Value::null());
                 out[idx] = e.second;
                 maxIdx = std::max(maxIdx, idx + 1);
             }
             out.resize(maxIdx, Value::null());
+            if (!extraKw->empty()) {
+                (*extraKw)["__kw__"] = Value::fromBool(true);
+                out.push_back(Value::fromMap(extraKw));  // packed into **kw by the callee
+            }
             return out;
         };
         auto astParams = [](const std::shared_ptr<Function>& f) { return f->decl->params; };
@@ -1364,11 +1381,12 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
                 std::vector<std::string> names;
                 bool astShadow = false;
                 (void)astShadow;
-                bool haveVm = vmIsActive() && vmMethodParamNames(obj.instance()->classInfo.get(), mname, names);
+                bool haveVm = vmIsActive() && vmMethodParamNames(obj.instance()->classInfo.get(), mname, names, &bindRest, &bindKw);
                 std::shared_ptr<ClassInfo> owner;
                 auto astMethod = haveVm ? nullptr : lookupMethod(obj.instance()->classInfo, mname, &owner);
                 if (!haveVm && astMethod) names = astParams(astMethod);
                 if (haveVm || astMethod) {
+                    if (astMethod) { bindRest = astMethod->decl->restIndex; bindKw = astMethod->decl->kwIndex; }
                     std::vector<Value> bound = bind(names, pos, mname);
                     if (haveVm) return vmCallMethod(obj, mname, bound, this);
                     return callFunction(astMethod, bound, Span{}, &obj, owner);
@@ -1393,13 +1411,13 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
             return callBuiltin(fn.builtinName(), t);
         }
         std::vector<std::string> names;
-        if (fn.type == ValueType::Fn) names = astParams(fn.fnShared());
-        else if (fn.type == ValueType::VmFn) { vmParamNames(fn, names); }
+        if (fn.type == ValueType::Fn) { names = astParams(fn.fnShared()); bindRest = fn.fn()->decl->restIndex; bindKw = fn.fn()->decl->kwIndex; }
+        else if (fn.type == ValueType::VmFn) { vmParamNames(fn, names); vmVarargInfo(fn, bindRest, bindKw); }
         else if (fn.type == ValueType::Class) {
             std::shared_ptr<ClassInfo> owner;
             bool found = false;
             for (const char* ctorName : {"konstruktor", "constructor"}) {
-                if (vmIsActive() && vmMethodParamNames(fn.klass(), ctorName, names)) { found = true; break; }
+                if (vmIsActive() && vmMethodParamNames(fn.klass(), ctorName, names, &bindRest, &bindKw)) { found = true; break; }
                 auto ctor = lookupMethod(fn.klassShared(), ctorName, &owner);
                 if (ctor) { names = astParams(ctor); found = true; break; }
             }
