@@ -330,6 +330,57 @@ public:
         current->emitU16(static_cast<uint16_t>(current->addConstant(Value::fromString(name))));
     }
 
+    static bool isStringLiteral(const Expr* e) {
+        return e->kind == ExprKind::Literal &&
+               static_cast<const LiteralExpr*>(e)->litKind == LiteralExpr::Kind::String;
+    }
+    static const std::string& stringLiteralOf(const Expr* e) { return static_cast<const LiteralExpr*>(e)->str; }
+
+    static bool fusableBinaryOp(const std::string& op, Op* out) {
+        static const std::pair<const char*, Op> table[] = {
+            {"+", Op::Add}, {"-", Op::Sub}, {"*", Op::Mul}, {"/", Op::Div}, {"%", Op::Mod},
+            {"==", Op::Eq}, {"!=", Op::Neq}, {"<", Op::Lt}, {"<=", Op::Lte}, {">", Op::Gt}, {">=", Op::Gte}};
+        for (auto& [name, o] : table) {
+            if (op == name) { *out = o; return true; }
+        }
+        return false;
+    }
+
+    // Plain (unboxed) local named by `e`, or -1.
+    int unboxedLocalSlot(const Expr* e) {
+        if (e->kind != ExprKind::Identifier) return -1;
+        int li = current->resolveLocal(static_cast<const IdentifierExpr*>(e)->name);
+        if (li == -1) return -1;
+        const Local& l = current->locals[static_cast<size_t>(li)];
+        return l.boxed ? -1 : l.slot;
+    }
+
+    // `local <op> number-literal` and `local <op> local` become one opcode
+    // (the same left-then-right evaluation, minus two dispatches and two
+    // stack round-trips). Returns false if `n` doesn't fit either shape.
+    bool tryEmitFusedBinary(const BinaryExpr* n) {
+        Op bop;
+        if (!fusableBinaryOp(n->op, &bop)) return false;
+        int ls = unboxedLocalSlot(n->left.get());
+        if (ls == -1) return false;
+        if (n->right->kind == ExprKind::Literal &&
+            static_cast<const LiteralExpr*>(n->right.get())->litKind == LiteralExpr::Kind::Number) {
+            auto* lit = static_cast<const LiteralExpr*>(n->right.get());
+            current->emitOp(Op::BinLK);
+            current->emitU16(static_cast<uint16_t>(ls));
+            current->emitU16(static_cast<uint16_t>(current->addConstant(Value::fromNumber(lit->number))));
+            current->emitByte(static_cast<uint8_t>(bop));
+            return true;
+        }
+        int rs = unboxedLocalSlot(n->right.get());
+        if (rs == -1) return false;
+        current->emitOp(Op::BinLL);
+        current->emitU16(static_cast<uint16_t>(ls));
+        current->emitU16(static_cast<uint16_t>(rs));
+        current->emitByte(static_cast<uint8_t>(bop));
+        return true;
+    }
+
     void compileExpr(const Expr* e) {
         switch (e->kind) {
             case ExprKind::Literal: {
@@ -372,6 +423,7 @@ public:
                     current->patchJump(j);
                     return;
                 }
+                if (tryEmitFusedBinary(n)) return;
                 compileExpr(n->left.get());
                 compileExpr(n->right.get());
                 if (n->op == "+") { current->emitOp(Op::Add); return; }
@@ -453,6 +505,13 @@ public:
                 if (n->callee->kind == ExprKind::Index) {
                     auto* idx = static_cast<const IndexExpr*>(n->callee.get());
                     compileExpr(idx->target.get());
+                    if (isStringLiteral(idx->index.get())) {
+                        for (auto& a : n->args) compileExpr(a.get());
+                        current->emitOp(Op::CallMethodK);
+                        current->emitU16(static_cast<uint16_t>(current->addConstant(Value::fromString(stringLiteralOf(idx->index.get())))));
+                        current->emitByte(static_cast<uint8_t>(n->args.size()));
+                        return;
+                    }
                     compileExpr(idx->index.get());
                     for (auto& a : n->args) compileExpr(a.get());
                     current->emitOp(Op::CallMethod);
@@ -475,6 +534,11 @@ public:
             case ExprKind::Index: {
                 auto* n = static_cast<const IndexExpr*>(e);
                 compileExpr(n->target.get());
+                if (isStringLiteral(n->index.get())) {
+                    current->emitOp(Op::GetField);
+                    current->emitU16(static_cast<uint16_t>(current->addConstant(Value::fromString(stringLiteralOf(n->index.get())))));
+                    return;
+                }
                 compileExpr(n->index.get());
                 current->emitOp(Op::GetIndex);
                 return;
@@ -482,6 +546,12 @@ public:
             case ExprKind::IndexAssign: {
                 auto* n = static_cast<const IndexAssignExpr*>(e);
                 compileExpr(n->target.get());
+                if (isStringLiteral(n->index.get())) {
+                    compileExpr(n->value.get());
+                    current->emitOp(Op::SetField);
+                    current->emitU16(static_cast<uint16_t>(current->addConstant(Value::fromString(stringLiteralOf(n->index.get())))));
+                    return;
+                }
                 compileExpr(n->index.get());
                 compileExpr(n->value.get());
                 current->emitOp(Op::SetIndex);
@@ -1088,6 +1158,32 @@ Value callValue(const Value& callee, std::vector<Value>& args, VmContext& ctx) {
     return runFrame(fn, closure, base, boxedLocals, ctx);
 }
 
+// General `target.name(args)`: mirrors interpreter.cpp, where a plain
+// GetIndex+Call would hand back an unbound method (no `ini`).
+Value callMethodSlow(Value& target, const Value& idxv, std::vector<Value>& args, VmContext& ctx) {
+    if (target.type == ValueType::Instance) {
+        if (idxv.type != ValueType::String) throw VmRuntimeError("Kunci objek harus teks");
+        bool astShadow = false;
+        const Value* vmMethod = findVmMethod(target.instance()->classInfo.get(), idxv.str(), astShadow);
+        if (vmMethod) return callVmWithSelf(vmMethod->vmClosure(), target, args, ctx);
+        std::shared_ptr<ClassInfo> owner;
+        auto method = vmLookupMethod(target.instance()->classInfo, idxv.str(), &owner);
+        if (method) {
+            if (!ctx.interpreter) throw VmRuntimeError("Manggil metode butuh interpreter context");
+            try {
+                return ctx.interpreter->callFunction(method, args, Span{0, 0, 0}, &target, owner);
+            } catch (const RuntimeError& e) {
+                throw VmRuntimeError(e.what());
+            }
+        }
+        auto fit = target.instance()->fields->find(idxv.str());
+        Value fieldVal = fit != target.instance()->fields->end() ? fit->second : Value::null();
+        return callValue(fieldVal, args, ctx);
+    }
+    Value callee = vmGetIndex(target, idxv);
+    return callValue(callee, args, ctx);
+}
+
 Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                std::vector<Cell*>& boxedLocals, VmContext& ctx) {
     if (++ctx.depth > 3000) {
@@ -1134,11 +1230,26 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
     // imports) starts its frame at arena->top, so publish where this
     // frame's live values end first.
     auto syncTop = [&]() { ctx.arena->top = stack.data + stack.len; };
+    // Address of global constant `idx`'s slot, cached per function while the
+    // globals table has stable addresses. Throws if undefined.
+    auto globalSlot = [&](uint16_t idx) __attribute__((always_inline)) -> Value* {
+        Value* slot = nullptr;
+        if (ctx.globals && ctx.globals->stableSlots()) {
+            if (fn->globalSlots.size() != fn->constants.size()) fn->globalSlots.assign(fn->constants.size(), nullptr);
+            slot = fn->globalSlots[idx];
+            if (!slot) slot = fn->globalSlots[idx] = ctx.globals->find(fn->constants[idx].str());
+        } else if (ctx.globals) {
+            slot = ctx.globals->find(fn->constants[idx].str());
+        }
+        if (!slot) throw VmRuntimeError("Undefined variable '" + fn->constants[idx].str() + "'");
+        return slot;
+    };
 
     // The VM loop otherwise has no GC safepoint at all (unlike execBlock's
     // per-statement check) -- see ctx.gcTick at Op::Call / Op::Loop.
     while (true) {
         Op op = static_cast<Op>(readByte());
+    redispatch:
         switch (op) {
             case Op::Const: stack.push_back(fn->constants[readU16()]); break;
             case Op::Null: stack.push_back(Value::null()); break;
@@ -1281,6 +1392,37 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 stack.push_back(locals[idx]);
                 break;
             }
+            case Op::BinLK:
+            case Op::BinLL: {
+                uint16_t ls = readU16();
+                uint16_t rk = readU16();
+                Op bop = static_cast<Op>(readByte());
+                const Value& l = locals[ls];
+                const Value& r = op == Op::BinLK ? fn->constants[rk] : locals[rk];
+                if (l.type == ValueType::Number && r.type == ValueType::Number) {
+                    double a = l.number, b = r.number;
+                    switch (bop) {
+                        case Op::Add: stack.push_number(a + b); break;
+                        case Op::Sub: stack.push_number(a - b); break;
+                        case Op::Mul: stack.push_number(a * b); break;
+                        case Op::Div: stack.push_number(a / b); break;
+                        case Op::Mod: stack.push_number(std::fmod(a, b)); break;
+                        case Op::Eq: stack.push_bool(a == b); break;
+                        case Op::Neq: stack.push_bool(a != b); break;
+                        case Op::Lt: stack.push_bool(a < b); break;
+                        case Op::Lte: stack.push_bool(a <= b); break;
+                        case Op::Gt: stack.push_bool(a > b); break;
+                        default: stack.push_bool(a >= b); break;
+                    }
+                    break;
+                }
+                // Not two numbers: materialize both operands and let the
+                // generic operator handler deal with strings / errors.
+                stack.push_back(l);
+                stack.push_back(r);
+                op = bop;
+                goto redispatch;
+            }
             case Op::SetLocal: {
                 uint16_t idx = readU16();
                 locals[idx] = stack.back();
@@ -1318,25 +1460,12 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
             }
             case Op::GetGlobal: {
                 uint16_t idx = readU16();
-                const std::string& name = fn->constants[idx].str();
-                Value* slot = nullptr;
-                if (ctx.globals && ctx.globals->stableSlots()) {
-                    if (fn->globalSlots.size() != fn->constants.size()) fn->globalSlots.assign(fn->constants.size(), nullptr);
-                    slot = fn->globalSlots[idx];
-                    if (!slot) slot = fn->globalSlots[idx] = ctx.globals->find(name);
-                } else if (ctx.globals) {
-                    slot = ctx.globals->find(name);
-                }
-                if (!slot) throw VmRuntimeError("Undefined variable '" + name + "'");
-                stack.push_back(*slot);
+                stack.push_back(*globalSlot(idx));
                 break;
             }
             case Op::SetGlobal: {
                 uint16_t idx = readU16();
-                const std::string& name = fn->constants[idx].str();
-                Value* slot = ctx.globals ? ctx.globals->find(name) : nullptr;
-                if (!slot) throw VmRuntimeError("Undefined variable '" + name + "'");
-                *slot = stack.back();
+                *globalSlot(idx) = stack.back();
                 break;
             }
             case Op::DefineGlobal: {
@@ -1491,33 +1620,57 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 for (int i = argCount - 1; i >= 0; i--) args[static_cast<size_t>(i)] = pop();
                 Value idxv = pop();
                 Value target = pop();
-                syncTop();
-                // Mirrors interpreter.cpp: a plain GetIndex+Call would hand
-                // back an unbound method (no `ini`).
-                if (target.type == ValueType::Instance) {
-                    if (idxv.type != ValueType::String) throw VmRuntimeError("Kunci objek harus teks");
-                    bool astShadow = false;
-                    const Value* vmMethod = findVmMethod(target.instance()->classInfo.get(), idxv.str(), astShadow);
-                    std::shared_ptr<ClassInfo> owner;
-                    auto method = vmMethod ? nullptr : vmLookupMethod(target.instance()->classInfo, idxv.str(), &owner);
-                    if (vmMethod) {
-                        stack.push_back(callVmWithSelf(vmMethod->vmClosure(), target, args, ctx));
-                    } else if (method) {
-                        if (!ctx.interpreter) throw VmRuntimeError("Manggil metode butuh interpreter context");
-                        try {
-                            stack.push_back(ctx.interpreter->callFunction(method, args, Span{0, 0, 0}, &target, owner));
-                        } catch (const RuntimeError& e) {
-                            throw VmRuntimeError(e.what());
+                syncTop();  // the callee (bytecode or AST) may re-enter the VM
+                stack.push_back(callMethodSlow(target, idxv, args, ctx));
+                break;
+            }
+            case Op::CallMethodK: {
+                uint16_t nameIdx = readU16();
+                uint8_t argCount = readByte();
+                if ((++ctx.gcTick & 0x3F) == 0) GC::instance().collectIfNeeded();
+                // Stack is [obj][args...]; same direct-frame fast path as
+                // CallMethod, with the method found via a per-site class cache.
+                if (stack.len >= static_cast<size_t>(argCount) + 1) {
+                    Value& targetSlot = stack[stack.len - argCount - 1];
+                    if (targetSlot.type == ValueType::Instance) {
+                        const ClassInfo* ci = targetSlot.instance()->classInfo.get();
+                        if (fn->methodCache.size() != fn->constants.size()) fn->methodCache.assign(fn->constants.size(), {});
+                        VmFunction::MethodCacheEntry& mc = fn->methodCache[nameIdx];
+                        const Value* mv;
+                        if (mc.classId == ci->id) {
+                            mv = mc.method;
+                        } else {
+                            bool astShadow = false;
+                            mv = findVmMethod(ci, fn->constants[nameIdx].str(), astShadow);
+                            if (mv) mc = {ci->id, mv};
                         }
-                    } else {
-                        auto fit = target.instance()->fields->find(idxv.str());
-                        Value fieldVal = fit != target.instance()->fields->end() ? fit->second : Value::null();
-                        stack.push_back(callValue(fieldVal, args, ctx));
+                        if (mv && mv->vmClosure()->function->arity == argCount + 1) {
+                            VmClosure* callee = mv->vmClosure();
+                            const VmFunction* target = callee->function;
+                            Value* base = stack.data + stack.len;
+                            initFrameLocals(base, target, ctx);
+                            std::vector<Cell*> calleeBoxedStore;
+                            if (target->numBoxedLocals) calleeBoxedStore.assign(static_cast<size_t>(target->numBoxedLocals), nullptr);
+                            std::vector<Cell*>& calleeBoxed = target->numBoxedLocals ? calleeBoxedStore : g_noBoxed;
+                            Value* argv = stack.data + (stack.len - argCount);
+                            placeParam(base, calleeBoxed, target->paramSlots[0], std::move(targetSlot));
+                            targetSlot.type = ValueType::Null;  // moved-from: keep GC scans of this slot valid
+                            for (int i = 0; i < argCount; i++) {
+                                placeParam(base, calleeBoxed, target->paramSlots[static_cast<size_t>(i) + 1], std::move(argv[i]));
+                            }
+                            stack.len -= argCount;  // moved-from: null refs
+                            Value result = runFrame(target, callee, base, calleeBoxed, ctx);
+                            stack.pop_back();  // moved-from receiver
+                            stack.push_back(std::move(result));
+                            break;
+                        }
                     }
-                } else {
-                    Value callee = vmGetIndex(target, idxv);
-                    stack.push_back(callValue(callee, args, ctx));
                 }
+                std::vector<Value> args(argCount);
+                for (int i = argCount - 1; i >= 0; i--) args[static_cast<size_t>(i)] = pop();
+                Value target = pop();
+                syncTop();
+                stack.push_back(callMethodSlow(target, fn->constants[nameIdx], args, ctx));
                 break;
             }
             case Op::MakeClass: {
@@ -1593,6 +1746,38 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                     throw VmRuntimeError(e.what());
                 }
                 break;
+            }
+            case Op::GetField: {
+                uint16_t nameIdx = readU16();
+                Value& top = stack.back();
+                if (top.type == ValueType::Instance) {
+                    auto& fields = *top.instance()->fields;
+                    auto it = fields.find(fn->constants[nameIdx].str());
+                    if (it != fields.end()) {
+                        Value v = it->second;  // copy first: assigning to `top` may free the instance
+                        top = std::move(v);
+                        break;
+                    }
+                }
+                Value target = pop();
+                stack.push_back(vmGetIndex(target, fn->constants[nameIdx]));
+                break;
+            }
+            case Op::SetField: {
+                uint16_t nameIdx = readU16();
+                if (stack.len >= 2 && stack.data[stack.len - 2].type == ValueType::Instance) {
+                    Value& target = stack.data[stack.len - 2];
+                    (*target.instance()->fields)[fn->constants[nameIdx].str()] = stack.back();
+                    target = std::move(stack.back());  // result of the assignment is the value; drops the receiver
+                    stack.len--;                       // moved-from: null ref
+                    break;
+                }
+                // Other receivers: rebuild [target][key][value] for the generic SetIndex.
+                Value val = pop();
+                stack.push_back(fn->constants[nameIdx]);
+                stack.push_back(std::move(val));
+                op = Op::SetIndex;
+                goto redispatch;
             }
             case Op::GetIndex: {
                 Value idxv = pop();
@@ -1960,7 +2145,7 @@ int vmRun(VmProgram& program, Interpreter* interpreter) {
 namespace {
 
 constexpr uint32_t kCacheMagic = 0x4E534256; // "NSBV"
-constexpr uint32_t kCacheVersion = 1;
+constexpr uint32_t kCacheVersion = 3;  // 3: + MakeClass, BinLK, BinLL, GetField, SetField, CallMethodK
 
 void writeU32(std::ofstream& f, uint32_t v) { f.write(reinterpret_cast<const char*>(&v), sizeof(v)); }
 void writeI32(std::ofstream& f, int32_t v) { f.write(reinterpret_cast<const char*>(&v), sizeof(v)); }

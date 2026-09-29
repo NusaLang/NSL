@@ -63,6 +63,11 @@ enum class Op : uint8_t {
     Import,
     CallMethod,
     MakeClass,
+    BinLK,  // slot16 const16 op8: local <op> numeric constant
+    BinLL,  // slot16 slot16 op8: local <op> local
+    GetField,  // nameConst16: obj.name
+    SetField,  // nameConst16: obj.name = value
+    CallMethodK,  // nameConst16 argc8: obj.name(args), name known at compile time
 };
 
 struct NativeLoopDesc {
@@ -119,6 +124,14 @@ struct VmFunction {
     // (see Op::GetGlobal). Only used while the globals Environment has
     // stable slot addresses.
     mutable std::vector<Value*> globalSlots;
+
+    // Per-constant inline cache for CallMethodK: the bytecode method found
+    // for `classId`. Keyed by ClassInfo::id (never reused).
+    struct MethodCacheEntry {
+        uint64_t classId = 0;
+        const Value* method = nullptr;
+    };
+    mutable std::vector<MethodCacheEntry> methodCache;
 };
 
 // GC-tracked one-Value box (gc.hpp), used for every VM boxed local slot

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <functional>
@@ -303,6 +304,18 @@ struct ValueWindow {
         d.number = v.number;
         if (v.ref) d.ref = v.ref;
     }
+    __attribute__((always_inline)) inline void push_number(double x) {
+        if (data + len >= limit) overflow();
+        Value& d = data[len++];
+        d.type = ValueType::Number;
+        d.number = x;
+    }
+    __attribute__((always_inline)) inline void push_bool(bool b) {
+        if (data + len >= limit) overflow();
+        Value& d = data[len++];
+        d.type = ValueType::Bool;
+        d.number = b ? 1.0 : 0.0;
+    }
     __attribute__((always_inline)) inline void pop_back() {
         Value& v = data[--len];
         if (v.ref) v.ref.reset();
@@ -324,7 +337,15 @@ struct ChannelState {
     bool closed = false;
 };
 
+inline uint64_t nextClassId() {
+    static std::atomic<uint64_t> counter{0};
+    return ++counter;
+}
+
 struct ClassInfo {
+    // Unique for the process lifetime and never reused (unlike the address),
+    // so it is safe as a cache key even after a class is freed.
+    uint64_t id = nextClassId();
     std::string name;
     std::shared_ptr<ClassInfo> parent;
     std::unordered_map<std::string, std::shared_ptr<Function>> methods;
