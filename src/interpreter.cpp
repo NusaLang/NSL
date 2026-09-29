@@ -251,7 +251,7 @@ bool isRegularFile(const std::string& path) {
 const std::vector<std::string>& builtinNames() {
     static const std::vector<std::string> names = {
         "cetak", "panjang", "tambah", "hapus_akhir", "potong", "gabung", "pisah",
-        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "pegang",
+        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "pegang", "_peta",
         "base64_encode", "base64_decode",
         "baca_file", "tulis_file", "file_ada",
         "tcp_konek", "tcp_kirim", "tcp_terima", "tcp_tutup",
@@ -1137,6 +1137,16 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
             if (r.type == NS_STRING && r.str) free(r.str);
         };
         return Value::fromNative(nf);
+    }
+
+    if (name == "_peta") {
+        // Dict literal {k: v, ...}: alternating key/value arguments.
+        Value m = Value::newMap();
+        for (size_t i = 0; i + 1 < args.size(); i += 2) {
+            (*m.map())[args[i].type == ValueType::String ? args[i].str() : args[i].stringify()] = args[i + 1];
+            GC::instance().noteStore(m, args[i + 1]);
+        }
+        return m;
     }
 
     if (name == "latar") {

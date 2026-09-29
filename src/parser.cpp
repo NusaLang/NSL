@@ -857,6 +857,18 @@ ExprPtr Parser::primary() {
             e->span = start;
             return e;
         }
+        case TokenType::LDict: {
+            advance();
+            std::vector<ExprPtr> flat;  // k1, v1, k2, v2, ...
+            while (!check(TokenType::RDict)) {
+                flat.push_back(expression());
+                expect(TokenType::Colon, i18n::tr("':' diharapkan setelah kunci peta", "Expected ':' after dict key"));
+                flat.push_back(expression());
+                if (!match(TokenType::Comma)) break;
+            }
+            expect(TokenType::RDict, i18n::tr("'}' diharapkan setelah isi peta", "Expected '}' after dict entries"));
+            return mkCall("_peta", std::move(flat), start);
+        }
         case TokenType::LParen: {
             advance();
             ExprPtr expr = expression();

@@ -130,6 +130,37 @@ std::vector<Token> Lexer::nextTokens() {
     }
 }
 
+// `{` in expression position (after = ( [ , : return) that holds `k: v` pairs (or nothing) is a dict
+// literal. Retag it and its `}` so the layout pass and the parser can't mistake them for a block.
+static void markDictBraces(std::vector<Token>& toks) {
+    for (size_t i = 1; i < toks.size(); i++) {
+        if (toks[i].type != TokenType::LBrace) continue;
+        TokenType prev = toks[i - 1].type;
+        if (prev != TokenType::Eq && prev != TokenType::LParen && prev != TokenType::LBracket &&
+            prev != TokenType::Comma && prev != TokenType::Colon && prev != TokenType::Return &&
+            prev != TokenType::LDict) continue;
+        // Find the matching `}` and whether a top-level ':' sits before it.
+        int nest = 0;
+        bool colon = false;
+        size_t close = 0;
+        for (size_t k = i + 1; k < toks.size(); k++) {
+            TokenType t = toks[k].type;
+            if (t == TokenType::LParen || t == TokenType::LBracket || t == TokenType::LBrace || t == TokenType::LDict) nest++;
+            else if (t == TokenType::RParen || t == TokenType::RBracket) nest--;
+            else if (t == TokenType::RBrace || t == TokenType::RDict) {
+                if (nest == 0) { close = k; break; }
+                nest--;
+            } else if (t == TokenType::Colon && nest == 0) colon = true;
+            else if (t == TokenType::Eof) break;
+        }
+        if (close == 0) continue;
+        if (colon || close == i + 1) {
+            toks[i].type = TokenType::LDict;
+            toks[close].type = TokenType::RDict;
+        }
+    }
+}
+
 std::vector<Token> Lexer::tokenize() {
     std::vector<Token> tokens;
     while (true) {
@@ -138,6 +169,7 @@ std::vector<Token> Lexer::tokenize() {
         for (auto& t : next) tokens.push_back(std::move(t));
         if (sawEof) break;
     }
+    markDictBraces(tokens);
     return applyLayout(std::move(tokens), source_);
 }
 

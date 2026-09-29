@@ -14,6 +14,7 @@ enum class TokenType {
     PlusEq, MinusEq, StarEq, SlashEq,
     And, Or, Not,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Semi, Dot, Colon,
+    LDict, RDict,  // `{k: v}` literal braces (told apart from block braces by markDictBraces)
     Eof
 };
 

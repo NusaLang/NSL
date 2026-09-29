@@ -90,8 +90,8 @@ bool usesLayout(const std::vector<Token>& toks, const Lines& lines) {
         lastLine = std::max(lastLine, el);
         if (sl > prevEndLine) lineFirst = t.type;
         prevEndLine = std::max(prevEndLine, el);
-        if (t.type == TokenType::LParen || t.type == TokenType::LBracket) depth++;
-        else if (t.type == TokenType::RParen || t.type == TokenType::RBracket) depth--;
+        if (t.type == TokenType::LParen || t.type == TokenType::LBracket || t.type == TokenType::LDict) depth++;
+        else if (t.type == TokenType::RParen || t.type == TokenType::RBracket || t.type == TokenType::RDict) depth--;
         else if (t.type == TokenType::Colon && depth == 0) {
             bool eol = (i + 1 >= toks.size()) || toks[i + 1].type == TokenType::Eof ||
                        lines.lineOf(toks[i + 1].span.start) > el;
@@ -328,8 +328,8 @@ std::vector<Token> applyLayout(std::vector<Token> toks, const std::string& sourc
         }
 
         // ---- bracket depth ----
-        if (t.type == TokenType::LParen || t.type == TokenType::LBracket) depth++;
-        else if ((t.type == TokenType::RParen || t.type == TokenType::RBracket) && depth > 0) depth--;
+        if (t.type == TokenType::LParen || t.type == TokenType::LBracket || t.type == TokenType::LDict) depth++;
+        else if ((t.type == TokenType::RParen || t.type == TokenType::RBracket || t.type == TokenType::RDict) && depth > 0) depth--;
 
         // ---- block-opening ':' ----
         if (t.type == TokenType::Colon && depth == 0) {

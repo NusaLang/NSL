@@ -1,0 +1,16 @@
+x = {"a": 1, "b": [1, 2], "c": {"d": True}}
+print(x["a"], x["b"][1], x["c"]["d"])
+y = {}
+y["k"] = "v"
+print(y, panjang(y))
+def f(m):
+    return m["a"] + 1
+print(f({"a": 41}))
+z = {
+    "satu": 1,
+    "dua": 2,
+}
+print(z["dua"])
+for k in peta_kunci(z):
+    print(k)
+print(json_encode({"n": 1}))
