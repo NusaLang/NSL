@@ -5,6 +5,8 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <fstream>
+#include <functional>
 #include <chrono>
 #include <cmath>
 #include <ctime>
@@ -92,7 +94,7 @@ const std::vector<std::string>& names() {
             "_sys_write", "_sys_platform", "_time_monotonic", "_time_strftime", "_time_parts", "_time_mktime",
             "_random_random", "_random_randint", "_random_uniform", "_random_choice", "_random_shuffle",
             "_random_sample", "_random_seed", "_random_gauss", "_re_exec", "_re_sub", "_re_split", "_re_findall",
-            "_stdin_read", "_readline", "_os_join", "_os_basename", "_os_dirname", "_os_splitext", "_os_expanduser"};
+            "_stdin_read", "_readline", "_os_mtime", "_os_copyfile", "_os_rmtree", "_os_join", "_os_basename", "_os_dirname", "_os_splitext", "_os_expanduser"};
         for (const auto& kv : mathUnary()) v.push_back("_math_" + kv.first);
         return v;
     }();
@@ -344,6 +346,39 @@ Value call(const std::string& name, std::vector<Value>& a, const ValueMap* kw, c
         char b[4096];
         std::string cwd = getcwd(b, sizeof b) ? b : "";
         return Value::fromString(cwd + "/" + p);
+    }
+    if (name == "_os_mtime") {
+        struct stat st;
+        if (stat(str(a, 0, "getmtime").c_str(), &st) != 0) fail("getmtime(): file tidak ada");
+        return Value::fromNumber(static_cast<double>(st.st_mtime));
+    }
+    if (name == "_os_copyfile") {
+        std::ifstream in(str(a, 0, "copyfile"), std::ios::binary);
+        if (!in) fail("copyfile(): tidak bisa membuka '" + str(a, 0, "copyfile") + "'");
+        std::ofstream out(str(a, 1, "copyfile"), std::ios::binary | std::ios::trunc);
+        if (!out) fail("copyfile(): tidak bisa menulis '" + str(a, 1, "copyfile") + "'");
+        out << in.rdbuf();
+        return Value::null();
+    }
+    if (name == "_os_rmtree") {
+        std::function<void(const std::string&)> rm = [&](const std::string& path) {
+            struct stat st;
+            if (lstat(path.c_str(), &st) != 0) return;
+            if (S_ISDIR(st.st_mode)) {
+                if (DIR* d = opendir(path.c_str())) {
+                    while (dirent* e = readdir(d)) {
+                        std::string n = e->d_name;
+                        if (n != "." && n != "..") rm(path + "/" + n);
+                    }
+                    closedir(d);
+                }
+                rmdir(path.c_str());
+            } else {
+                unlink(path.c_str());
+            }
+        };
+        rm(str(a, 0, "rmtree"));
+        return Value::null();
     }
     if (name == "_os_cpu_count") return Value::fromNumber(static_cast<double>(std::thread::hardware_concurrency()));
     // ---- sys

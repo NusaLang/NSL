@@ -65,6 +65,11 @@ inline std::string thrownValueMessage(const Value& v) {
         if (it != v.map()->end() && it->second.type == ValueType::String) return it->second.str();
     }
     if (v.type == ValueType::String) return v.str();
+    if (v.type == ValueType::Instance && v.instance() && v.instance()->classInfo) {  // ValueError: boom
+        std::string text = v.stringify();
+        const std::string& cls = v.instance()->classInfo->name;
+        return text.empty() ? cls : cls + ": " + text;
+    }
     return i18n::tr("Error dilempar: ", "Thrown error: ") + v.stringify();
 }
 

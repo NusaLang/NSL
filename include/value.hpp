@@ -400,6 +400,12 @@ struct VmArrayState {
     std::shared_ptr<std::vector<Value>> boxed;
 };
 
+// `if obj:` on an instance: __bool__ / __len__ decide (installed by the interpreter); plain objects are true.
+inline std::function<bool(const Value&)>& instanceBoolHook() {
+    static std::function<bool(const Value&)> hook;
+    return hook;
+}
+
 inline bool Value::truthy() const {
     switch (type) {
         case ValueType::Null: return false;
@@ -412,6 +418,7 @@ inline bool Value::truthy() const {
             const VmArrayState* st = vmArray();
             return st->numeric ? !st->nums.empty() : !st->boxed->empty();
         }
+        case ValueType::Instance: return instanceBoolHook() ? instanceBoolHook()(*this) : true;
         default: return true;
     }
 }
@@ -612,7 +619,7 @@ inline std::string Value::stringify() const {
         case ValueType::Native:
             return "<plugin " + (native() ? native()->name : "") + ">";
         case ValueType::Class:
-            return "<kelas " + (klass() ? klass()->name : "") + ">";
+            return klass() ? klass()->name : "";
         case ValueType::Instance: {
             // User classes with __str__ / __repr__ print through them (hook set by the interpreter).
             std::string custom;

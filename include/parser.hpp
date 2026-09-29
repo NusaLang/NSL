@@ -63,6 +63,12 @@ private:
     std::vector<bool> yieldStack_;  // per enclosing function: did its body contain `yield`?
     bool usesGen_ = false;          // any generator in this file -> import the __gen runtime
     ExprPtr yieldExpr();
+    std::string typeAnnotation();
+    std::vector<std::string> catchVarStack_;      // innermost `except` handler's exception variable (bare `raise`)
+    std::vector<std::string> usedExc_;            // exception class names this file mentions
+    std::vector<std::string> declaredClasses_;    // classes this file defines itself
+    void noteName(const std::string& name);
+    void injectExceptionClasses(Program& program);
     StmtPtr yieldFromStmt(Span start);
     void injectGeneratorRuntime(Program& program);
     // Extra statements a single source statement expands into (`from m import a, b`);

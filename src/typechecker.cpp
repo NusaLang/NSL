@@ -18,6 +18,11 @@ const std::unordered_map<std::string, std::string>& typeAliasTable() {
         {"fungsi", "fungsi"}, {"func", "fungsi"},
         {"kosong", "kosong"}, {"null", "kosong"},
         {"any", ""}, {"apa", ""},
+        // Python spellings
+        {"int", "angka"}, {"float", "angka"},
+        {"list", "larik"}, {"List", "larik"}, {"tuple", "larik"}, {"Tuple", "larik"}, {"set", "larik"}, {"Set", "larik"},
+        {"dict", "peta"}, {"Dict", "peta"},
+        {"None", "kosong"},
     };
     return table;
 }
@@ -26,8 +31,8 @@ const std::unordered_map<std::string, std::string>& typeAliasTable() {
 bool TypeChecker::canonicalizeType(const std::string& raw, std::string& out) const {
     const auto& table = typeAliasTable();
     auto it = table.find(raw);
-    if (it == table.end()) return false;
-    out = it->second;
+    // A name we don't know (a user class, typing.Callable, ...) is a class/protocol type: not checked.
+    out = it == table.end() ? "" : it->second;
     return true;
 }
 

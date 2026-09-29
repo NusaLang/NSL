@@ -1,4 +1,5 @@
 #include "vm.hpp"
+#include "pynum.hpp"
 #include "pylib.hpp"
 #include "varargs.hpp"
 #include "repeat.hpp"
@@ -1268,8 +1269,18 @@ Value vmGetIndex(const Value& target, const Value& idxv) {
     }
     if (target.type == ValueType::Map) {
         auto m = target.mapShared();
-        auto it = m->find(idxv.type == ValueType::String ? idxv.str() : idxv.stringify());
-        return it != m->end() ? it->second : Value::null();
+        std::string key = idxv.type == ValueType::String ? idxv.str() : idxv.stringify();
+        auto it = m->find(key);
+        if (it != m->end()) return it->second;
+        if (m->deflt) {  // defaultdict / Counter: create the missing entry
+            std::vector<Value> none;
+            Value f = *m->deflt;
+            Value made = vmCallValue(f, none, vmActiveInterpreter());
+            (*m)[key] = made;
+            GC::instance().noteStore(target, made);
+            return made;
+        }
+        return Value::null();
     }
     if (target.type == ValueType::String) {
         if (idxv.type != ValueType::Number) throw VmRuntimeError("Index teks harus angka");
@@ -1297,10 +1308,12 @@ Value vmGetIndex(const Value& target, const Value& idxv) {
         auto method = vmLookupMethod(target.instance()->classInfo, idxv.str());
         if (method) return Value::fromFunction(method);
         if (Value* attr = classAttrOf(target.instance()->classInfo.get(), idxv.str())) return *attr;
+        if (idxv.str() == "__class__") return Value::fromClass(target.instance()->classInfo);
         return Value::null();
     }
     if (target.type == ValueType::Class && idxv.type == ValueType::String) {
         // Class.member: class attributes, static and class methods
+        if (idxv.str() == "__name__") return Value::fromString(target.klass()->name);
         if (Value* attr = classAttrOf(target.klass(), idxv.str())) return *attr;
         bool astShadow = false;
         if (const Value* vmv = findVmMethod(target.klass(), idxv.str(), astShadow)) return *vmv;
@@ -1719,6 +1732,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
             }
             case Op::Not: {
                 Value v = pop();
+                if (v.type == ValueType::Instance) syncTop();  // __bool__ / __len__ may re-enter the VM
                 stack.push_back(Value::fromBool(!v.truthy()));
                 break;
             }
@@ -1763,8 +1777,13 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                     if (ra.type == ValueType::Number && rb.type == ValueType::Number) {
                         if (op == Op::Sub) ra.number -= rb.number;
                         else if (op == Op::Mul) ra.number *= rb.number;
-                        else if (op == Op::Div) ra.number /= rb.number;
-                        else ra.number = std::fmod(ra.number, rb.number);
+                        else if (op == Op::Div) {
+                            if (rb.number == 0) throw VmRuntimeError("ZeroDivisionError: division by zero");
+                            ra.number /= rb.number;
+                        } else {
+                            if (rb.number == 0) throw VmRuntimeError("ZeroDivisionError: modulo by zero");
+                            ra.number = pyModulo(ra.number, rb.number);
+                        }
                         stack.len--;
                         break;
                     }
@@ -1806,8 +1825,13 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 double r = 0;
                 if (op == Op::Sub) r = a.number - b.number;
                 else if (op == Op::Mul) r = a.number * b.number;
-                else if (op == Op::Div) r = a.number / b.number;
-                else r = std::fmod(a.number, b.number);
+                else if (op == Op::Div) {
+                    if (b.number == 0) throw VmRuntimeError("ZeroDivisionError: division by zero");
+                    r = a.number / b.number;
+                } else {
+                    if (b.number == 0) throw VmRuntimeError("ZeroDivisionError: modulo by zero");
+                    r = pyModulo(a.number, b.number);
+                }
                 stack.push_back(Value::fromNumber(r));
                 break;
             }
@@ -1905,8 +1929,14 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                         case Op::Add: stack.push_number(a + b); break;
                         case Op::Sub: stack.push_number(a - b); break;
                         case Op::Mul: stack.push_number(a * b); break;
-                        case Op::Div: stack.push_number(a / b); break;
-                        case Op::Mod: stack.push_number(std::fmod(a, b)); break;
+                        case Op::Div:
+                            if (b == 0) throw VmRuntimeError("ZeroDivisionError: division by zero");
+                            stack.push_number(a / b);
+                            break;
+                        case Op::Mod:
+                            if (b == 0) throw VmRuntimeError("ZeroDivisionError: modulo by zero");
+                            stack.push_number(pyModulo(a, b));
+                            break;
                         case Op::Eq: stack.push_bool(a == b); break;
                         case Op::Neq: stack.push_bool(a != b); break;
                         case Op::Lt: stack.push_bool(a < b); break;
@@ -1977,6 +2007,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
             }
             case Op::JumpIfFalse: {
                 uint16_t offset = readU16();
+                if (stack.back().type == ValueType::Instance) syncTop();  // __bool__ / __len__
                 bool truthy = stack.back().truthy();
                 stack.pop_back();
                 if (!truthy) ip += offset;
@@ -1989,11 +2020,13 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
             }
             case Op::JumpIfFalseKeep: {
                 uint16_t offset = readU16();
+                if (stack.back().type == ValueType::Instance) syncTop();
                 if (!stack.back().truthy()) ip += offset;
                 break;
             }
             case Op::JumpIfTrueKeep: {
                 uint16_t offset = readU16();
+                if (stack.back().type == ValueType::Instance) syncTop();
                 if (stack.back().truthy()) ip += offset;
                 break;
             }
@@ -2429,7 +2462,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                     (*arr)[static_cast<size_t>(i)] = val;
                     GC::instance().noteStore(target, val);
                 } else if (target.type == ValueType::Map) {
-                    if (idxv.type != ValueType::String) idxv = Value::fromString(idxv.stringify());
+                    if (idxv.type != ValueType::String) { syncTop(); idxv = Value::fromString(idxv.stringify()); }
                     auto m = target.mapShared();
                     (*m)[idxv.str()] = val;
                     GC::instance().noteStore(target, val);
@@ -2506,6 +2539,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 uint8_t argCount = readByte();
                 std::vector<Value> args(argCount);
                 for (int i = argCount - 1; i >= 0; i--) args[static_cast<size_t>(i)] = pop();
+                syncTop();  // __str__ / __repr__ may re-enter the VM
                 for (size_t i = 0; i < args.size(); i++) {
                     if (i > 0) std::cout << " ";
                     std::cout << args[i].stringify();
@@ -2713,6 +2747,11 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
             }
             case Op::Throw: {
                 Value v = pop();
+                if (v.type == ValueType::Class) {  // raise ValueError  ==  raise ValueError()
+                    std::vector<Value> none;
+                    syncTop();
+                    v = callValue(v, none, ctx);
+                }
                 throw VmThrown(std::move(v));
             }
             case Op::Yield: {
@@ -2833,6 +2872,8 @@ Value vmCallMethod(Value& target, const std::string& name, std::vector<Value>& a
         throw RuntimeError(e.what());
     }
 }
+
+Value vmIndexGet(const Value& target, const Value& key) { return vmGetIndex(target, key); }
 
 bool vmIsGenFn(const Value& fn) {
     if (fn.type != ValueType::VmFn || !fn.vmClosure()) return false;

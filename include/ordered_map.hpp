@@ -46,10 +46,13 @@ public:
     using iterator = Iter<typename Store::iterator, value_type&, value_type*>;
     using const_iterator = Iter<typename Store::const_iterator, const value_type&, const value_type*>;
 
+    // defaultdict / Counter: called to fill in a missing key on subscript-get (null for a plain dict).
+    std::shared_ptr<V> deflt;
+
     OrderedMapT() = default;
-    OrderedMapT(const OrderedMapT& o) { for (const auto& e : o.items_) append(e->first, e->second); }
+    OrderedMapT(const OrderedMapT& o) : deflt(o.deflt) { for (const auto& e : o.items_) append(e->first, e->second); }
     OrderedMapT& operator=(const OrderedMapT& o) {
-        if (this != &o) { clear(); for (const auto& e : o.items_) append(e->first, e->second); }
+        if (this != &o) { clear(); deflt = o.deflt; for (const auto& e : o.items_) append(e->first, e->second); }
         return *this;
     }
     OrderedMapT(OrderedMapT&&) noexcept = default;

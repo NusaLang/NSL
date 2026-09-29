@@ -144,7 +144,7 @@ int cmpValues(const Value& a, const Value& b) {
         }
         return x.size() < y.size() ? -1 : (x.size() > y.size() ? 1 : 0);
     }
-    fail(std::string("tidak bisa membandingkan ") + a.typeName() + " dengan " + b.typeName());
+    fail(std::string("TypeError: tidak bisa membandingkan ") + a.typeName() + " dengan " + b.typeName());
 }
 
 const Value* kwGet(const ValueMap* kw, const char* name) {
@@ -382,7 +382,7 @@ const char* const kStrMethods[] = {"strip", "lstrip", "rstrip", "replace", "star
 const char* const kListMethods[] = {"extend", "insert", "remove", "pop", "index", "count", "sort", "reverse", "copy",
     "clear", "append", "add", "discard", "union", "intersection", "difference", "symmetric_difference", "issubset",
     "issuperset", "isdisjoint", "update"};
-const char* const kDictMethods[] = {"values", "items", "get", "setdefault", "pop", "update", "clear", "copy", "keys"};
+const char* const kDictMethods[] = {"values", "items", "get", "setdefault", "pop", "update", "clear", "copy", "keys", "popitem", "most_common", "total", "elements", "subtract"};
 
 const std::vector<std::string>& allNames() {
     static const std::vector<std::string> names = [] {
@@ -466,11 +466,11 @@ double toInt(const Value& v, int base) {
     if (v.type == ValueType::Number || v.type == ValueType::Bool) return std::trunc(v.number);
     if (v.type == ValueType::String) {
         std::string s = trimChars(v.str(), "", true, true);
-        if (s.empty()) fail("int(): teks kosong");
+        if (s.empty()) fail("ValueError: invalid literal for int() with base 10: ''");
         char* end = nullptr;
         errno = 0;
         long long n = std::strtoll(s.c_str(), &end, base);
-        if (*end != '\0' || errno) fail("int(): tidak bisa mengubah '" + v.str() + "' ke bilangan bulat");
+        if (*end != '\0' || errno) fail("ValueError: invalid literal for int() with base " + std::to_string(base) + ": '" + v.str() + "'");
         return static_cast<double>(n);
     }
     fail("int(): tipe tidak didukung");
@@ -768,17 +768,55 @@ Value dictMethod(const std::string& m, std::vector<Value>& a, const ValueMap* kw
     if (m == "pop") {
         std::string k = keyOf(a.at(1));
         auto it = d.find(k);
-        if (it == d.end()) { if (a.size() > 2) return a[2]; fail("pop(): kunci '" + k + "' tidak ada"); }
+        if (it == d.end()) { if (a.size() > 2) return a[2]; fail("KeyError: " + k); }
         Value out = it->second;
         d.erase(k);
         return out;
     }
     if (m == "update") {
+        bool counter = d.deflt && d.deflt->type == ValueType::Builtin && d.deflt->builtinName() == "int";  // Counter adds
+        if (counter && a.size() > 1) {
+            auto add = [&](const std::string& k, double n) { auto it = d.find(k); d[k] = Value::fromNumber((it == d.end() ? 0 : numArg(it->second, "update")) + n); };
+            if (a[1].type == ValueType::Map) { for (const auto& e : *a[1].map()) add(e.first, numArg(e.second, "update")); }
+            else for (const Value& x : elems(a[1])) add(keyOf(x), 1);
+            return Value::null();
+        }
         if (a.size() > 1) {
             if (a[1].type == ValueType::Map) { for (const auto& e : *a[1].map()) d[e.first] = e.second; }
             else for (const Value& pr : elems(a[1])) { std::vector<Value> p = elems(pr); if (p.size() == 2) d[keyOf(p[0])] = p[1]; }
         }
         if (kw) for (const auto& e : *kw) if (e.first != "__kw__") d[e.first] = e.second;
+        return Value::null();
+    }
+    if (m == "popitem") {  // last inserted pair
+        if (d.empty()) fail("popitem(): peta kosong");
+        auto it = d.end() - 1;
+        Value out = mkArr({Value::fromString(it->first), it->second});
+        d.erase(std::string(it->first));
+        return out;
+    }
+    if (m == "most_common") {  // Counter: pairs by count, highest first (ties keep insertion order)
+        std::vector<std::pair<std::string, Value>> items;
+        for (const auto& e : d) items.emplace_back(e.first, e.second);
+        std::stable_sort(items.begin(), items.end(), [](const auto& x, const auto& y) { return cmpValues(x.second, y.second) > 0; });
+        size_t n = items.size();
+        if (a.size() > 1 && a[1].type == ValueType::Number) n = std::min(n, static_cast<size_t>(std::max(0.0, a[1].number)));
+        std::vector<Value> out;
+        for (size_t i = 0; i < n; i++) out.push_back(mkArr({Value::fromString(items[i].first), items[i].second}));
+        return mkArr(std::move(out));
+    }
+    if (m == "total") { double t = 0; for (const auto& e : d) t += numArg(e.second, "total"); return Value::fromNumber(t); }
+    if (m == "elements") {
+        std::vector<Value> out;
+        for (const auto& e : d) for (long i = 0; i < static_cast<long>(numArg(e.second, "elements")); i++) out.push_back(Value::fromString(e.first));
+        return mkArr(std::move(out));
+    }
+    if (m == "subtract") {
+        auto sub = [&](const std::string& k, double n) { auto it = d.find(k); d[k] = Value::fromNumber((it == d.end() ? 0 : numArg(it->second, "subtract")) - n); };
+        if (a.size() > 1) {
+            if (a[1].type == ValueType::Map) { for (const auto& e : *a[1].map()) sub(e.first, numArg(e.second, "subtract")); }
+            else for (const Value& x : elems(a[1])) sub(keyOf(x), 1);
+        }
         return Value::null();
     }
     if (m == "clear") { d.clear(); return Value::null(); }
@@ -798,7 +836,7 @@ Value call(const std::string& name, std::vector<Value>& a, const ValueMap* kw, c
         std::vector<Value> items = a.size() == 1 ? elems(a[0], name.c_str()) : a;
         if (items.empty()) {
             if (const Value* d = kwGet(kw, "default")) return *d;
-            fail(name + "(): urutan kosong");
+            fail("ValueError: " + name + "(): urutan kosong");
         }
         const Value* key = kwGet(kw, "key");
         Value best = items[0];
@@ -836,13 +874,13 @@ Value call(const std::string& name, std::vector<Value>& a, const ValueMap* kw, c
     if (name == "_floordiv") {
         needArgs(a, 2, 2, "//");
         double d = numArg(a[1], "//");
-        if (d == 0) fail("pembagian dengan nol");
+        if (d == 0) fail("ZeroDivisionError: integer division or modulo by zero");
         return Value::fromNumber(std::floor(numArg(a[0], "//") / d));
     }
     if (name == "divmod") {
         needArgs(a, 2, 2, "divmod");
         double x = numArg(a[0], "divmod"), d = numArg(a[1], "divmod");
-        if (d == 0) fail("pembagian dengan nol");
+        if (d == 0) fail("ZeroDivisionError: integer division or modulo by zero");
         double q = std::floor(x / d);
         return mkArr({Value::fromNumber(q), Value::fromNumber(x - q * d)});
     }
@@ -860,6 +898,11 @@ Value call(const std::string& name, std::vector<Value>& a, const ValueMap* kw, c
     }
     if (name == "repr") {
         needArgs(a, 1, 1, "repr");
+        if (a[0].type == ValueType::Instance && g_methodHook) {
+            std::vector<Value> none;
+            Value r;
+            if (g_methodHook(a[0], "__repr__", none, &r) && r.type == ValueType::String) return r;
+        }
         if (a[0].type != ValueType::String) return Value::fromString(a[0].stringify());
         std::string out = "'";
         for (char c : a[0].str()) {

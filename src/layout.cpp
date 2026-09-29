@@ -199,13 +199,15 @@ std::vector<Token> applyLayout(std::vector<Token> toks, const std::string& sourc
     // Params of `def name(a, b: t, c)` from tokens already in `out`.
     auto collectParams = [&](size_t from) {
         std::vector<std::string> ps;
-        int d = 0;
+        int d = 0, br = 0;
         bool afterColon = false;
         for (size_t k = from; k < out.size(); k++) {
             const Token& t = out[k];
             if (t.type == TokenType::LParen) { d++; continue; }
             if (t.type == TokenType::RParen) { d--; if (d == 0) break; continue; }
-            if (d != 1) continue;
+            if (t.type == TokenType::LBracket) { br++; continue; }  // List[int, str] in an annotation
+            if (t.type == TokenType::RBracket) { br--; continue; }
+            if (d != 1 || br > 0) continue;
             if (t.type == TokenType::Comma) afterColon = false;
             else if (t.type == TokenType::Colon || t.type == TokenType::Eq) afterColon = true;  // type or default
             else if (t.type == TokenType::Ident && !afterColon) ps.push_back(t.text);
@@ -281,6 +283,31 @@ std::vector<Token> applyLayout(std::vector<Token> toks, const std::string& sourc
         // ---- statement-start handling (implicit declarations, global, imports) ----
         if (atStmtStart && depth == 0) {
             atStmtStart = false;
+            // Variable annotation `x: T = v` / `x: T`: the type is dropped (`x = v`; a bare `x: T` says nothing).
+            if (t.type == TokenType::Ident && t.text != "lambda" && i + 2 < toks.size() &&
+                toks[i + 1].type == TokenType::Colon && !blocks.back().isClass && !blocks.back().commaMode) {
+                int ln = lines.lineOf(t.span.start);
+                bool sameLine = toks[i + 2].type != TokenType::Eof && lines.lineOf(toks[i + 2].span.start) == ln;
+                if (sameLine) {
+                    size_t k = i + 2, eq = std::string::npos;
+                    int d = 0;
+                    for (; k < toks.size() && toks[k].type != TokenType::Eof && lines.lineOf(toks[k].span.start) == ln; k++) {
+                        TokenType ty = toks[k].type;
+                        if (ty == TokenType::LParen || ty == TokenType::LBracket || ty == TokenType::LDict) d++;
+                        else if (ty == TokenType::RParen || ty == TokenType::RBracket || ty == TokenType::RDict) d--;
+                        else if (d == 0 && ty == TokenType::Eq) { eq = k; break; }
+                    }
+                    if (eq != std::string::npos) {
+                        toks.erase(toks.begin() + static_cast<std::ptrdiff_t>(i) + 1, toks.begin() + static_cast<std::ptrdiff_t>(eq));
+                        atStmtStart = true;  // re-run the statement-start rules on `x = v`
+                        i--;
+                        continue;
+                    }
+                    i = k - 1;
+                    prevEndLine = lines.lineOf(std::max(toks[i].span.end - 1, toks[i].span.start));
+                    continue;  // a bare declaration: swallowed
+                }
+            }
             if (t.type == TokenType::Ident && (t.text == "global" || t.text == "nonlocal" || t.text == "umum") &&
                 i + 1 < toks.size() && toks[i + 1].type == TokenType::Ident) {
                 size_t k = i + 1;

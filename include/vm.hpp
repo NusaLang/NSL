@@ -226,6 +226,8 @@ private:
 // Native generators (a `def` with `yield`): the frame is saved on `yield` and resumed on demand,
 // so a generator costs no thread. `handle` comes from vmGenNew.
 bool vmIsGenFn(const Value& fn);
+// obj[key] / obj.key exactly as bytecode evaluates it (methods, properties, class attributes).
+Value vmIndexGet(const Value& target, const Value& key);
 Value vmGenNew(const Value& closure);
 // kind 1: resume with `sent` as the yield's value; 2: resume by raising `sent` at the yield.
 // Returns the yielded value with *ok = true, or *ok = false once the generator has finished.

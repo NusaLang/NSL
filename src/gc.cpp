@@ -126,6 +126,7 @@ void GC::markValue(const Value& v) {
     } else if (v.type == ValueType::Map && v.map()) {
         if (!markedFields_.insert(v.map()).second) return;
         for (const auto& [key, val] : *v.map()) markValue(val);
+        if (v.map()->deflt) markValue(*v.map()->deflt);
     } else if (v.type == ValueType::Channel && v.channel()) {
         std::lock_guard<std::mutex> chanLock(v.channel()->mu);
         for (const Value& item : v.channel()->queue) markValue(item);

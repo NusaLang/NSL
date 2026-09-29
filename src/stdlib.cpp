@@ -409,6 +409,88 @@ def patch(url, data=None, json=None, headers=None, params=None, timeout=None):
 def delete(url, headers=None, params=None, timeout=None):
     return request("DELETE", url, headers=headers, params=params, timeout=timeout)
 )NSL"},
+{"__exc", R"NSL(
+class BaseException:
+    def __init__(self, *args):
+        self.args = args
+    def __str__(self):
+        a = self.args
+        if a is None or len(a) == 0:
+            return ""
+        if len(a) == 1:
+            return str(a[0])
+        return str(a)
+    def __repr__(self):
+        a = self.args
+        inner = "" if a is None else ", ".join([repr(x) for x in a])
+        return type(self).__name__ + "(" + inner + ")"
+class Exception(BaseException):
+    pass
+class ArithmeticError(Exception):
+    pass
+class ZeroDivisionError(ArithmeticError):
+    pass
+class OverflowError(ArithmeticError):
+    pass
+class LookupError(Exception):
+    pass
+class IndexError(LookupError):
+    pass
+class KeyError(LookupError):
+    pass
+class ValueError(Exception):
+    pass
+class UnicodeError(ValueError):
+    pass
+class TypeError(Exception):
+    pass
+class NameError(Exception):
+    pass
+class AttributeError(Exception):
+    pass
+class RuntimeError(Exception):
+    pass
+class NotImplementedError(RuntimeError):
+    pass
+class RecursionError(RuntimeError):
+    pass
+class OSError(Exception):
+    pass
+class IOError(OSError):
+    pass
+class FileNotFoundError(OSError):
+    pass
+class PermissionError(OSError):
+    pass
+class TimeoutError(OSError):
+    pass
+class ConnectionError(OSError):
+    pass
+class StopIteration(Exception):
+    pass
+class StopAsyncIteration(Exception):
+    pass
+class AssertionError(Exception):
+    pass
+class ImportError(Exception):
+    pass
+class ModuleNotFoundError(ImportError):
+    pass
+class EOFError(Exception):
+    pass
+class Warning(Exception):
+    pass
+class UserWarning(Warning):
+    pass
+class DeprecationWarning(Warning):
+    pass
+class KeyboardInterrupt(BaseException):
+    pass
+class SystemExit(BaseException):
+    pass
+class GeneratorExit(BaseException):
+    pass
+)NSL"},
 {"__gen", R"NSL(
 # Generator runtime: the body of a `def` with `yield` runs on its own goroutine and hands each
 # value over a channel, so it only advances when the consumer asks for the next item.

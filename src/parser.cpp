@@ -57,6 +57,30 @@ void Parser::expectEnd(const std::string& message) {
     throw ParseError(message, peek());
 }
 
+namespace {
+const std::vector<std::string>& exceptionNames() {
+    static const std::vector<std::string> n = {
+        "BaseException", "Exception", "ValueError", "TypeError", "KeyError", "IndexError", "ZeroDivisionError",
+        "ArithmeticError", "LookupError", "RuntimeError", "NotImplementedError", "AttributeError", "NameError",
+        "OSError", "IOError", "FileNotFoundError", "PermissionError", "TimeoutError", "ConnectionError",
+        "StopIteration", "AssertionError", "KeyboardInterrupt", "SystemExit", "ImportError", "ModuleNotFoundError",
+        "RecursionError", "UnicodeError", "OverflowError", "EOFError", "Warning", "UserWarning",
+        "DeprecationWarning", "GeneratorExit", "StopAsyncIteration"};
+    return n;
+}
+}  // namespace
+
+// Remembers which builtin exception classes a file mentions, so they can be bound at its top.
+void Parser::noteName(const std::string& name) {
+    for (const auto& n : exceptionNames()) {
+        if (n == name) {
+            for (const auto& u : usedExc_) if (u == name) return;
+            usedExc_.push_back(name);
+            return;
+        }
+    }
+}
+
 std::unique_ptr<Program> Parser::parse() {
     auto program = std::make_unique<Program>();
     while (!atEnd()) {
@@ -65,6 +89,7 @@ std::unique_ptr<Program> Parser::parse() {
         pendingStmts_.clear();
     }
     if (usesGen_) injectGeneratorRuntime(*program);
+    injectExceptionClasses(*program);
     return program;
 }
 
@@ -246,12 +271,50 @@ StmtPtr Parser::letStmt() {
     std::string name = expect(TokenType::Ident, i18n::tr("Nama variabel diharapkan", "Expected variable name")).text;
     std::string typeAnnotation;
     if (match(TokenType::Colon)) {
-        typeAnnotation = expect(TokenType::Ident, i18n::tr("Nama tipe diharapkan setelah ':'", "Expected type name after ':'")).text;
+        typeAnnotation = this->typeAnnotation();
     }
     expect(TokenType::Eq, i18n::tr("'=' diharapkan setelah nama variabel", "Expected '=' after variable name"));
     ExprPtr value = expression();
     expectEnd( i18n::tr("';' diharapkan setelah pernyataan 'buat'", "Expected ';' after let statement"));
     return std::make_unique<LetStmt>(std::move(name), std::move(value), std::move(typeAnnotation));
+}
+
+// A type annotation: `int`, `List[int]`, `Optional[str]`, `a.B`, `int | None`, `"Fwd"`. Only a plain
+// name is kept (the type checker uses it); anything compound reads as unknown ("").
+std::string Parser::typeAnnotation() {
+    std::string head;
+    bool complex = false;
+    auto one = [&]() {
+        if (check(TokenType::String) || check(TokenType::Null_)) {
+            advance();
+            complex = true;
+            return;
+        }
+        Token t = expect(TokenType::Ident, i18n::tr("Nama tipe diharapkan setelah ':'", "Expected type name after ':'"));
+        if (head.empty()) head = t.text;
+        while (check(TokenType::Dot)) {
+            advance();
+            expect(TokenType::Ident, i18n::tr("Nama tipe diharapkan setelah ':'", "Expected type name after ':'"));
+            complex = true;
+        }
+        if (check(TokenType::LBracket)) {
+            complex = true;
+            int depth = 0;
+            do {
+                if (check(TokenType::LBracket)) depth++;
+                else if (check(TokenType::RBracket)) depth--;
+                if (atEnd()) break;
+                advance();
+            } while (depth > 0);
+        }
+    };
+    one();
+    while (check(TokenType::Pipe)) {
+        advance();
+        one();
+        complex = true;
+    }
+    return complex ? "" : head;
 }
 
 StmtPtr Parser::fnDecl() {
@@ -285,22 +348,26 @@ std::unique_ptr<FnDeclStmt> Parser::fnDeclBody(std::string name) {
     if (!check(TokenType::RParen)) {
         params.push_back(paramName());
         paramTypes.push_back(match(TokenType::Colon)
-                                  ? expect(TokenType::Ident, i18n::tr("Nama tipe diharapkan setelah ':'", "Expected type name after ':'")).text
+                                  ? typeAnnotation()
                                   : "");
         defaults.push_back(match(TokenType::Eq) ? expression() : nullptr);
         while (match(TokenType::Comma)) {
             if (check(TokenType::RParen)) break;
             params.push_back(paramName());
             paramTypes.push_back(match(TokenType::Colon)
-                                      ? expect(TokenType::Ident, i18n::tr("Nama tipe diharapkan setelah ':'", "Expected type name after ':'")).text
+                                      ? typeAnnotation()
                                       : "");
             defaults.push_back(match(TokenType::Eq) ? expression() : nullptr);
         }
     }
     expect(TokenType::RParen, i18n::tr("')' diharapkan setelah parameter", "Expected ')' after parameters"));
     std::string returnType;
-    if (match(TokenType::Colon)) {
-        returnType = expect(TokenType::Ident, i18n::tr("Tipe kembalian diharapkan setelah ':'", "Expected return type after ':'")).text;
+    if (check(TokenType::Minus) && peekAt(1).type == TokenType::Gt) {  // Python: def f(x) -> int:
+        advance();
+        advance();
+        returnType = typeAnnotation();
+    } else if (match(TokenType::Colon)) {
+        returnType = typeAnnotation();
     }
     yieldStack_.push_back(false);
     auto body = block();
@@ -362,12 +429,28 @@ std::unique_ptr<FnDeclStmt> Parser::fnDeclBody(std::string name) {
 
 StmtPtr Parser::classDecl() {
     std::string name = expect(TokenType::Ident, i18n::tr("Nama kelas diharapkan", "Expected class name")).text;
+    declaredClasses_.push_back(name);
     std::string parentName;
     if (match(TokenType::Extends)) {
         parentName = expect(TokenType::Ident, i18n::tr("Nama kelas induk diharapkan", "Expected parent class name")).text;
+        noteName(parentName);
     } else if (match(TokenType::LParen)) {  // Python: class A(B):
         if (!check(TokenType::RParen)) {
             parentName = expect(TokenType::Ident, i18n::tr("Nama kelas induk diharapkan", "Expected parent class name")).text;
+            bool dotted = false;
+            while (match(TokenType::Dot)) {  // abc.ABC, enum.Enum: a module attribute, not a class we can extend
+                expect(TokenType::Ident, i18n::tr("Nama kelas induk diharapkan", "Expected parent class name"));
+                dotted = true;
+            }
+            if (dotted || parentName == "object") parentName.clear();
+            else noteName(parentName);
+            // more bases / keywords (class A(B, C), metaclass=M): only the first base is used
+            int depth = 0;
+            while (!atEnd() && !(depth == 0 && check(TokenType::RParen))) {
+                if (check(TokenType::LParen)) depth++;
+                else if (check(TokenType::RParen)) depth--;
+                advance();
+            }
         }
         expect(TokenType::RParen, i18n::tr("')' diharapkan setelah kelas induk", "Expected ')' after parent class"));
     }
@@ -383,7 +466,7 @@ StmtPtr Parser::classDecl() {
         // class attribute: `name = value` (or `name: type = value`)
         if (check(TokenType::Ident) && (peekAt(1).type == TokenType::Eq || peekAt(1).type == TokenType::Colon)) {
             std::string attr = advance().text;
-            if (match(TokenType::Colon)) expect(TokenType::Ident, i18n::tr("Nama tipe diharapkan setelah ':'", "Expected type name after ':'"));
+            if (match(TokenType::Colon)) typeAnnotation();
             if (match(TokenType::Eq)) {
                 classAttrs.emplace_back(attr, expression());
             } else {
@@ -442,7 +525,7 @@ StmtPtr Parser::structDecl() {
     auto readField = [&]() {
         fields.push_back(expect(TokenType::Ident, i18n::tr("Nama field diharapkan", "Expected field name")).text);
         if (match(TokenType::Colon)) {
-            expect(TokenType::Ident, i18n::tr("Nama tipe diharapkan setelah ':'", "Expected type name after ':'"));
+            typeAnnotation();
         }
     };
     if (!check(TokenType::RBrace)) {
@@ -472,6 +555,7 @@ StmtPtr Parser::enumDecl() {
 }
 
 StmtPtr Parser::tryStmt() {
+    Span sp = peek().span;
     auto tryBlock = block();
     if (check(TokenType::Finally)) {
         // try/finally with no except: run the cleanup, then let the error keep going
@@ -481,21 +565,141 @@ StmtPtr Parser::tryStmt() {
         rethrow.push_back(std::make_unique<ThrowStmt>(mkIdent("__fe", peek().span)));
         return std::make_unique<TryStmt>(std::move(tryBlock), "__fe", std::make_unique<BlockStmt>(std::move(rethrow)), std::move(fin));
     }
-    expect(TokenType::Catch, i18n::tr("'tangkap' diharapkan setelah blok 'coba'", "Expected 'tangkap' after 'coba' block"));
-    std::string catchVar = "_e";
-    if (match(TokenType::LParen)) {
-        catchVar = expect(TokenType::Ident, i18n::tr("Nama variabel diharapkan di 'tangkap'", "Expected variable name in 'tangkap'")).text;
-        expect(TokenType::RParen, i18n::tr("')' diharapkan setelah variabel 'tangkap'", "Expected ')' after 'tangkap' variable"));
-    } else if (check(TokenType::Ident)) {  // Python: `except e:` / `except Err as e:`
-        catchVar = advance().text;
-        if (matchWord("as", "sbg")) catchVar = expect(TokenType::Ident, i18n::tr("Nama variabel diharapkan setelah 'as'", "Expected variable name after 'as'")).text;
+    if (!check(TokenType::Catch)) {
+        throw ParseError(i18n::tr("'tangkap' diharapkan setelah blok 'coba'", "Expected 'tangkap' after 'coba' block"), peek());
     }
-    auto catchBlock = block();
+    // Python: any number of `except [Class | (A, B)] [as e]:` clauses, then optional else / finally.
+    struct Clause {
+        ExprPtr filter;      // class or tuple of classes; null = catch everything
+        std::string var;     // bound name ("" = none)
+        bool typed = false;  // `except X as e`: e becomes an exception object
+        std::unique_ptr<BlockStmt> body;
+    };
+    std::vector<Clause> clauses;
+    int id = hiddenCounter_++;
+    std::string exVar = "__ex" + std::to_string(id);
+    auto isClassLike = [&](const Token& t) {
+        return t.type == TokenType::Ident && !t.text.empty() && std::isupper(static_cast<unsigned char>(t.text[0]));
+    };
+    while (check(TokenType::Catch)) {
+        advance();
+        Clause c;
+        if (match(TokenType::LParen)) {
+            if (check(TokenType::Ident) && !isClassLike(peek()) && peekAt(1).type == TokenType::RParen) {
+                c.var = advance().text;  // legacy `tangkap (e)`
+                advance();
+            } else {  // except (A, B):
+                std::vector<ExprPtr> items;
+                do { items.push_back(logicOr()); } while (match(TokenType::Comma));
+                expect(TokenType::RParen, i18n::tr("')' diharapkan", "Expected ')'"));
+                c.filter = std::make_unique<ArrayLitExpr>(std::move(items));
+                c.typed = true;
+            }
+        } else if (check(TokenType::Ident)) {
+            if (isClassLike(peek()) || peekAt(1).type == TokenType::Dot) {
+                c.filter = call();
+                c.typed = true;
+            } else {  // legacy `except e:`
+                c.var = advance().text;
+            }
+        }
+        if (matchWord("as", "sbg")) {
+            c.var = expect(TokenType::Ident, i18n::tr("Nama variabel diharapkan setelah 'as'", "Expected variable name after 'as'")).text;
+        }
+        catchVarStack_.push_back(exVar);
+        c.body = block();
+        catchVarStack_.pop_back();
+        clauses.push_back(std::move(c));
+    }
+    std::unique_ptr<BlockStmt> elseBlock;
+    if (match(TokenType::Else)) elseBlock = block();
     std::unique_ptr<BlockStmt> finallyBlock;
-    if (match(TokenType::Finally)) {
-        finallyBlock = block();
+    if (match(TokenType::Finally)) finallyBlock = block();
+
+    std::string okVar = "__ok" + std::to_string(id);
+    if (elseBlock) {  // body finished without raising -> flag it; the else block runs after the try
+        ExprPtr set = std::make_unique<AssignExpr>(okVar, LiteralExpr::makeBool(true));
+        set->span = sp;
+        tryBlock->statements.push_back(std::make_unique<ExprStmtNode>(std::move(set)));
     }
-    return std::make_unique<TryStmt>(std::move(tryBlock), std::move(catchVar), std::move(catchBlock), std::move(finallyBlock));
+
+    std::unique_ptr<BlockStmt> catchBlock;
+    std::string catchVar;
+    if (clauses.size() == 1 && !clauses[0].filter) {
+        // the classic single catch-all: keep the old shape
+        catchVar = clauses[0].var.empty() ? "_e" : clauses[0].var;
+        catchBlock = std::move(clauses[0].body);
+    } else {
+        catchVar = exVar;
+        std::unique_ptr<BlockStmt> chain;  // else-chain built from the last clause backwards
+        {
+            std::vector<StmtPtr> rethrow;
+            rethrow.push_back(std::make_unique<ThrowStmt>(mkIdent(exVar, sp)));
+            chain = std::make_unique<BlockStmt>(std::move(rethrow));
+        }
+        for (size_t k = clauses.size(); k-- > 0;) {
+            Clause& c = clauses[k];
+            std::vector<StmtPtr> then;
+            if (!c.var.empty()) {
+                ExprPtr bound = mkIdent(exVar, sp);
+                if (c.typed) {
+                    std::vector<ExprPtr> wa;
+                    wa.push_back(std::move(bound));
+                    bound = mkCall("_exc_wrap", std::move(wa), sp);
+                }
+                then.push_back(mkLet(c.var, std::move(bound), sp));
+            }
+            for (auto& st : c.body->statements) then.push_back(std::move(st));
+            auto thenBlock = std::make_unique<BlockStmt>(std::move(then));
+            thenBlock->span = sp;
+            if (!c.filter) {  // catches everything: nothing after it can run
+                chain = std::move(thenBlock);
+                continue;
+            }
+            std::vector<ExprPtr> ma;
+            ma.push_back(mkIdent(exVar, sp));
+            ma.push_back(std::move(c.filter));
+            StmtPtr ifs = std::make_unique<IfStmt>(mkCall("_exc_match", std::move(ma), sp), std::move(thenBlock), std::move(chain));
+            ifs->span = sp;
+            std::vector<StmtPtr> wrap;
+            wrap.push_back(std::move(ifs));
+            chain = std::make_unique<BlockStmt>(std::move(wrap));
+            chain->span = sp;
+        }
+        catchBlock = std::move(chain);
+    }
+    if (!elseBlock) {
+        StmtPtr tr = std::make_unique<TryStmt>(std::move(tryBlock), std::move(catchVar), std::move(catchBlock), std::move(finallyBlock));
+        tr->span = sp;
+        return tr;
+    }
+    // else: runs after a clean body, before finally, and its own errors are not caught by the excepts:
+    //   { ok = false; try { try { body; ok = true } catch ..; if ok { else } } finally { fin } }
+    StmtPtr inner = std::make_unique<TryStmt>(std::move(tryBlock), std::move(catchVar), std::move(catchBlock), nullptr);
+    inner->span = sp;
+    std::vector<StmtPtr> seq;
+    seq.push_back(std::move(inner));
+    seq.push_back(std::make_unique<IfStmt>(mkIdent(okVar, sp), std::move(elseBlock), nullptr));
+    StmtPtr body = std::make_unique<BlockStmt>(std::move(seq));
+    body->span = sp;
+    StmtPtr result;
+    if (finallyBlock) {
+        std::vector<StmtPtr> ob;
+        ob.push_back(std::move(body));
+        std::vector<StmtPtr> rethrow;
+        rethrow.push_back(std::make_unique<ThrowStmt>(mkIdent("__fe", sp)));
+        result = std::make_unique<TryStmt>(std::make_unique<BlockStmt>(std::move(ob)), "__fe",
+                                           std::make_unique<BlockStmt>(std::move(rethrow)), std::move(finallyBlock));
+        result->span = sp;
+    } else {
+        result = std::move(body);
+    }
+    std::vector<StmtPtr> outer;
+    outer.push_back(mkLet(okVar, LiteralExpr::makeBool(false), sp));
+    outer.push_back(std::move(result));
+    StmtPtr blk = std::make_unique<BlockStmt>(std::move(outer));
+    blk->span = sp;
+    return blk;
 }
 
 // `@dec` lines before a def or class: `f = dec(f)` right after the definition.
@@ -532,22 +736,50 @@ StmtPtr Parser::decoratedStmt() {
     return def;
 }
 
-// `with open(p) as f: body` -> { let f = open(p); try { body } catch (e) { throw e } finally { _close(f) } }
+// `with mgr as f: body` follows Python's protocol:
+//   { let m = mgr; let f = _with_enter(m); let h = false;
+//     try { body } catch (e) { h = true; if !_with_exit(m, e) { throw e } } finally { if !h { _with_exit(m, None) } } }
 StmtPtr Parser::withStmt() {
     Span sp = peek().span;
     ExprPtr resource = expression();
-    std::string var = "__w" + std::to_string(hiddenCounter_++);
+    int id = hiddenCounter_++;
+    std::string mgr = "__wm" + std::to_string(id), handled = "__wh" + std::to_string(id), err = "__we" + std::to_string(id);
+    std::string var;
     if (matchWord("as", "sbg")) var = expect(TokenType::Ident, i18n::tr("Nama diharapkan setelah 'as'", "Expected a name after 'as'")).text;
     auto body = block();
     std::vector<StmtPtr> outer;
-    outer.push_back(mkLet(var, std::move(resource), sp));
-    std::vector<StmtPtr> rethrow;
-    rethrow.push_back(std::make_unique<ThrowStmt>(mkIdent("__we", sp)));
-    std::vector<ExprPtr> closeArgs;
-    closeArgs.push_back(mkIdent(var, sp));
+    outer.push_back(mkLet(mgr, std::move(resource), sp));
+    {
+        std::vector<ExprPtr> a;
+        a.push_back(mkIdent(mgr, sp));
+        outer.push_back(mkLet(var.empty() ? "__wv" + std::to_string(id) : var, mkCall("_with_enter", std::move(a), sp), sp));
+    }
+    outer.push_back(mkLet(handled, LiteralExpr::makeBool(false), sp));
+    std::vector<StmtPtr> onError;
+    {
+        ExprPtr set = std::make_unique<AssignExpr>(handled, LiteralExpr::makeBool(true));
+        set->span = sp;
+        onError.push_back(std::make_unique<ExprStmtNode>(std::move(set)));
+        std::vector<ExprPtr> a;
+        a.push_back(mkIdent(mgr, sp));
+        a.push_back(mkIdent(err, sp));
+        ExprPtr suppressed = mkCall("_with_exit", std::move(a), sp);
+        std::vector<StmtPtr> rethrow;
+        rethrow.push_back(std::make_unique<ThrowStmt>(mkIdent(err, sp)));
+        onError.push_back(std::make_unique<IfStmt>(std::make_unique<UnaryExpr>("!", std::move(suppressed)),
+                                                   std::make_unique<BlockStmt>(std::move(rethrow)), nullptr));
+    }
     std::vector<StmtPtr> fin;
-    fin.push_back(std::make_unique<ExprStmtNode>(mkCall("_close", std::move(closeArgs), sp)));
-    outer.push_back(std::make_unique<TryStmt>(std::move(body), "__we", std::make_unique<BlockStmt>(std::move(rethrow)),
+    {
+        std::vector<ExprPtr> a;
+        a.push_back(mkIdent(mgr, sp));
+        a.push_back(LiteralExpr::makeNull());
+        std::vector<StmtPtr> then;
+        then.push_back(std::make_unique<ExprStmtNode>(mkCall("_with_exit", std::move(a), sp)));
+        fin.push_back(std::make_unique<IfStmt>(std::make_unique<UnaryExpr>("!", mkIdent(handled, sp)),
+                                               std::make_unique<BlockStmt>(std::move(then)), nullptr));
+    }
+    outer.push_back(std::make_unique<TryStmt>(std::move(body), err, std::make_unique<BlockStmt>(std::move(onError)),
                                               std::make_unique<BlockStmt>(std::move(fin))));
     StmtPtr blk = std::make_unique<BlockStmt>(std::move(outer));
     blk->span = sp;
@@ -555,7 +787,19 @@ StmtPtr Parser::withStmt() {
 }
 
 StmtPtr Parser::throwStmt() {
-    ExprPtr value = expression();
+    ExprPtr value;
+    if (check(TokenType::Semi) || check(TokenType::RBrace)) {  // bare `raise`: re-throw the exception being handled
+        if (catchVarStack_.empty()) {
+            throw ParseError(i18n::tr("'raise' tanpa nilai cuma boleh di dalam blok 'except'", "A bare 'raise' is only allowed inside an 'except' block"), peek());
+        }
+        value = mkIdent(catchVarStack_.back(), peek().span);
+    } else {
+        value = expression();
+        if (isWord(peek(), "from", "dari")) {  // raise A from B: the cause is dropped
+            advance();
+            expression();
+        }
+    }
     expectEnd( i18n::tr("';' diharapkan setelah 'lempar'", "Expected ';' after 'lempar'"));
     return std::make_unique<ThrowStmt>(std::move(value));
 }
@@ -875,6 +1119,21 @@ ExprPtr Parser::parseSingleExpression() {
 }
 
 ExprPtr Parser::expression() { return assignment(); }
+
+// Builtin exception classes used here (and not defined here) come from the embedded __exc module.
+void Parser::injectExceptionClasses(Program& program) {
+    for (const auto& name : usedExc_) {
+        bool own = false;
+        for (const auto& d : declaredClasses_) if (d == name) own = true;
+        if (own) continue;
+        Span sp{};
+        std::vector<ExprPtr> a;
+        a.push_back(LiteralExpr::makeString("__exc"));
+        ExprPtr get = std::make_unique<IndexExpr>(mkCall("impor", std::move(a), sp), LiteralExpr::makeString(name));
+        get->span = sp;
+        program.statements.insert(program.statements.begin(), mkLet(name, std::move(get), sp));
+    }
+}
 
 void Parser::injectGeneratorRuntime(Program& program) {
         Span sp{};
@@ -1539,6 +1798,7 @@ ExprPtr Parser::primary() {
                 return e;
             }
             advance();
+            noteName(tok.text);
             ExprPtr e = std::make_unique<IdentifierExpr>(tok.text);
             e->span = start;
             return e;

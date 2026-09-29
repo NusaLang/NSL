@@ -1,0 +1,27 @@
+VE bad
+ME mine
+zde division by zero
+ie Index larik di luar batas: 5
+5 salah
+db: db down 7 DbError
+done 0
+val/key: bad value ValueError
+done 1
+arith: division by zero
+done 2
+val/key: k KeyError
+done 3
+generic: NotImplementedError() []
+done 4
+result ok
+no error
+done 5
+caught inner
+outer inner benar salah
+legacy: legacy string
+bare
+fin
+1
+benar benar
+int fail
+--- exit: 0
