@@ -409,6 +409,162 @@ def patch(url, data=None, json=None, headers=None, params=None, timeout=None):
 def delete(url, headers=None, params=None, timeout=None):
     return request("DELETE", url, headers=headers, params=params, timeout=timeout)
 )NSL"},
+{"__gen", R"NSL(
+# Generator runtime: the body of a `def` with `yield` runs on its own goroutine and hands each
+# value over a channel, so it only advances when the consumer asks for the next item.
+class Iter:
+    def __len__(self):
+        r = self._nx()
+        if r[0]:
+            self._cur = r[1]
+            return 9007199254740991
+        return 0
+    def __getitem__(self, i):
+        return self._cur
+    def __next__(self):
+        r = self._nx()
+        if r[0]:
+            return r[1]
+        raise "StopIteration"
+    def __iter__(self):
+        return self
+
+class Generator(Iter):
+    def __init__(self, body):
+        self._body = body
+        self._req = None
+        self._res = None
+        self._st = 0
+        self.gi_running = False
+    def _start(self):
+        self._req = kanal_baru()
+        self._res = kanal_baru()
+        req = self._req
+        res = self._res
+        body = self._body
+        def y(v):
+            kanal_kirim(res, [1, v])
+            m = kanal_terima(req)
+            if m[0] == 2:
+                raise m[1]
+            return m[1]
+        def run():
+            latar()
+            m = kanal_terima(req)
+            if m[0] == 2:
+                kanal_kirim(res, [0, None])
+                return
+            try:
+                r = body(y)
+                kanal_kirim(res, [0, r])
+            except e:
+                kanal_kirim(res, [2, e])
+        jalan(run)
+    def _resume(self, kind, v):
+        if self._st == 3:
+            return [False]
+        if self._st == 0:
+            if kind == 2:
+                self._st = 3
+                raise v
+            self._start()
+        self._st = 1
+        kanal_kirim(self._req, [kind, v])
+        m = kanal_terima(self._res)
+        if m[0] == 1:
+            return [True, m[1]]
+        self._st = 3
+        if m[0] == 2:
+            raise m[1]
+        return [False]
+    def _nx(self):
+        return self._resume(1, None)
+    def send(self, v):
+        if self._st == 0 and v is not None:
+            raise "TypeError: can't send non-None value to a just-started generator"
+        r = self._resume(1, v)
+        if r[0]:
+            return r[1]
+        raise "StopIteration"
+    def throw_(self, err):
+        r = self._resume(2, err)
+        if r[0]:
+            return r[1]
+        raise "StopIteration"
+    def close(self):
+        if self._st == 1:
+            self._resume(2, "GeneratorExit")
+        self._st = 3
+    def __next__(self):
+        r = self._resume(1, None)
+        if r[0]:
+            return r[1]
+        raise "StopIteration"
+    def __iter__(self):
+        return self
+
+class ListIter(Iter):
+    def __init__(self, items):
+        self._items = items
+        self._i = 0
+    def _nx(self):
+        if self._i >= len(self._items):
+            return [False]
+        v = self._items[self._i]
+        self._i = self._i + 1
+        return [True, v]
+    def __next__(self):
+        r = self._nx()
+        if r[0]:
+            return r[1]
+        raise "StopIteration"
+    def __iter__(self):
+        return self
+
+class CallIter(Iter):
+    def __init__(self, fn, sentinel):
+        self._fn = fn
+        self._sentinel = sentinel
+        self._done = False
+    def _nx(self):
+        if self._done:
+            return [False]
+        v = self._fn()
+        if v == self._sentinel:
+            self._done = True
+            return [False]
+        return [True, v]
+    def __next__(self):
+        r = self._nx()
+        if r[0]:
+            return r[1]
+        raise "StopIteration"
+    def __iter__(self):
+        return self
+
+class NextIter(Iter):
+    def __init__(self, obj):
+        self._obj = obj
+    def _nx(self):
+        try:
+            return [True, self._obj.__next__()]
+        except e:
+            if "StopIteration" in str(e):
+                return [False]
+            raise e
+
+def adapt(obj):
+    return NextIter(obj)
+def mk(body):
+    return Generator(body)
+def yf(y, it):
+    for v in it:
+        y(v)
+def listiter(items):
+    return ListIter(items)
+def calliter(fn, sentinel):
+    return CallIter(fn, sentinel)
+)NSL"},
 {"__io", R"NSL(
 class File:
     def __init__(self, path, mode="r"):

@@ -130,7 +130,14 @@ Value indexGet(const Value& target, const Value& idx) {
         return Value::fromString(std::string(1, target.str()[static_cast<size_t>(i)]));
     }
     if (target.type == ValueType::Instance) {
-        if (idx.type != ValueType::String) throw RuntimeError(i18n::tr("Kunci objek harus teks", "Object key must be a string"));
+        if (idx.type != ValueType::String) {
+            std::shared_ptr<ClassInfo> owner;
+            auto gi = lookupMethod(target.instance()->classInfo, "__getitem__", &owner);
+            if (!gi || !g_propInterpreter) throw RuntimeError(i18n::tr("Kunci objek harus teks", "Object key must be a string"));
+            std::vector<Value> a{idx};
+            Value self = target;
+            return g_propInterpreter->callFunction(gi, a, Span{}, &self, owner);
+        }
         auto fit = target.instance()->fields->find(idx.str());
         if (fit != target.instance()->fields->end()) return fit->second;
         std::shared_ptr<ClassInfo> owner;
@@ -283,7 +290,7 @@ bool isRegularFile(const std::string& path) {
 const std::vector<std::string>& builtinNames() {
     static const std::vector<std::string> names = {
         "cetak", "panjang", "tambah", "hapus_akhir", "potong", "gabung", "pisah",
-        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "pegang", "_peta", "_in", "_callkw", "_callkwm", "_close", "_go",
+        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "iter", "next", "pegang", "_peta", "_in", "_callkw", "_callkwm", "_close", "_go",
         "base64_encode", "base64_decode",
         "baca_file", "tulis_file", "file_ada",
         "tcp_konek", "tcp_kirim", "tcp_terima", "tcp_tutup",
@@ -340,8 +347,30 @@ alignas(64) thread_local int Interpreter::callDepth_ = 0;
 void Interpreter::registerCurrentThread() { GC::instance().registerThread(&exprDepth_); }
 void Interpreter::unregisterCurrentThread() { GC::instance().unregisterThread(&exprDepth_); }
 
+// inst.name(args) when the class has that method (VM or tree-walker); false otherwise.
+static bool callInstMethod(Interpreter* in, const Value& inst, const char* name, std::vector<Value>& args, Value* out) {
+    if (inst.type != ValueType::Instance) return false;
+    auto ci = inst.instance()->classInfo;
+    std::shared_ptr<ClassInfo> owner;
+    auto m = lookupMethod(ci, name, &owner);
+    if (vmIsActive()) {
+        std::vector<std::string> names;
+        if (!m && !vmMethodParamNames(ci.get(), name, names)) return false;
+        Value o = inst;
+        *out = vmCallMethod(o, name, args, in);
+        return true;
+    }
+    if (!m) return false;
+    Value self = inst;
+    *out = in->callFunction(m, args, Span{}, &self, owner);
+    return true;
+}
+
 Interpreter::Interpreter(std::string entryDir) {
     g_propInterpreter = this;
+    pylib::setMethodHook([this](const Value& inst, const char* name, std::vector<Value>& args, Value* out) {
+        return callInstMethod(this, inst, name, args, out);
+    });
     globals_ = GC::instance().alloc(nullptr);
     GC::instance().setGlobals(globals_);
     for (const std::string& name : builtinNames()) {
@@ -1068,6 +1097,15 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         if (v.type == ValueType::Array) return Value::fromNumber(static_cast<double>(v.array()->size()));
         if (v.type == ValueType::VmArray) return Value::fromNumber(static_cast<double>(v.vmArray()->numeric ? v.vmArray()->nums.size() : v.vmArray()->boxed->size()));
         if (v.type == ValueType::Map) return Value::fromNumber(static_cast<double>(v.map()->size()));
+        if (v.type == ValueType::Instance) {
+            if (vmIsActive()) { std::vector<Value> none; Value o = v; return vmCallMethod(o, "__len__", none, this); }
+            std::shared_ptr<ClassInfo> owner;
+            if (auto m = lookupMethod(v.instance()->classInfo, "__len__", &owner)) {
+                std::vector<Value> none;
+                Value self = v;
+                return callFunction(m, none, Span{}, &self, owner);
+            }
+        }
         throw RuntimeError(i18n::tr("panjang(): butuh teks, larik, atau peta", "panjang(): needs a string, array, or map"));
     }
 
@@ -1495,6 +1533,48 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
             GC::instance().noteStore(m, args[i + 1]);
         }
         return m;
+    }
+
+    if (name == "iter") {
+        need(1);
+        Value r;
+        std::vector<Value> none;
+        if (args.size() == 2) {  // iter(callable, sentinel)
+            Value mod = doImport("__gen");
+            std::vector<Value> a{args[0], args[1]};
+            return callValue((*mod.map())["calliter"], a, Span{});
+        }
+        if (args[0].type == ValueType::Instance) {
+            if (callInstMethod(this, args[0], "__iter__", none, &r)) return r;
+            return args[0];
+        }
+        std::vector<Value> lst{args[0]};
+        Value items = pylib::call("list", lst, nullptr, [this](const Value& fn, std::vector<Value>& a) { return callValue(fn, a, Span{}); });
+        Value mod = doImport("__gen");
+        std::vector<Value> a{items};
+        return callValue((*mod.map())["listiter"], a, Span{});
+    }
+    if (name == "next") {
+        if (args.empty() || args.size() > 2) throw RuntimeError("next() butuh 1 atau 2 argumen");
+        std::vector<Value> none;
+        Value r;
+        if (args[0].type == ValueType::Instance) {
+            if (callInstMethod(this, args[0], "_nx", none, &r)) {
+                std::vector<Value> pair = arrayElements(r);
+                if (pair.size() == 2 && pair[0].truthy()) return pair[1];
+            } else {
+                try {
+                    if (!callInstMethod(this, args[0], "__next__", none, &r)) throw RuntimeError("objek bukan iterator");
+                    return r;
+                } catch (const std::exception& e) {
+                    if (std::string(e.what()).find("StopIteration") == std::string::npos) throw;
+                }
+            }
+        } else {
+            throw RuntimeError("next(): argumen harus iterator (pakai iter(...) dulu)");
+        }
+        if (args.size() == 2) return args[1];
+        throw RuntimeError("StopIteration");
     }
 
     if (name == "latar") {
@@ -2053,6 +2133,24 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         need(1);
         const Value& v = args[0];
         if (v.type == ValueType::Array || v.type == ValueType::VmArray || v.type == ValueType::String) return v;
+        if (v.type == ValueType::Instance) {
+            // Lazy iteration: a generator (or anything with __len__/__getitem__ semantics) is walked in place.
+            std::vector<Value> none;
+            Value r = v;
+            if (callInstMethod(this, v, "__iter__", none, &r) && r.type != ValueType::Instance) {
+                std::vector<Value> a{r};
+                return callBuiltin("__iter", a);
+            }
+            if (r.type == ValueType::Instance) {
+                std::shared_ptr<ClassInfo> owner;
+                if (!lookupMethod(r.instance()->classInfo, "__len__", &owner)) {
+                    Value mod = doImport("__gen");
+                    std::vector<Value> a{r};
+                    return callValue((*mod.map())["adapt"], a, Span{});
+                }
+            }
+            return r;
+        }
         if (v.type == ValueType::Map) {
             auto keys = std::make_shared<std::vector<Value>>();
             for (const auto& [k, val] : *v.map()) keys->push_back(Value::fromString(k));

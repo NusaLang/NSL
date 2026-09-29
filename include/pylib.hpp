@@ -16,6 +16,11 @@ struct PyError : std::runtime_error {
     explicit PyError(const std::string& m) : std::runtime_error(m) {}
 };
 
+// Calls `inst.name(args)` if the instance's class has that method (false otherwise). Installed by
+// the interpreter; lets iterating builtins (list, sum, zip, ...) drain user iterators and generators.
+using MethodHook = std::function<bool(const Value& inst, const char* name, std::vector<Value>& args, Value* out)>;
+void setMethodHook(MethodHook hook);
+
 using CallFn = std::function<Value(const Value& fn, std::vector<Value>& args)>;
 
 // Builtins provided here (registered as globals). Method implementations are named `_m_s_*`

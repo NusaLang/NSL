@@ -30,6 +30,42 @@ std::vector<Value> utf8Chars(const std::string& s) {
     return out;
 }
 
+MethodHook g_methodHook;
+
+std::vector<Value> elems(const Value& v, const char* who);
+std::vector<Value> elemsOfSeq(const Value& v) { return elems(v, "seq"); }
+
+// Drains an iterator object: `_nx()` -> [true, v] / [false] when the class has it (generators), else
+// `__next__()` until it raises StopIteration.
+std::vector<Value> drainIterator(const Value& it) {
+    std::vector<Value> out;
+    if (!g_methodHook) fail("objek tidak bisa diiterasi");
+    std::vector<Value> none;
+    Value step;
+    if (g_methodHook(it, "_nx", none, &step)) {  // the probe call is also the first step
+        for (;;) {
+            std::vector<Value> pair = elemsOfSeq(step);
+            if (pair.size() < 2 || !pair[0].truthy()) break;
+            out.push_back(pair[1]);
+            std::vector<Value> a;
+            g_methodHook(it, "_nx", a, &step);
+        }
+        return out;
+    }
+    for (;;) {
+        std::vector<Value> a;
+        Value v;
+        try {
+            if (!g_methodHook(it, "__next__", a, &v)) fail("objek tidak punya __next__");
+        } catch (const std::exception& e) {
+            if (std::string(e.what()).find("StopIteration") != std::string::npos) break;
+            throw;
+        }
+        out.push_back(v);
+    }
+    return out;
+}
+
 // Elements of any iterable: list, str (characters), dict (keys).
 std::vector<Value> elems(const Value& v, const char* who = "argumen") {
     if (v.type == ValueType::Array) return *v.array();
@@ -46,6 +82,15 @@ std::vector<Value> elems(const Value& v, const char* who = "argumen") {
         std::vector<Value> out;
         for (const auto& kv : *v.map()) out.push_back(Value::fromString(kv.first));
         return out;
+    }
+    if (v.type == ValueType::Instance && g_methodHook) {
+        std::vector<Value> none;
+        Value r;
+        if (g_methodHook(v, "__iter__", none, &r)) {
+            if (r.type == ValueType::Instance) return drainIterator(r);
+            return elems(r, who);
+        }
+        return drainIterator(v);
     }
     fail(std::string(who) + " harus bisa diiterasi (larik, teks, atau peta)");
 }
@@ -142,6 +187,8 @@ std::string toBase(unsigned long long n, int base, bool upper) {
 }
 
 }  // namespace
+
+void setMethodHook(MethodHook hook) { g_methodHook = std::move(hook); }
 
 std::string formatValue(const Value& v, const std::string& spec) {
     if (spec.empty()) return v.stringify();

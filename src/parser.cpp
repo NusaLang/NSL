@@ -64,6 +64,7 @@ std::unique_ptr<Program> Parser::parse() {
         for (auto& extra : pendingStmts_) program->statements.push_back(std::move(extra));
         pendingStmts_.clear();
     }
+    if (usesGen_) injectGeneratorRuntime(*program);
     return program;
 }
 
@@ -298,7 +299,10 @@ std::unique_ptr<FnDeclStmt> Parser::fnDeclBody(std::string name) {
     if (match(TokenType::Colon)) {
         returnType = expect(TokenType::Ident, i18n::tr("Tipe kembalian diharapkan setelah ':'", "Expected return type after ':'")).text;
     }
+    yieldStack_.push_back(false);
     auto body = block();
+    bool isGenerator = yieldStack_.back();
+    yieldStack_.pop_back();
     int minArgs = static_cast<int>(params.size());
     for (size_t i = 0; i < defaults.size(); i++) {
         if (defaults[i]) { minArgs = static_cast<int>(i); break; }
@@ -322,6 +326,21 @@ std::unique_ptr<FnDeclStmt> Parser::fnDeclBody(std::string name) {
         StmtPtr ifs = std::make_unique<IfStmt>(std::move(cond), std::make_unique<BlockStmt>(std::move(thenStmts)), nullptr);
         ifs->span = sp;
         body->statements.insert(body->statements.begin(), std::move(ifs));
+    }
+    if (isGenerator) {
+        // def f(..): ..yield.. -> def f(..): return _mkgen(fn(__y): ..)   (the body runs on demand)
+        Span sp = body->span;
+        auto inner = std::make_unique<FnDeclStmt>("", std::vector<std::string>{"__y"}, std::move(body));
+        ExprPtr fe = std::make_unique<FnExprNode>(std::move(inner));
+        fe->span = sp;
+        std::vector<ExprPtr> ga;
+        ga.push_back(std::move(fe));
+        StmtPtr ret = std::make_unique<ReturnStmt>(mkCall("_mkgen", std::move(ga), sp));
+        ret->span = sp;
+        std::vector<StmtPtr> outerBody;
+        outerBody.push_back(std::move(ret));
+        body = std::make_unique<BlockStmt>(std::move(outerBody));
+        body->span = sp;
     }
     auto decl = std::make_unique<FnDeclStmt>(std::move(name), std::move(params), std::move(body),
                                               std::move(paramTypes), std::move(returnType));
@@ -852,7 +871,57 @@ ExprPtr Parser::parseSingleExpression() {
     return expr;
 }
 
-ExprPtr Parser::expression() { return assignment(); }
+ExprPtr Parser::expression() {
+    if (check(TokenType::Ident) && peek().text == "yield" && peekAt(1).type != TokenType::Eq &&
+        peekAt(1).type != TokenType::Dot) {
+        return yieldExpr();
+    }
+    return assignment();
+}
+
+void Parser::injectGeneratorRuntime(Program& program) {
+        Span sp{};
+        auto pick = [&](const char* field) {
+            std::vector<ExprPtr> a;
+            a.push_back(LiteralExpr::makeString("__gen"));
+            ExprPtr get = std::make_unique<IndexExpr>(mkCall("impor", std::move(a), sp), LiteralExpr::makeString(field));
+            get->span = sp;
+            return get;
+        };
+        program.statements.insert(program.statements.begin(), mkLet("_yf", pick("yf"), sp));
+        program.statements.insert(program.statements.begin(), mkLet("_mkgen", pick("mk"), sp));
+}
+
+// `yield v` / `yield from it` / bare `yield`: calls to the generator's own `__y` callback.
+ExprPtr Parser::yieldExpr() {
+    Span sp = advance().span;
+    usesGen_ = true;
+    if (!yieldStack_.empty()) yieldStack_.back() = true;
+    std::vector<ExprPtr> a;
+    if (isWord(peek(), "from", "dari")) {
+        advance();
+        a.push_back(mkIdent("__y", sp));
+        a.push_back(expression());
+        return mkCall("_yf", std::move(a), sp);
+    }
+    ExprPtr v;
+    TokenType t = peek().type;
+    if (t == TokenType::Semi || t == TokenType::RParen || t == TokenType::RBrace || t == TokenType::RBracket ||
+        t == TokenType::Comma || t == TokenType::Eof) {
+        v = LiteralExpr::makeNull();
+    } else {
+        v = expression();
+        if (check(TokenType::Comma)) {  // yield a, b -> a tuple
+            std::vector<ExprPtr> items;
+            items.push_back(std::move(v));
+            while (match(TokenType::Comma)) items.push_back(expression());
+            v = std::make_unique<ArrayLitExpr>(std::move(items));
+            v->span = sp;
+        }
+    }
+    a.push_back(std::move(v));
+    return mkCall("__y", std::move(a), sp);
+}
 
 // Every function below stamps `start` onto whichever new node it
 // builds; an unchanged pass-through keeps the inner call's span, so
@@ -1538,6 +1607,11 @@ ExprPtr Parser::primary() {
                 return empty;
             }
             ExprPtr expr = expression();
+            if (check(TokenType::For)) {  // (x for x in xs): a lazy generator
+                ExprPtr g = comprehension(std::move(expr), nullptr, false, start, true);
+                expect(TokenType::RParen, i18n::tr("')' diharapkan setelah generator", "Expected ')' after generator"));
+                return g;
+            }
             if (check(TokenType::Comma)) {  // (a, b, ...) -- a tuple, represented as a list
                 std::vector<ExprPtr> items;
                 items.push_back(std::move(expr));
@@ -1737,7 +1811,7 @@ ExprPtr Parser::jsxElement() {
 
 // `[expr for a in xs if cond ...]` / `{k: v for ...}`: an immediately-called function that builds
 // the result, so the loop variables stay local to the comprehension.
-ExprPtr Parser::comprehension(ExprPtr element, ExprPtr valueOrNull, bool isDict, Span sp) {
+ExprPtr Parser::comprehension(ExprPtr element, ExprPtr valueOrNull, bool isDict, Span sp, bool lazy) {
     struct Clause { std::vector<std::string> vars; ExprPtr iter; std::vector<ExprPtr> conds; };
     std::vector<Clause> clauses;
     while (check(TokenType::For)) {
@@ -1757,7 +1831,12 @@ ExprPtr Parser::comprehension(ExprPtr element, ExprPtr valueOrNull, bool isDict,
     std::string res = "__c" + std::to_string(hiddenCounter_++);
     // innermost statement: append / assign
     StmtPtr inner;
-    if (isDict) {
+    if (lazy) {
+        usesGen_ = true;
+        std::vector<ExprPtr> a;
+        a.push_back(std::move(element));
+        inner = std::make_unique<ExprStmtNode>(mkCall("__y", std::move(a), sp));
+    } else if (isDict) {
         ExprPtr set = std::make_unique<IndexAssignExpr>(mkIdent(res, sp), std::move(element), std::move(valueOrNull));
         set->span = sp;
         inner = std::make_unique<ExprStmtNode>(std::move(set));
@@ -1784,6 +1863,16 @@ ExprPtr Parser::comprehension(ExprPtr element, ExprPtr valueOrNull, bool isDict,
         auto body = std::make_unique<BlockStmt>(std::move(bodyStmts));
         body->span = sp;
         current = buildForIn(c.vars, std::move(c.iter), std::move(body), sp);
+    }
+    if (lazy) {  // (expr for ...) -> _mkgen(fn(__y): for ...: __y(expr))
+        std::vector<StmtPtr> gb;
+        gb.push_back(std::move(current));
+        auto inner = std::make_unique<FnDeclStmt>("", std::vector<std::string>{"__y"}, std::make_unique<BlockStmt>(std::move(gb)));
+        ExprPtr fe = std::make_unique<FnExprNode>(std::move(inner));
+        fe->span = sp;
+        std::vector<ExprPtr> ga;
+        ga.push_back(std::move(fe));
+        return mkCall("_mkgen", std::move(ga), sp);
     }
     std::vector<StmtPtr> fnBody;
     ExprPtr init = isDict ? mkCall("_peta", std::vector<ExprPtr>{}, sp) : ExprPtr(std::make_unique<ArrayLitExpr>(std::vector<ExprPtr>{}));

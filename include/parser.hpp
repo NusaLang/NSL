@@ -49,7 +49,7 @@ private:
     // Loop over `iter` binding `vars` (several = unpacking each element); shared with comprehensions.
     StmtPtr buildForIn(const std::vector<std::string>& vars, ExprPtr iter, std::unique_ptr<BlockStmt> body, Span sp);
     std::vector<std::string> forTargets();
-    ExprPtr comprehension(ExprPtr element, ExprPtr valueOrNull, bool isDict, Span sp);
+    ExprPtr comprehension(ExprPtr element, ExprPtr valueOrNull, bool isDict, Span sp, bool lazy = false);
     ExprPtr power();
     ExprPtr bitOrExpr();
     ExprPtr bitXorExpr();
@@ -60,6 +60,10 @@ private:
     bool isWord(const Token& t, const char* a, const char* b = nullptr) const;
     bool matchWord(const char* a, const char* b = nullptr);
     int hiddenCounter_ = 0;
+    std::vector<bool> yieldStack_;  // per enclosing function: did its body contain `yield`?
+    bool usesGen_ = false;          // any generator in this file -> import the __gen runtime
+    ExprPtr yieldExpr();
+    void injectGeneratorRuntime(Program& program);
     // Extra statements a single source statement expands into (`from m import a, b`);
     // parse() and block() splice them in right after the statement that made them.
     std::vector<StmtPtr> pendingStmts_;

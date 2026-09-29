@@ -1273,7 +1273,11 @@ Value vmGetIndex(const Value& target, const Value& idxv) {
         return Value::fromString(std::string(1, str[static_cast<size_t>(i)]));
     }
     if (target.type == ValueType::Instance) {
-        if (idxv.type != ValueType::String) throw VmRuntimeError("Kunci objek harus teks");
+        if (idxv.type != ValueType::String) {
+            std::vector<Value> a{idxv};  // obj[i] -> obj.__getitem__(i)
+            Value tcopy = target;
+            return vmCallMethod(tcopy, "__getitem__", a, vmActiveInterpreter());
+        }
         auto fit = target.instance()->fields->find(idxv.str());
         if (fit != target.instance()->fields->end()) return fit->second;
         if (target.instance()->classInfo->hasSpecial && methodKindOf(target.instance()->classInfo.get(), idxv.str()) == 3) {
@@ -2256,6 +2260,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                     }
                 }
                 Value target = pop();
+                syncTop();  // a property getter may re-enter the VM
                 stack.push_back(vmGetIndex(target, fn->constants[nameIdx]));
                 break;
             }
@@ -2303,6 +2308,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 }
                 Value idxv = pop();
                 Value target = pop();
+                syncTop();  // __getitem__ may re-enter the VM
                 stack.push_back(vmGetIndex(target, idxv));
                 break;
             }
@@ -2402,6 +2408,10 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                     stack.push_back(Value::fromNumber(static_cast<double>(v.map()->size())));
                 } else if (v.type == ValueType::String) {
                     stack.push_back(Value::fromNumber(static_cast<double>(v.str().size())));
+                } else if (v.type == ValueType::Instance) {
+                    std::vector<Value> none;
+                    syncTop();
+                    stack.push_back(vmCallMethod(v, "__len__", none, vmActiveInterpreter()));
                 } else {
                     throw VmRuntimeError("panjang(): butuh teks, larik, atau peta mode --vm");
                 }
