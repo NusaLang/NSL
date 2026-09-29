@@ -173,3 +173,8 @@ build-opt/tls_selftest: tests/tls_selftest.cpp $(TLS_CRYPTO_SRC) include/tls_cry
 
 tls-test: build-opt/tls_selftest
 	./build-opt/tls_selftest tests/tls/vectors.txt
+
+TLS_SRC := src/tls.cpp src/tls_x509.cpp src/tls_ca_bundle.cpp $(TLS_CRYPTO_SRC)
+build-opt/tls_client: tests/tls_client.cpp $(TLS_SRC) include/tls.hpp include/tls_x509.hpp include/tls_crypto.hpp
+	@mkdir -p build-opt
+	$(CXX) -std=c++17 -O2 -Wall -Wextra -Iinclude tests/tls_client.cpp $(TLS_SRC) -o build-opt/tls_client
