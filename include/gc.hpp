@@ -43,8 +43,8 @@ public:
     // Same as pushRoot/popRoot, for a VM runFrame()'s stack/locals/
     // boxedLocals (registered for the frame's duration via VmRootGuard).
     struct VmFrameRoots {
-        const std::vector<Value>* stack = nullptr;
-        const std::vector<Value>* locals = nullptr;
+        const ValueWindow* stack = nullptr;
+        const ValueWindow* locals = nullptr;
         const std::vector<Cell*>* boxedLocals = nullptr;
     };
     void pushVmRoots(const VmFrameRoots& roots) { push(vmRoots(), roots); }

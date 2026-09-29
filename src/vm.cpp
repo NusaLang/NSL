@@ -17,6 +17,8 @@
 #include "interpreter.hpp"
 #include "jit.hpp"
 
+void ValueWindow::overflow() { throw VmRuntimeError("rekursi kelewat dalam mode --vm"); }
+
 namespace {
 
 void collectIdentifiersInBlock(const BlockStmt* b, std::unordered_set<std::string>& out);
@@ -844,6 +846,31 @@ Value vmGetIndex(const Value& target, const Value& idxv) {
     throw VmRuntimeError("Tipe '" + std::string(target.typeName()) + "' nggak bisa di-index pakai []");
 }
 
+// Per-thread slab holding every VM frame's locals and operand stack, so a call
+// is a couple of pointer bumps instead of heap allocations. Zero pages are a
+// valid all-null Value, so calloc gives lazily-committed, pre-initialized
+// storage. `top` is only a hint for re-entrant calls (see syncTop()).
+struct VmArena {
+    static constexpr size_t kValues = size_t(1) << 18;
+    Value* base = nullptr;
+    Value* limit = nullptr;
+    Value* top = nullptr;
+    VmArena() {
+        static_assert(static_cast<int>(ValueType::Null) == 0, "zeroed Value must be null");
+        base = static_cast<Value*>(std::calloc(kValues, sizeof(Value)));
+        if (!base) throw std::bad_alloc();
+        limit = base + kValues;
+        top = base;
+    }
+    ~VmArena() { std::free(base); }
+    VmArena(const VmArena&) = delete;
+    VmArena& operator=(const VmArena&) = delete;
+    static VmArena& current() {
+        static thread_local VmArena a;
+        return a;
+    }
+};
+
 struct VmContext {
     std::unordered_map<std::string, Value> stringInterns;
     std::vector<NativeLoopDesc>* nativeLoops = nullptr;
@@ -852,24 +879,22 @@ struct VmContext {
     Environment* globals = nullptr;
     int depth = 0;
 
-    // Recycled buffers for call args / locals / operand stacks: a call would
-    // otherwise pay 3 malloc+free pairs. Pooled vectors are always empty, so
-    // the GC never needs to scan them.
-    std::vector<std::vector<Value>> pool;
-    std::vector<Value> acquire(size_t n) {
-        std::vector<Value> v;
-        if (!pool.empty()) { v = std::move(pool.back()); pool.pop_back(); }
-        v.resize(n);
-        return v;
-    }
-    void release(std::vector<Value>&& v) {
-        v.clear();
-        if (pool.size() < 64) pool.push_back(std::move(v));
-    }
+    VmArena* arena = &VmArena::current();
 };
 
-Value runFrame(const VmFunction* fn, VmClosure* closure, std::vector<Value> locals,
+Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                std::vector<Cell*> boxedLocals, VmContext& ctx);
+
+// Bounds-checks a new frame's locals region at `base` and nulls it (slots
+// above a live stack hold stale types).
+inline void initFrameLocals(Value* base, const VmFunction* fn, const VmContext& ctx) {
+    size_t n = static_cast<size_t>(fn->numLocals);
+    if (base + n + 32 >= ctx.arena->limit) ValueWindow::overflow();
+    for (size_t i = 0; i < n; i++) {
+        base[i].type = ValueType::Null;
+        base[i].number = 0.0;
+    }
+}
 
 Value callValue(const Value& callee, std::vector<Value>& args, VmContext& ctx) {
     if (callee.type == ValueType::Builtin) {
@@ -928,17 +953,18 @@ Value callValue(const Value& callee, std::vector<Value>& args, VmContext& ctx) {
         }
         // Fall through: non-numeric args, or arity above 4 (can't happen).
     }
-    std::vector<Value> locals = ctx.acquire(static_cast<size_t>(fn->numLocals));
+    Value* base = ctx.arena->top;  // synced by every op that can get here re-entrantly
+    initFrameLocals(base, fn, ctx);
     std::vector<Cell*> boxedLocals(static_cast<size_t>(fn->numBoxedLocals));
     for (size_t i = 0; i < args.size(); i++) {
         const ParamSlot& ps = fn->paramSlots[i];
         if (ps.boxed) boxedLocals[static_cast<size_t>(ps.slot)] = GC::instance().allocCell(std::move(args[i]));
-        else locals[static_cast<size_t>(ps.slot)] = std::move(args[i]);
+        else base[ps.slot] = std::move(args[i]);
     }
-    return runFrame(fn, closure, std::move(locals), std::move(boxedLocals), ctx);
+    return runFrame(fn, closure, base, std::move(boxedLocals), ctx);
 }
 
-Value runFrame(const VmFunction* fn, VmClosure* closure, std::vector<Value> locals,
+Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                std::vector<Cell*> boxedLocals, VmContext& ctx) {
     if (++ctx.depth > 3000) {
         ctx.depth--;
@@ -949,15 +975,18 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, std::vector<Value> loca
         ~DepthPop() { c.depth--; }
     } depthPop{ctx};
 
-    std::vector<Value> stack = ctx.acquire(0);
-    stack.reserve(16);
+    ValueWindow locals{localsBase, static_cast<size_t>(fn->numLocals), nullptr};
+    ValueWindow stack{localsBase + fn->numLocals, 0, ctx.arena->limit};
     // Declared before vmRootGuard, so it runs after the GC roots are popped.
-    struct BufRelease {
-        VmContext& c;
-        std::vector<Value>& a;
-        std::vector<Value>& b;
-        ~BufRelease() { c.release(std::move(a)); c.release(std::move(b)); }
-    } bufRelease{ctx, stack, locals};
+    // Only drops references; the next frame re-nulls what it reuses.
+    struct FrameCleanup {
+        ValueWindow& l;
+        ValueWindow& s;
+        ~FrameCleanup() {
+            for (size_t i = 0; i < s.len; i++) s.data[i].ref.reset();
+            for (size_t i = 0; i < l.len; i++) l.data[i].ref.reset();
+        }
+    } frameCleanup{locals, stack};
     size_t ip = 0;
     const std::vector<uint8_t>& code = fn->code;
 
@@ -976,6 +1005,10 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, std::vector<Value> loca
         stack.pop_back();
         return v;
     };
+    // Anything that can re-enter the VM (callValue via builtins, methods,
+    // imports) starts its frame at arena->top, so publish where this
+    // frame's live values end first.
+    auto syncTop = [&]() { ctx.arena->top = stack.data + stack.len; };
 
     // The VM loop otherwise has no GC safepoint at all (unlike execBlock's
     // per-statement check) -- checked every 64 ops, cheap until the
@@ -1003,6 +1036,15 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, std::vector<Value> loca
                 break;
             }
             case Op::Add: {
+                if (stack.len >= 2) {
+                    Value& rb = stack.data[stack.len - 1];
+                    Value& ra = stack.data[stack.len - 2];
+                    if (ra.type == ValueType::Number && rb.type == ValueType::Number) {
+                        ra.number += rb.number;
+                        stack.len--;  // rb is a Number: no handle to drop
+                        break;
+                    }
+                }
                 Value b = pop();
                 Value a = pop();
                 if (a.type == ValueType::Number && b.type == ValueType::Number) {
@@ -1018,6 +1060,18 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, std::vector<Value> loca
             case Op::Mul:
             case Op::Div:
             case Op::Mod: {
+                if (stack.len >= 2) {
+                    Value& rb = stack.data[stack.len - 1];
+                    Value& ra = stack.data[stack.len - 2];
+                    if (ra.type == ValueType::Number && rb.type == ValueType::Number) {
+                        if (op == Op::Sub) ra.number -= rb.number;
+                        else if (op == Op::Mul) ra.number *= rb.number;
+                        else if (op == Op::Div) ra.number /= rb.number;
+                        else ra.number = std::fmod(ra.number, rb.number);
+                        stack.len--;
+                        break;
+                    }
+                }
                 Value b = pop();
                 Value a = pop();
                 if (a.type != ValueType::Number || b.type != ValueType::Number) {
@@ -1032,6 +1086,16 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, std::vector<Value> loca
                 break;
             }
             case Op::Eq: {
+                if (stack.len >= 2) {
+                    Value& rb = stack.data[stack.len - 1];
+                    Value& ra = stack.data[stack.len - 2];
+                    if (ra.type == ValueType::Number && rb.type == ValueType::Number) {
+                        ra.type = ValueType::Bool;
+                        ra.number = ra.number == rb.number ? 1.0 : 0.0;
+                        stack.len--;
+                        break;
+                    }
+                }
                 Value b = pop();
                 Value a = pop();
                 stack.push_back(Value::fromBool(a.type == b.type &&
@@ -1042,6 +1106,16 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, std::vector<Value> loca
                 break;
             }
             case Op::Neq: {
+                if (stack.len >= 2) {
+                    Value& rb = stack.data[stack.len - 1];
+                    Value& ra = stack.data[stack.len - 2];
+                    if (ra.type == ValueType::Number && rb.type == ValueType::Number) {
+                        ra.type = ValueType::Bool;
+                        ra.number = ra.number != rb.number ? 1.0 : 0.0;
+                        stack.len--;
+                        break;
+                    }
+                }
                 Value b = pop();
                 Value a = pop();
                 bool eq = a.type == b.type &&
@@ -1055,6 +1129,21 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, std::vector<Value> loca
             case Op::Lte:
             case Op::Gt:
             case Op::Gte: {
+                if (stack.len >= 2) {
+                    Value& rb = stack.data[stack.len - 1];
+                    Value& ra = stack.data[stack.len - 2];
+                    if (ra.type == ValueType::Number && rb.type == ValueType::Number) {
+                        bool r;
+                        if (op == Op::Lt) r = ra.number < rb.number;
+                        else if (op == Op::Lte) r = ra.number <= rb.number;
+                        else if (op == Op::Gt) r = ra.number > rb.number;
+                        else r = ra.number >= rb.number;
+                        ra.type = ValueType::Bool;
+                        ra.number = r ? 1.0 : 0.0;
+                        stack.len--;
+                        break;
+                    }
+                }
                 Value b = pop();
                 Value a = pop();
                 bool r;
@@ -1146,8 +1235,9 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, std::vector<Value> loca
             }
             case Op::JumpIfFalse: {
                 uint16_t offset = readU16();
-                Value c = pop();
-                if (!c.truthy()) ip += offset;
+                bool truthy = stack.back().truthy();
+                stack.pop_back();
+                if (!truthy) ip += offset;
                 break;
             }
             case Op::Jump: {
@@ -1207,11 +1297,39 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, std::vector<Value> loca
                         }
                     }
                 }
-                std::vector<Value> args = ctx.acquire(argCount);
+                // VM-to-VM call: args move straight from this operand stack into
+                // the callee's locals (just above it in the arena) -- no
+                // vectors, no heap. Arity mismatch takes the general path,
+                // which reports the error.
+                if (stack.len >= static_cast<size_t>(argCount) + 1) {
+                    Value& calleeSlot = stack[stack.len - argCount - 1];
+                    if (calleeSlot.type == ValueType::VmFn) {
+                        VmClosure* callee = calleeSlot.vmClosure();
+                        const VmFunction* target = callee->function;
+                        if (target->arity == argCount) {
+                            Value* base = stack.data + stack.len;
+                            initFrameLocals(base, target, ctx);
+                            std::vector<Cell*> calleeBoxed(static_cast<size_t>(target->numBoxedLocals));
+                            Value* argv = stack.data + (stack.len - argCount);
+                            for (int i = 0; i < argCount; i++) {
+                                const ParamSlot& ps = target->paramSlots[static_cast<size_t>(i)];
+                                if (ps.boxed) calleeBoxed[static_cast<size_t>(ps.slot)] = GC::instance().allocCell(std::move(argv[i]));
+                                else base[ps.slot] = std::move(argv[i]);
+                            }
+                            stack.len -= argCount;  // moved-from: null refs
+                            // The callee Value stays on the stack, keeping its closure alive.
+                            Value result = runFrame(target, callee, base, std::move(calleeBoxed), ctx);
+                            stack.pop_back();
+                            stack.push_back(std::move(result));
+                            break;
+                        }
+                    }
+                }
+                std::vector<Value> args(argCount);
                 for (int i = argCount - 1; i >= 0; i--) args[static_cast<size_t>(i)] = pop();
                 Value callee = pop();
+                syncTop();
                 Value result = callValue(callee, args, ctx);
-                ctx.release(std::move(args));
                 stack.push_back(std::move(result));
                 break;
             }
@@ -1221,6 +1339,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, std::vector<Value> loca
                 for (int i = argCount - 1; i >= 0; i--) args[static_cast<size_t>(i)] = pop();
                 Value idxv = pop();
                 Value target = pop();
+                syncTop();
                 // Mirrors interpreter.cpp: a plain GetIndex+Call would hand
                 // back an unbound method (no `ini`).
                 if (target.type == ValueType::Instance) {
@@ -1289,6 +1408,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, std::vector<Value> loca
                 Value val = pop();
                 if (val.type != ValueType::String) throw VmRuntimeError("impor(): butuh teks");
                 if (!ctx.interpreter) throw VmRuntimeError("impor(): butuh interpreter context");
+                syncTop();
                 try {
                     stack.push_back(ctx.interpreter->doImport(val.str()));
                 } catch (const RuntimeError& e) {
@@ -1639,10 +1759,11 @@ int vmRun(VmProgram& program, Interpreter* interpreter) {
 
     VmClosure topClosure;
     topClosure.function = program.topLevel;
-    std::vector<Value> locals(static_cast<size_t>(program.topLevel->numLocals));
     std::vector<Cell*> boxedLocals(static_cast<size_t>(program.topLevel->numBoxedLocals));
     try {
-        Value result = runFrame(program.topLevel, &topClosure, std::move(locals), std::move(boxedLocals), ctx);
+        Value* topBase = ctx.arena->top;
+        initFrameLocals(topBase, program.topLevel, ctx);
+        Value result = runFrame(program.topLevel, &topClosure, topBase, std::move(boxedLocals), ctx);
         (void)result;
         return 0;
     } catch (const VmCompileError& e) {
