@@ -474,7 +474,7 @@ void httpServe(int port, const std::function<HttpResponseOut(const HttpRequestIn
                 out << "X-Content-Type-Options: nosniff\r\n";
                 out << "Referrer-Policy: strict-origin-when-cross-origin\r\n";
                 out << "X-XSS-Protection: 1; mode=block\r\n";
-                out << "X-Powered-By: next-ns (Nusantara WebAssembly)\r\n";
+                out << "X-Powered-By: Nusantara\r\n";
                 out << "Connection: close\r\n\r\n";
                 out << resp.body;
                 tcpSend(connFd, out.str());

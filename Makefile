@@ -1,7 +1,7 @@
 CXX ?= g++
 CC ?= cc
 CXXFLAGS := -std=c++17 -O3 -flto=auto -DNDEBUG -Wall -Wextra -Iinclude -pthread
-SRC := $(filter-out src/wasm_main.cpp, $(wildcard src/*.cpp))
+SRC := $(wildcard src/*.cpp)
 BIN := nusantara
 PLUGIN_DIRS := $(wildcard plugins/*)
 UNAME_S := $(shell uname -s)

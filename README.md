@@ -58,7 +58,6 @@ nusa watch main.ns            # auto re-run tiap file disimpan
 nusa get github.com/u/repo    # install paket (git clone); `install` baca ./nusa.json
 nusa go add <modul-go> ...    # bangun modul Nusantara dari modul Go (lihat "Modul Go")
 nusa set lang en              # bahasa pesan error: ind | en (atau env NUSA_LANG)
-nusa build | dev | deploy     # toolchain web next-ns
 ```
 
 ## Bahasa
@@ -286,7 +285,7 @@ make tls-test                     # vektor kripto TLS (dari implementasi indepen
 - Satu GIL: goroutine tidak paralel untuk CPU murni.
 - Parameter default: argumen yang tidak diisi bernilai `None`, jadi `None` eksplisit ikut memicu nilai default.
 - Belum ada: `yield`/generator, format spec di f-string (`{x:.2f}`), `with`, dekorator.
-- WASM/browser: plugin native tidak tersedia.
+- Tidak ada toolchain web bawaan: `nusa` adalah runtime seperti `node`; web server lewat `http_dengar` atau modul Go (gin, dll).
 
 ## Lisensi
 
