@@ -62,6 +62,7 @@ enum class Op : uint8_t {
     ChanRecv,
     Import,
     CallMethod,
+    MakeClass,
 };
 
 struct NativeLoopDesc {

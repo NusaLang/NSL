@@ -328,6 +328,10 @@ struct ClassInfo {
     std::string name;
     std::shared_ptr<ClassInfo> parent;
     std::unordered_map<std::string, std::shared_ptr<Function>> methods;
+    // Methods compiled by the bytecode VM (VmFn closures taking `ini` as the
+    // first parameter). A class built by the VM only has these; one built by
+    // the tree-walker only has `methods`.
+    std::unordered_map<std::string, Value> vmMethods;
     std::vector<std::string> structFields;
     bool isStruct = false;
     bool isEnum = false;

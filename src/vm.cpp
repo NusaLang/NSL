@@ -294,6 +294,7 @@ public:
     }
 
     void compileIdentifierGet(const std::string& name) {
+        if (name == "induk") throw VmCompileError("induk belum didukung mode --vm");
         int local = current->resolveLocal(name);
         if (local != -1) {
             const Local& l = current->locals[static_cast<size_t>(local)];
@@ -491,20 +492,23 @@ public:
         }
     }
 
-    void compileFunctionBody(const FnDeclStmt* decl, VmFunction* fn) {
+    void compileFunctionBody(const FnDeclStmt* decl, VmFunction* fn, bool isMethod = false) {
         FnCompiler fc(current, fn);
         current = &fc;
         findCapturedNames(decl->body.get(), fc.capturedNames);
         fc.beginScope();
         std::vector<ParamSlot> paramSlots;
-        for (auto& p : decl->params) {
+        std::vector<std::string> paramNames;
+        if (isMethod) paramNames.push_back("ini");  // bound instance is parameter 0
+        paramNames.insert(paramNames.end(), decl->params.begin(), decl->params.end());
+        for (auto& p : paramNames) {
             int li = fc.addLocal(p);
             const Local& l = fc.locals[static_cast<size_t>(li)];
             paramSlots.push_back({l.boxed, l.slot});
         }
         fn->paramSlots = std::move(paramSlots);
-        fn->arity = static_cast<int>(decl->params.size());
-        {
+        fn->arity = static_cast<int>(paramNames.size());
+        if (!isMethod) {
             JitFuncResult jf = jitDisabled() ? JitFuncResult{} : tryCompileNativeFunc(decl);
             if (jf.ok) {
                 fn->nativeCode = jf.code;
@@ -642,8 +646,31 @@ public:
                 compileFnDecl(n, topLevel && current == topCompiler);
                 return;
             }
-            case StmtKind::ClassDecl:
-                throw VmCompileError("kelas belum didukung mode --vm");
+            case StmtKind::ClassDecl: {
+                auto* n = static_cast<const ClassDeclStmt*>(s);
+                if (!(topLevel && current == topCompiler)) {
+                    throw VmCompileError("kelas di dalam fungsi/blok belum didukung mode --vm");
+                }
+                std::vector<std::pair<int, int>> methods;  // (name constant, function index)
+                for (auto& m : n->methods) {
+                    VmFunction* mf = newFunction(n->name + "." + m->name);
+                    compileFunctionBody(m.get(), mf, /*isMethod=*/true);
+                    if (!mf->upvalues.empty()) throw VmCompileError("metode yang nangkep variabel belum didukung mode --vm");
+                    methods.push_back({current->addConstant(Value::fromString(m->name)), indexOfFunction(mf)});
+                }
+                if (n->parentName.empty()) current->emitOp(Op::Null);
+                else compileIdentifierGet(n->parentName);
+                current->emitOp(Op::MakeClass);
+                current->emitU16(static_cast<uint16_t>(current->addConstant(Value::fromString(n->name))));
+                current->emitU16(static_cast<uint16_t>(methods.size()));
+                for (auto& [nameConst, funcIdx] : methods) {
+                    current->emitU16(static_cast<uint16_t>(nameConst));
+                    current->emitU16(static_cast<uint16_t>(funcIdx));
+                }
+                current->emitOp(Op::DefineGlobal);
+                current->emitU16(static_cast<uint16_t>(current->addConstant(Value::fromString(n->name))));
+                return;
+            }
             case StmtKind::Block: {
                 auto* n = static_cast<const BlockStmt*>(s);
                 current->beginScope();
@@ -803,6 +830,36 @@ std::shared_ptr<Function> vmLookupMethod(const std::shared_ptr<ClassInfo>& start
     return nullptr;
 }
 
+// Same rules as valuesEqual() in interpreter.cpp: primitives by value,
+// heap objects (arrays, maps, instances, closures, ...) by identity.
+inline bool vmValuesEqual(const Value& a, const Value& b) {
+    if (a.type != b.type) return false;
+    switch (a.type) {
+        case ValueType::Null: return true;
+        case ValueType::Bool: return a.boolean() == b.boolean();
+        case ValueType::Number: return a.number == b.number;
+        case ValueType::String: return a.str() == b.str();
+        case ValueType::Builtin: return a.builtinName() == b.builtinName();
+        default: return a.ref.get() == b.ref.get();
+    }
+}
+
+// Nearest bytecode-compiled method `name` along the class chain, or nullptr.
+// `astShadow` is set when the nearest definition is a tree-walker (AST)
+// method instead, so the caller knows to take the interpreter path.
+inline const Value* findVmMethod(const ClassInfo* c, const std::string& name, bool& astShadow) {
+    astShadow = false;
+    for (; c; c = c->parent.get()) {
+        auto it = c->vmMethods.find(name);
+        if (it != c->vmMethods.end()) return &it->second;
+        if (c->methods.count(name)) {
+            astShadow = true;
+            return nullptr;
+        }
+    }
+    return nullptr;
+}
+
 // Same lookup interpreter.cpp's indexGet() does for Array/Map/String/
 // Instance -- kept in sync by hand since VmArray needs a distinct
 // numeric/boxed fast path indexGet doesn't have.
@@ -839,6 +896,8 @@ Value vmGetIndex(const Value& target, const Value& idxv) {
         if (idxv.type != ValueType::String) throw VmRuntimeError("Kunci objek harus teks");
         auto fit = target.instance()->fields->find(idxv.str());
         if (fit != target.instance()->fields->end()) return fit->second;
+        bool astShadow = false;
+        if (const Value* vmv = findVmMethod(target.instance()->classInfo.get(), idxv.str(), astShadow)) return *vmv;
         auto method = vmLookupMethod(target.instance()->classInfo, idxv.str());
         if (method) return Value::fromFunction(method);
         return Value::null();
@@ -897,7 +956,68 @@ inline void initFrameLocals(Value* base, const VmFunction* fn, const VmContext& 
     }
 }
 
+inline void placeParam(Value* base, std::vector<Cell*>& boxed, const ParamSlot& ps, Value&& v) {
+    if (ps.boxed) boxed[static_cast<size_t>(ps.slot)] = GC::instance().allocCell(std::move(v));
+    else base[ps.slot] = std::move(v);
+}
+
+// General (args-in-a-vector) call of a bytecode method with `self` as `ini`.
+Value callVmWithSelf(VmClosure* cl, const Value& self, std::vector<Value>& args, VmContext& ctx) {
+    const VmFunction* fn = cl->function;
+    if (static_cast<int>(args.size()) + 1 != fn->arity) {
+        throw VmRuntimeError("metode '" + fn->name + "' butuh " + std::to_string(fn->arity - 1) + " argumen, dapat " +
+                              std::to_string(args.size()));
+    }
+    Value* base = ctx.arena->top;  // synced by the calling op
+    initFrameLocals(base, fn, ctx);
+    std::vector<Cell*> boxed(static_cast<size_t>(fn->numBoxedLocals));
+    Value selfCopy = self;
+    placeParam(base, boxed, fn->paramSlots[0], std::move(selfCopy));
+    for (size_t i = 0; i < args.size(); i++) placeParam(base, boxed, fn->paramSlots[i + 1], std::move(args[i]));
+    return runFrame(fn, cl, base, std::move(boxed), ctx);
+}
+
+// `KelasX(args)`: mirrors Interpreter::callValue's Class branch, but runs a
+// bytecode constructor when the class has one.
+Value vmConstruct(const Value& callee, std::vector<Value>& args, VmContext& ctx) {
+    ClassInfo* ci = callee.klass();
+    auto viaInterpreter = [&]() -> Value {
+        if (!ctx.interpreter) throw VmRuntimeError("Bikin instance butuh interpreter context");
+        try {
+            return ctx.interpreter->callValue(callee, args, Span{0, 0, 0});
+        } catch (const RuntimeError& e) {
+            throw VmRuntimeError(e.what());
+        }
+    };
+    if (ci->isStruct || ci->isEnum) return viaInterpreter();
+    auto state = std::make_shared<InstanceState>();
+    state->classInfo = callee.klassShared();
+    state->fields = std::make_shared<std::unordered_map<std::string, Value>>();
+    Value inst = Value::fromInstance(state);
+    for (const char* ctorName : {"konstruktor", "constructor"}) {
+        bool astShadow = false;
+        const Value* vmv = findVmMethod(ci, ctorName, astShadow);
+        if (vmv) {
+            callVmWithSelf(vmv->vmClosure(), inst, args, ctx);
+            return inst;
+        }
+        if (astShadow) {
+            if (!ctx.interpreter) throw VmRuntimeError("Manggil konstruktor butuh interpreter context");
+            std::shared_ptr<ClassInfo> owner;
+            auto f = vmLookupMethod(callee.klassShared(), ctorName, &owner);
+            try {
+                ctx.interpreter->callFunction(f, args, Span{0, 0, 0}, &inst, owner);
+            } catch (const RuntimeError& e) {
+                throw VmRuntimeError(e.what());
+            }
+            return inst;
+        }
+    }
+    return inst;
+}
+
 Value callValue(const Value& callee, std::vector<Value>& args, VmContext& ctx) {
+    if (callee.type == ValueType::Class) return vmConstruct(callee, args, ctx);
     if (callee.type == ValueType::Builtin) {
         if (!ctx.interpreter) throw VmRuntimeError("Fungsi '" + callee.builtinName() + "' belum di-support murni di VM");
         return ctx.interpreter->callBuiltin(callee.builtinName(), args);
@@ -1095,11 +1215,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 }
                 Value b = pop();
                 Value a = pop();
-                stack.push_back(Value::fromBool(a.type == b.type &&
-                                                 ((a.type == ValueType::Number && a.number == b.number) ||
-                                                  (a.type == ValueType::String && a.str() == b.str()) ||
-                                                  (a.type == ValueType::Bool && a.boolean() == b.boolean()) ||
-                                                  (a.type == ValueType::Null))));
+                stack.push_back(Value::fromBool(vmValuesEqual(a, b)));
                 break;
             }
             case Op::Neq: {
@@ -1115,11 +1231,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 }
                 Value b = pop();
                 Value a = pop();
-                bool eq = a.type == b.type &&
-                          ((a.type == ValueType::Number && a.number == b.number) ||
-                           (a.type == ValueType::String && a.str() == b.str()) ||
-                           (a.type == ValueType::Bool && a.boolean() == b.boolean()) || (a.type == ValueType::Null));
-                stack.push_back(Value::fromBool(!eq));
+                stack.push_back(Value::fromBool(!vmValuesEqual(a, b)));
                 break;
             }
             case Op::Lt:
@@ -1336,6 +1448,37 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
             }
             case Op::CallMethod: {
                 uint8_t argCount = readByte();
+                if ((++ctx.gcTick & 0x3F) == 0) GC::instance().collectIfNeeded();
+                // Fast path: `obj.metode(...)` where the method is bytecode.
+                // Stack is [obj][name][args...]; obj and args move straight
+                // into the callee's locals, no vectors.
+                if (stack.len >= static_cast<size_t>(argCount) + 2) {
+                    Value& targetSlot = stack[stack.len - argCount - 2];
+                    Value& nameSlot = stack[stack.len - argCount - 1];
+                    if (targetSlot.type == ValueType::Instance && nameSlot.type == ValueType::String) {
+                        bool astShadow = false;
+                        const Value* mv = findVmMethod(targetSlot.instance()->classInfo.get(), nameSlot.str(), astShadow);
+                        if (mv && mv->vmClosure()->function->arity == argCount + 1) {
+                            VmClosure* callee = mv->vmClosure();
+                            const VmFunction* target = callee->function;
+                            Value* base = stack.data + stack.len;
+                            initFrameLocals(base, target, ctx);
+                            std::vector<Cell*> calleeBoxed(static_cast<size_t>(target->numBoxedLocals));
+                            Value* argv = stack.data + (stack.len - argCount);
+                            placeParam(base, calleeBoxed, target->paramSlots[0], std::move(targetSlot));
+                            targetSlot.type = ValueType::Null;  // moved-from: keep GC scans of this slot valid
+                            for (int i = 0; i < argCount; i++) {
+                                placeParam(base, calleeBoxed, target->paramSlots[static_cast<size_t>(i) + 1], std::move(argv[i]));
+                            }
+                            stack.len -= argCount;  // moved-from: null refs
+                            Value result = runFrame(target, callee, base, std::move(calleeBoxed), ctx);
+                            stack.pop_back();  // method name
+                            stack.pop_back();  // moved-from receiver
+                            stack.push_back(std::move(result));
+                            break;
+                        }
+                    }
+                }
                 std::vector<Value> args(argCount);
                 for (int i = argCount - 1; i >= 0; i--) args[static_cast<size_t>(i)] = pop();
                 Value idxv = pop();
@@ -1345,9 +1488,13 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 // back an unbound method (no `ini`).
                 if (target.type == ValueType::Instance) {
                     if (idxv.type != ValueType::String) throw VmRuntimeError("Kunci objek harus teks");
+                    bool astShadow = false;
+                    const Value* vmMethod = findVmMethod(target.instance()->classInfo.get(), idxv.str(), astShadow);
                     std::shared_ptr<ClassInfo> owner;
-                    auto method = vmLookupMethod(target.instance()->classInfo, idxv.str(), &owner);
-                    if (method) {
+                    auto method = vmMethod ? nullptr : vmLookupMethod(target.instance()->classInfo, idxv.str(), &owner);
+                    if (vmMethod) {
+                        stack.push_back(callVmWithSelf(vmMethod->vmClosure(), target, args, ctx));
+                    } else if (method) {
                         if (!ctx.interpreter) throw VmRuntimeError("Manggil metode butuh interpreter context");
                         try {
                             stack.push_back(ctx.interpreter->callFunction(method, args, Span{0, 0, 0}, &target, owner));
@@ -1363,6 +1510,28 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                     Value callee = vmGetIndex(target, idxv);
                     stack.push_back(callValue(callee, args, ctx));
                 }
+                break;
+            }
+            case Op::MakeClass: {
+                uint16_t nameIdx = readU16();
+                uint16_t count = readU16();
+                Value parentVal = pop();
+                auto info = std::make_shared<ClassInfo>();
+                info->name = fn->constants[nameIdx].str();
+                if (parentVal.type != ValueType::Null) {
+                    if (parentVal.type != ValueType::Class) {
+                        throw VmRuntimeError("induk '" + info->name + "' bukan kelas, nggak bisa di-turunan");
+                    }
+                    info->parent = parentVal.klassShared();
+                }
+                for (uint16_t i = 0; i < count; i++) {
+                    uint16_t mName = readU16();
+                    uint16_t mFunc = readU16();
+                    auto vc = std::make_shared<VmClosure>();
+                    vc->function = (*ctx.functions)[mFunc].get();
+                    info->vmMethods[fn->constants[mName].str()] = Value::fromVmClosure(vc);
+                }
+                stack.push_back(Value::fromClass(info));
                 break;
             }
             case Op::MakeClosure: {
