@@ -125,6 +125,8 @@ struct ParamSlot {
     int slot;
 };
 
+struct VmProgram;
+
 struct VmFunction {
     std::string name;
     int arity = 0;
@@ -146,6 +148,13 @@ struct VmFunction {
     // (see Op::GetGlobal). Only used while the globals Environment has
     // stable slot addresses.
     mutable std::vector<Value*> globalSlots;
+
+    // Where this function lives: its own program (closure/class/native-loop
+    // indices are relative to it) and the globals table its top-level names
+    // resolve in -- the script's for the main program, a module's own for an
+    // imported one. Set by vmBind().
+    VmProgram* program = nullptr;
+    class Environment* globalsEnv = nullptr;
 
     // Per-constant inline cache for CallMethodK: the bytecode method found
     // for `classId`. Keyed by ClassInfo::id (never reused).
@@ -208,6 +217,13 @@ private:
 };
 
 int vmRun(VmProgram& program, class Interpreter* interpreter = nullptr);
+
+// True while a VM program is running (so an `impor`ed module can run on the VM too).
+bool vmIsActive();
+
+// Runs a compiled module's top level with `moduleGlobals` as its global namespace.
+// The program must outlive every closure it creates. Errors propagate as RuntimeError.
+void vmRunModule(VmProgram& program, class Environment* moduleGlobals, class Interpreter* interpreter);
 
 // Calls a VmFn from outside the VM's own call stack (e.g.
 // Interpreter::callValue, for a callback stored via http_dengar()/jalan()).

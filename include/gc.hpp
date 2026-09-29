@@ -30,6 +30,12 @@ public:
     Environment* alloc(Environment* parent);
     Cell* allocCell(Value v);
     void setGlobals(Environment* globals) { globals_ = globals; }
+    // For environments that must outlive every scope guard (a VM module's globals,
+    // which its closures reach only through a raw pointer).
+    void addPermanentRoot(Environment* env) {
+        std::lock_guard<std::mutex> lock(gcMutex_);
+        permanentRoots_.push_back(env);
+    }
 
     // Fast path when liveGoroutines == 0: no other thread can be
     // touching GC state, so gcMutex_ can be skipped entirely.
@@ -151,6 +157,7 @@ private:
     std::unordered_map<std::thread::id, std::vector<const std::vector<Value>*>> valueVectorRootsByThread_;
     std::vector<const int*> threadDepths_;
     Environment* globals_ = nullptr;
+    std::vector<Environment*> permanentRoots_;
 
     size_t allocSinceCollect_ = 0;
     size_t totalAllocated_ = 0;

@@ -2022,12 +2022,29 @@ Value Interpreter::doImport(const std::string& rawPath) {
     Environment* modEnv = GC::instance().alloc(globals_);
     GcRootGuard guard(modEnv);
 
+    // Prefer running the module on the bytecode VM (its functions then stay VM
+    // functions, not slow AST ones) whenever a VM program is driving the script.
+    std::unique_ptr<VmProgram> vmModule;
+    if (vmIsActive()) {
+        try {
+            vmModule = vmCompile(*program);
+        } catch (const VmCompileError&) {
+            vmModule.reset();  // something the VM can't compile yet: interpret this module
+        }
+    }
+
     importStack_.push_back(path);
     importDirStack_.push_back(dirName(path));
-    for (const auto& stmt : program->statements) {
-        if (exprDepth_ == 0) GC::instance().collectIfNeeded();
-        exec(stmt.get(), modEnv);
-        if (g_pending != kPendNone) { g_pending = kPendNone; break; }
+    if (vmModule) {
+        GC::instance().addPermanentRoot(modEnv);  // VM closures reach it via a raw pointer
+        vmRunModule(*vmModule, modEnv, this);
+        importedVmPrograms_.push_back(std::move(vmModule));
+    } else {
+        for (const auto& stmt : program->statements) {
+            if (exprDepth_ == 0) GC::instance().collectIfNeeded();
+            exec(stmt.get(), modEnv);
+            if (g_pending != kPendNone) { g_pending = kPendNone; break; }
+        }
     }
     importDirStack_.pop_back();
     importStack_.pop_back();

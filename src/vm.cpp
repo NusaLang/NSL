@@ -1510,12 +1510,13 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
     // globals table has stable addresses. Throws if undefined.
     auto globalSlot = [&](uint16_t idx) __attribute__((always_inline)) -> Value* {
         Value* slot = nullptr;
-        if (ctx.globals && ctx.globals->stableSlots()) {
+        Environment* genv = fn->globalsEnv;
+        if (genv && genv->stableSlots()) {
             if (fn->globalSlots.size() != fn->constants.size()) fn->globalSlots.assign(fn->constants.size(), nullptr);
             slot = fn->globalSlots[idx];
-            if (!slot) slot = fn->globalSlots[idx] = ctx.globals->find(fn->constants[idx].str());
-        } else if (ctx.globals) {
-            slot = ctx.globals->find(fn->constants[idx].str());
+            if (!slot) slot = fn->globalSlots[idx] = genv->find(fn->constants[idx].str());
+        } else if (genv) {
+            slot = genv->find(fn->constants[idx].str());
         }
         if (!slot) throw VmRuntimeError("Undefined variable '" + fn->constants[idx].str() + "'");
         return slot;
@@ -1798,7 +1799,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
             case Op::DefineGlobal: {
                 uint16_t idx = readU16();
                 const std::string& name = fn->constants[idx].str();
-                if (ctx.globals) ctx.globals->define(name, pop());
+                if (fn->globalsEnv) fn->globalsEnv->define(name, pop());
                 else pop();
                 break;
             }
@@ -2066,7 +2067,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                     uint16_t mName = readU16();
                     uint16_t mFunc = readU16();
                     auto vc = std::make_shared<VmClosure>();
-                    vc->function = (*ctx.functions)[mFunc].get();
+                    vc->function = fn->program->functions[mFunc].get();
                     vc->owner = info.get();
                     info->vmMethods[fn->constants[mName].str()] = Value::fromVmClosure(vc);
                 }
@@ -2075,7 +2076,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
             }
             case Op::MakeClosure: {
                 uint16_t funcIdx = readU16();
-                const VmFunction* target = (*ctx.functions)[funcIdx].get();
+                const VmFunction* target = fn->program->functions[funcIdx].get();
                 auto vc = std::make_shared<VmClosure>();
                 vc->function = target;
                 for (size_t i = 0; i < target->upvalues.size(); i++) {
@@ -2311,7 +2312,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
             }
             case Op::TryNativeLoop: {
                 uint16_t idx = readU16();
-                NativeLoopDesc& d = (*ctx.nativeLoops)[idx];
+                NativeLoopDesc& d = fn->program->nativeLoops[idx];
                 bool taken = false;
                 std::vector<double*> bases;
                 bases.reserve(d.arraySlots.size() + 1);
@@ -2331,7 +2332,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 bool touchesGlobal = false;
                 if (preOk && !d.isMap) {
                     if (d.accumIsGlobal) {
-                        accumVal = ctx.globals ? ctx.globals->find(d.accumGlobalName) : nullptr;
+                        accumVal = fn->globalsEnv ? fn->globalsEnv->find(d.accumGlobalName) : nullptr;
                         if (!accumVal) preOk = false;
                         else touchesGlobal = true;
                     } else {
@@ -2350,7 +2351,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                     if (d.boundIsLiteral) {
                         n = static_cast<int64_t>(d.boundLiteral);
                     } else if (d.boundIsGlobal) {
-                        Value* bv = ctx.globals ? ctx.globals->find(d.boundGlobalName) : nullptr;
+                        Value* bv = fn->globalsEnv ? fn->globalsEnv->find(d.boundGlobalName) : nullptr;
                         if (!bv || bv->type != ValueType::Number) preOk = false;
                         else {
                             n = static_cast<int64_t>(bv->number);
@@ -2549,6 +2550,36 @@ Value vmCallValue(const Value& callee, std::vector<Value>& args, Interpreter* in
     }
 }
 
+static void vmBind(VmProgram& program, Environment* globals) {
+    for (auto& f : program.functions) {
+        f->program = &program;
+        f->globalsEnv = globals;
+        f->globalSlots.clear();
+    }
+}
+
+bool vmIsActive() { return g_activeVm.load(std::memory_order_acquire) != nullptr; }
+
+void vmRunModule(VmProgram& program, Environment* moduleGlobals, Interpreter* interpreter) {
+    if (!program.topLevel) return;
+    vmBind(program, moduleGlobals);
+    VmContext ctx;
+    ctx.interpreter = interpreter;
+    ctx.functions = &program.functions;
+    ctx.nativeLoops = &program.nativeLoops;
+    ctx.globals = moduleGlobals;
+    VmClosure topClosure;
+    topClosure.function = program.topLevel;
+    std::vector<Cell*> boxedLocals(static_cast<size_t>(program.topLevel->numBoxedLocals));
+    Value* base = ctx.arena->top;  // the importing op published where its live values end
+    initFrameLocals(base, program.topLevel, ctx);
+    try {
+        runFrame(program.topLevel, &topClosure, base, boxedLocals, ctx);
+    } catch (const VmRuntimeError& e) {
+        throw RuntimeError(e.what());
+    }
+}
+
 int vmRun(VmProgram& program, Interpreter* interpreter) {
     if (!program.topLevel) return 0;
     VmContext ctx;
@@ -2556,6 +2587,7 @@ int vmRun(VmProgram& program, Interpreter* interpreter) {
     ctx.nativeLoops = &program.nativeLoops;
     ctx.interpreter = interpreter;
     if (interpreter) ctx.globals = interpreter->getGlobalsEnv();
+    vmBind(program, ctx.globals);
     static ActiveVmState activeState;
     activeState.functions = ctx.functions;
     activeState.nativeLoops = ctx.nativeLoops;

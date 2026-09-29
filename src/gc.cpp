@@ -140,6 +140,7 @@ void GC::collectNow() {
     for (auto& c : cells_) c->gcMarked_ = false;
 
     if (globals_) markEnv(globals_);
+    for (Environment* root : permanentRoots_) markEnv(root);
     for (const auto& [tid, stack] : rootsByThread_) {
         for (Environment* root : stack) markEnv(root);
     }
