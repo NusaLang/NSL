@@ -38,6 +38,7 @@
 #include "plugin.hpp"
 #include "proc.hpp"
 #include "sha256.hpp"
+#include "gobridge.hpp"
 #include "sysplugin.hpp"
 #include "typechecker.hpp"
 #include "vm.hpp"
@@ -1590,6 +1591,9 @@ int main(int argc, char** argv) {
             return 1;
         }
         return runWatch(argv[2]);
+    }
+    if (command == "go") {
+        return gobridge::runCommand(argc - 2, argv + 2);
     }
     if (command == "build") {
         return runBuild(argc, argv);
