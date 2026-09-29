@@ -58,6 +58,13 @@ Cell* GC::allocCell(Value v) {
     return cells_.back().get();
 }
 
+void GC::trackInstance(const std::shared_ptr<std::unordered_map<std::string, Value>>& fields) {
+    std::unique_lock<std::mutex> lock(gcMutex_, std::defer_lock);
+    if (GC::liveGoroutines.load(std::memory_order_seq_cst) != 0) lock.lock();
+    instances_.push_back(fields);
+    instancesSinceCollect_++;
+}
+
 void GC::registerThread(const int* depthPtr) {
     std::lock_guard<std::mutex> lock(gcMutex_);
     threadDepths_.push_back(depthPtr);
@@ -91,7 +98,10 @@ void GC::markValue(const Value& v) {
             for (const auto& [name, fn] : c->methods) markEnv(fn->closure);
         }
     } else if (v.type == ValueType::Instance && v.instance()) {
+        // The field table is the identity (super views share it); the set also
+        // stops a walk that goes around an object cycle.
         if (v.instance()->fields) {
+            if (!markedFields_.insert(v.instance()->fields.get()).second) return;
             for (const auto& [key, val] : *v.instance()->fields) markValue(val);
         }
         for (ClassInfo* c = v.instance()->classInfo.get(); c; c = c->parent.get()) {
@@ -125,17 +135,18 @@ void GC::markCell(Cell* c) {
 }
 
 void GC::collectIfNeeded() {
-    if (allocSinceCollect_ < kCollectThreshold) return;
+    if (allocSinceCollect_ < kCollectThreshold && instancesSinceCollect_ < instanceThreshold_) return;
     collectNow();
 }
 
 void GC::collectNow() {
-    std::lock_guard<std::mutex> lock(gcMutex_);
+    std::unique_lock<std::mutex> lock(gcMutex_);
 
     // A thread not yet at a safepoint may have an unrooted temporary on
     // its own stack -- defer, the next collectIfNeeded() will retry.
     if (!allThreadsAtSafePointLocked()) return;
 
+    markedFields_.clear();
     for (auto& e : envs_) e->gcMarked_ = false;
     for (auto& c : cells_) c->gcMarked_ = false;
 
@@ -162,6 +173,27 @@ void GC::collectNow() {
         }
     }
 
+    // Instances nothing reaches: take their fields out (breaking cycles) and let
+    // them die after the lock is released.
+    std::vector<std::unordered_map<std::string, Value>> deadFields;
+    {
+        size_t keep = 0;
+        for (size_t i = 0; i < instances_.size(); i++) {
+            auto f = instances_[i].lock();
+            if (!f) continue;
+            if (markedFields_.count(f.get())) {
+                instances_[keep++] = std::move(instances_[i]);
+            } else if (!f->empty()) {
+                deadFields.emplace_back(std::move(*f));
+                f->clear();
+            }
+        }
+        instances_.resize(keep);
+        instancesSinceCollect_ = 0;
+        instanceThreshold_ = std::max<size_t>(8192, keep * 2);
+        totalFreed_ += deadFields.size();
+    }
+
     size_t before = envs_.size();
     envs_.erase(std::remove_if(envs_.begin(), envs_.end(),
                                 [](const std::unique_ptr<Environment>& e) { return !e->gcMarked_; }),
@@ -183,4 +215,6 @@ void GC::collectNow() {
     }
     trimSekarang_ = false;
 #endif
+    lock.unlock();
+    deadFields.clear();
 }

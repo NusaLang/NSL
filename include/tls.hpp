@@ -26,8 +26,16 @@ public:
     explicit Error(const std::string& msg) : std::runtime_error(msg) {}
 };
 
+// Thrown by Connection::read() when the transport reported "no data yet" (recv returned -2):
+// nothing is lost, call read() again once the socket is readable.
+class WouldBlock : public Error {
+public:
+    WouldBlock() : Error("would block") {}
+};
+
 // Byte transport underneath the TLS session. Each returns the number of bytes moved;
-// recv returns 0 at end of stream. Both throw (or return < 0) on failure.
+// recv returns 0 at end of stream, -2 for "would block" (only meaningful after the handshake),
+// any other negative value on failure.
 struct Transport {
     std::function<long(uint8_t* buf, size_t len)> recv;
     std::function<long(const uint8_t* buf, size_t len)> send;

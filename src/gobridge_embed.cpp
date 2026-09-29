@@ -1124,7 +1124,8 @@ fungsi _metode(h, nama, jumlah) {
     jika jumlah == 6 { hasil fungsi(a, b, c, d, e, f) { hasil _panggil(h, nama, [a, b, c, d, e, f]); }; }
     jika jumlah == 7 { hasil fungsi(a, b, c, d, e, f, g) { hasil _panggil(h, nama, [a, b, c, d, e, f, g]); }; }
     jika jumlah == 8 { hasil fungsi(a, b, c, d, e, f, g, i) { hasil _panggil(h, nama, [a, b, c, d, e, f, g, i]); }; }
-    lempar "metode Go dengan lebih dari 8 argumen belum didukung: " + nama;
+    // Lebih dari 8 argumen: satu parameter larik berisi semua argumen.
+    hasil fungsi(semua) { hasil _panggil(h, nama, semua); };
 }
 
 fungsi _objek(v) {

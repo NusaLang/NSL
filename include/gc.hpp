@@ -6,6 +6,7 @@
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "environment.hpp"
@@ -29,6 +30,10 @@ public:
 
     Environment* alloc(Environment* parent);
     Cell* allocCell(Value v);
+    // Instances are refcounted (shared field table), so a cycle between objects
+    // (a.other = b; b.other = a) would never free itself. Every instance's field
+    // table is registered here; a collection clears the ones no root can reach.
+    void trackInstance(const std::shared_ptr<std::unordered_map<std::string, Value>>& fields);
     void setGlobals(Environment* globals) { globals_ = globals; }
     // For environments that must outlive every scope guard (a VM module's globals,
     // which its closures reach only through a raw pointer).
@@ -155,6 +160,10 @@ private:
     std::unordered_map<std::thread::id, VmFrameRoots**> vmHeads_;
     std::unordered_map<std::thread::id, std::vector<const Value*>> valueRootsByThread_;
     std::unordered_map<std::thread::id, std::vector<const std::vector<Value>*>> valueVectorRootsByThread_;
+    std::vector<std::weak_ptr<std::unordered_map<std::string, Value>>> instances_;
+    std::unordered_set<const void*> markedFields_;
+    size_t instancesSinceCollect_ = 0;
+    size_t instanceThreshold_ = 8192;
     std::vector<const int*> threadDepths_;
     Environment* globals_ = nullptr;
     std::vector<Environment*> permanentRoots_;

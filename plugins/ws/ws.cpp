@@ -1,8 +1,10 @@
 // ws.cpp -- klien WebSocket (RFC 6455) di atas socket POSIX. TLS (wss://)
-// lewat OpenSSL yang di-dlopen() malas; ws:// polos gak nyentuh pustaka
-// apa pun selain libc/libstdc++. Verifikasi sertifikat selalu wajib buat
-// wss://, gak ada opsi matiin. Frame biner keluar sebagai hex di JSON hasil.
+// lewat klien TLS bawaan Nusantara (tls.hpp, tanpa OpenSSL); ws:// polos gak
+// nyentuh pustaka apa pun selain libc/libstdc++. Verifikasi sertifikat selalu
+// wajib buat wss://, gak ada opsi matiin. Frame biner keluar sebagai hex di JSON hasil.
 #include "plugin_abi.h"
+#include "tls.hpp"
+#include <memory>
 #include <string>
 #include <map>
 #include <mutex>
@@ -167,125 +169,10 @@ static std::string wsAcceptOf(const std::string& key) {
     return b64encode(dg, 20);
 }
 
-// --------------------------------------------------- OpenSSL lewat dlopen()
-// Hanya prototipe yang benar-benar dipakai. Semua tipe OpenSSL 3.x bersifat
-// opaque, jadi cukup void*. Konstanta di bawah stabil sejak OpenSSL 1.1.0.
-
-#define SSL_CTRL_MODE                      33
-#define SSL_CTRL_SET_TLSEXT_HOSTNAME       55
-#define SSL_CTRL_SET_MIN_PROTO_VERSION    123
-#define TLSEXT_NAMETYPE_host_name           0
-#define TLS1_2_VERSION                 0x0303
-#define SSL_VERIFY_PEER                  0x01
-#define SSL_MODE_ENABLE_PARTIAL_WRITE     0x1
-#define SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER 0x2
-#define SSL_ERROR_NONE                      0
-#define SSL_ERROR_SSL                       1
-#define SSL_ERROR_WANT_READ                 2
-#define SSL_ERROR_WANT_WRITE                3
-#define SSL_ERROR_SYSCALL                   5
-#define SSL_ERROR_ZERO_RETURN               6
-#define X509_V_OK                           0
-
-struct TlsApi {
-    void* h_ssl = nullptr;
-    void* h_crypto = nullptr;
-    bool ok = false;
-    std::string err;
-
-    const void* (*TLS_client_method)(void) = nullptr;
-    void* (*SSL_CTX_new)(const void*) = nullptr;
-    void  (*SSL_CTX_free)(void*) = nullptr;
-    long  (*SSL_CTX_ctrl)(void*, int, long, void*) = nullptr;
-    void  (*SSL_CTX_set_verify)(void*, int, void*) = nullptr;
-    int   (*SSL_CTX_set_default_verify_paths)(void*) = nullptr;
-    int   (*SSL_CTX_load_verify_locations)(void*, const char*, const char*) = nullptr;
-    void* (*SSL_new)(void*) = nullptr;
-    void  (*SSL_free)(void*) = nullptr;
-    int   (*SSL_set_fd)(void*, int) = nullptr;
-    long  (*SSL_ctrl)(void*, int, long, void*) = nullptr;
-    int   (*SSL_set1_host)(void*, const char*) = nullptr;
-    int   (*SSL_connect)(void*) = nullptr;
-    int   (*SSL_read)(void*, void*, int) = nullptr;
-    int   (*SSL_write)(void*, const void*, int) = nullptr;
-    int   (*SSL_get_error)(const void*, int) = nullptr;
-    int   (*SSL_shutdown)(void*) = nullptr;
-    long  (*SSL_get_verify_result)(const void*) = nullptr;
-    unsigned long (*ERR_get_error)(void) = nullptr;
-    void  (*ERR_error_string_n)(unsigned long, char*, size_t) = nullptr;
-};
-
-static TlsApi g_tls;
-static std::once_flag g_tls_once;
-
-static void* dlsymOrFail(void* h, const char* name, TlsApi& a) {
-    void* p = dlsym(h, name);
-    if (!p && a.err.empty()) a.err = std::string("simbol OpenSSL hilang: ") + name;
-    return p;
-}
-
-static void tlsInit() {
-    TlsApi& a = g_tls;
-    // Kalau proses sudah memuat libssl (mis. plugin http lewat libcurl),
-    // dlopen di bawah cuma menaikkan refcount -- tidak ada biaya tambahan.
-    const char* cands[] = {"libssl.so.3", "libssl.so.1.1", "libssl.so"};
-    for (const char* c : cands) {
-        a.h_ssl = dlopen(c, RTLD_LAZY | RTLD_LOCAL);
-        if (a.h_ssl) break;
-    }
-    if (!a.h_ssl) { a.err = "libssl tidak ditemukan (wss:// butuh OpenSSL terpasang)"; return; }
-    const char* ccands[] = {"libcrypto.so.3", "libcrypto.so.1.1", "libcrypto.so"};
-    for (const char* c : ccands) {
-        a.h_crypto = dlopen(c, RTLD_LAZY | RTLD_LOCAL);
-        if (a.h_crypto) break;
-    }
-
-    #define LD(fld, name) a.fld = (decltype(a.fld))dlsymOrFail(a.h_ssl, name, a)
-    LD(TLS_client_method, "TLS_client_method");
-    LD(SSL_CTX_new, "SSL_CTX_new");
-    LD(SSL_CTX_free, "SSL_CTX_free");
-    LD(SSL_CTX_ctrl, "SSL_CTX_ctrl");
-    LD(SSL_CTX_set_verify, "SSL_CTX_set_verify");
-    LD(SSL_CTX_set_default_verify_paths, "SSL_CTX_set_default_verify_paths");
-    LD(SSL_CTX_load_verify_locations, "SSL_CTX_load_verify_locations");
-    LD(SSL_new, "SSL_new");
-    LD(SSL_free, "SSL_free");
-    LD(SSL_set_fd, "SSL_set_fd");
-    LD(SSL_ctrl, "SSL_ctrl");
-    LD(SSL_set1_host, "SSL_set1_host");
-    LD(SSL_connect, "SSL_connect");
-    LD(SSL_read, "SSL_read");
-    LD(SSL_write, "SSL_write");
-    LD(SSL_get_error, "SSL_get_error");
-    LD(SSL_shutdown, "SSL_shutdown");
-    LD(SSL_get_verify_result, "SSL_get_verify_result");
-    #undef LD
-    if (a.h_crypto) {
-        a.ERR_get_error = (unsigned long (*)(void))dlsym(a.h_crypto, "ERR_get_error");
-        a.ERR_error_string_n = (void (*)(unsigned long, char*, size_t))dlsym(a.h_crypto, "ERR_error_string_n");
-    }
-
-    if (!a.err.empty()) return;
-    a.ok = a.TLS_client_method && a.SSL_CTX_new && a.SSL_new && a.SSL_connect &&
-           a.SSL_read && a.SSL_write && a.SSL_get_error && a.SSL_set1_host &&
-           a.SSL_get_verify_result;
-    if (!a.ok && a.err.empty()) a.err = "OpenSSL tidak lengkap";
-}
-
-static bool tlsReady(std::string& err) {
-    std::call_once(g_tls_once, tlsInit);
-    if (!g_tls.ok) { err = g_tls.err.empty() ? "OpenSSL tidak tersedia" : g_tls.err; return false; }
-    return true;
-}
-
-static std::string tlsLastError() {
-    if (!g_tls.ERR_get_error || !g_tls.ERR_error_string_n) return "";
-    unsigned long e = g_tls.ERR_get_error();
-    if (!e) return "";
-    char b[256];
-    g_tls.ERR_error_string_n(e, b, sizeof b);
-    return std::string(b);
-}
+// ------------------------------------------------------- TLS (klien bawaan)
+// Klien TLS 1.2/1.3 milik Nusantara sendiri (include/tls.hpp, ditautkan lewat
+// plugins/ws/SOURCES) -- tanpa OpenSSL. Handshake berjalan blocking dengan deadline;
+// sesudahnya recv tidak pernah memblok: socket kosong -> -2 -> tls::WouldBlock -> IO_AGAIN.
 
 // ----------------------------------------------------------------- transport
 
@@ -293,8 +180,9 @@ enum IoRes { IO_OK, IO_AGAIN, IO_EOF, IO_ERR };
 
 struct WSSession {
     int fd = -1;
-    void* ssl = nullptr;       // SSL*
-    void* ssl_ctx = nullptr;   // SSL_CTX*
+    std::unique_ptr<tls::Connection> tls;   // null untuk ws:// polos
+    bool tlsBlocking = false;               // true selama handshake
+    std::chrono::steady_clock::time_point tlsDeadline;
     bool upgraded = false;
     std::string rbuf;
     std::mt19937 rng{std::random_device{}()};
@@ -302,14 +190,9 @@ struct WSSession {
 };
 
 static void connClose(WSSession* s) {
-    if (s->ssl) {
-        if (g_tls.SSL_shutdown) g_tls.SSL_shutdown(s->ssl);
-        if (g_tls.SSL_free) g_tls.SSL_free(s->ssl);
-        s->ssl = nullptr;
-    }
-    if (s->ssl_ctx) {
-        if (g_tls.SSL_CTX_free) g_tls.SSL_CTX_free(s->ssl_ctx);
-        s->ssl_ctx = nullptr;
+    if (s->tls) {
+        s->tls->shutdown();
+        s->tls.reset();
     }
     if (s->fd >= 0) { ::close(s->fd); s->fd = -1; }
 }
@@ -319,15 +202,17 @@ static void connClose(WSSession* s) {
 // peer benar-benar menutup, IO_ERR untuk error socket.
 static IoRes connRecv(WSSession* s, char* buf, size_t cap, size_t* got) {
     *got = 0;
-    if (s->ssl) {
-        int n = g_tls.SSL_read(s->ssl, buf, (int)(cap > 0x7FFFFFFF ? 0x7FFFFFFF : cap));
-        if (n > 0) { *got = (size_t)n; return IO_OK; }
-        int e = g_tls.SSL_get_error(s->ssl, n);
-        if (e == SSL_ERROR_WANT_READ || e == SSL_ERROR_WANT_WRITE) return IO_AGAIN;
-        if (e == SSL_ERROR_ZERO_RETURN) return IO_EOF;
-        if (e == SSL_ERROR_SYSCALL && n == 0) return IO_EOF;
-        if (e == SSL_ERROR_SYSCALL && (errno == EAGAIN || errno == EWOULDBLOCK)) return IO_AGAIN;
-        return IO_ERR;
+    if (s->tls) {
+        try {
+            size_t n = s->tls->read((uint8_t*)buf, cap);
+            if (n == 0) return IO_EOF;
+            *got = n;
+            return IO_OK;
+        } catch (const tls::WouldBlock&) {
+            return IO_AGAIN;
+        } catch (const std::exception&) {
+            return IO_ERR;
+        }
     }
     ssize_t n = ::recv(s->fd, buf, cap, 0);
     if (n > 0) { *got = (size_t)n; return IO_OK; }
@@ -338,14 +223,14 @@ static IoRes connRecv(WSSession* s, char* buf, size_t cap, size_t* got) {
 
 static IoRes connSendOnce(WSSession* s, const char* buf, size_t len, size_t* sent) {
     *sent = 0;
-    if (s->ssl) {
-        int n = g_tls.SSL_write(s->ssl, buf, (int)(len > 0x7FFFFFFF ? 0x7FFFFFFF : len));
-        if (n > 0) { *sent = (size_t)n; return IO_OK; }
-        int e = g_tls.SSL_get_error(s->ssl, n);
-        if (e == SSL_ERROR_WANT_READ || e == SSL_ERROR_WANT_WRITE) return IO_AGAIN;
-        if (e == SSL_ERROR_ZERO_RETURN) return IO_EOF;
-        if (e == SSL_ERROR_SYSCALL && (errno == EAGAIN || errno == EWOULDBLOCK)) return IO_AGAIN;
-        return IO_ERR;
+    if (s->tls) {
+        try {
+            s->tls->write((const uint8_t*)buf, len);  // blocks (polling) until the whole record is out
+            *sent = len;
+            return IO_OK;
+        } catch (const std::exception&) {
+            return IO_ERR;
+        }
     }
     ssize_t n = ::send(s->fd, buf, len, MSG_NOSIGNAL);
     if (n > 0) { *sent = (size_t)n; return IO_OK; }
@@ -437,69 +322,41 @@ static int tcpConnect(const std::string& host, const std::string& port,
 // TLS handshake di atas fd non-blocking, dengan deadline sendiri.
 // Verifikasi rantai CA + hostname WAJIB; tidak ada jalan mematikannya.
 static bool tlsHandshake(WSSession* s, const std::string& host, int timeout_ms, std::string& err) {
-    if (!tlsReady(err)) return false;
-    TlsApi& a = g_tls;
-    s->ssl_ctx = a.SSL_CTX_new(a.TLS_client_method());
-    if (!s->ssl_ctx) { err = "SSL_CTX_new gagal"; return false; }
-    a.SSL_CTX_ctrl(s->ssl_ctx, SSL_CTRL_SET_MIN_PROTO_VERSION, TLS1_2_VERSION, nullptr);
-    a.SSL_CTX_ctrl(s->ssl_ctx, SSL_CTRL_MODE,
-                   SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER, nullptr);
-    a.SSL_CTX_set_verify(s->ssl_ctx, SSL_VERIFY_PEER, nullptr);
-
-    // Muat trust store. SSL_CTX_set_default_verify_paths() sendiri sudah
-    // menghormati env SSL_CERT_FILE / SSL_CERT_DIR (dipakai tes lokal dengan
-    // CA sendiri); kalau OpenSSL dikompilasi dengan prefix lain, coba lokasi
-    // distro yang umum sebagai cadangan.
-    int haveCA = a.SSL_CTX_set_default_verify_paths(s->ssl_ctx);
-    if (haveCA != 1) {
-        static const char* files[] = {
-            "/etc/ssl/certs/ca-certificates.crt",
-            "/etc/pki/tls/certs/ca-bundle.crt",
-            "/etc/ssl/cert.pem", nullptr };
-        for (int i = 0; files[i]; i++)
-            if (a.SSL_CTX_load_verify_locations(s->ssl_ctx, files[i], nullptr) == 1) { haveCA = 1; break; }
-        if (haveCA != 1 && a.SSL_CTX_load_verify_locations(s->ssl_ctx, nullptr, "/etc/ssl/certs") == 1)
-            haveCA = 1;
-    }
-    if (haveCA != 1) { err = "tidak menemukan trust store CA sistem"; return false; }
-
-    s->ssl = a.SSL_new(s->ssl_ctx);
-    if (!s->ssl) { err = "SSL_new gagal"; return false; }
-    a.SSL_set_fd(s->ssl, s->fd);
-    // SNI
-    a.SSL_ctrl(s->ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name,
-               (void*)host.c_str());
-    // Pencocokan hostname terhadap SAN/CN saat verifikasi rantai.
-    if (a.SSL_set1_host(s->ssl, host.c_str()) != 1) { err = "SSL_set1_host gagal"; return false; }
-
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-    for (;;) {
-        int r = a.SSL_connect(s->ssl);
-        if (r == 1) break;
-        int e = a.SSL_get_error(s->ssl, r);
-        if (e == SSL_ERROR_WANT_READ || e == SSL_ERROR_WANT_WRITE) {
+    s->tlsBlocking = true;
+    s->tlsDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    tls::Transport t;
+    t.recv = [s](uint8_t* buf, size_t len) -> long {
+        for (;;) {
+            ssize_t n = ::recv(s->fd, buf, len, 0);
+            if (n >= 0) return (long)n;
+            if (errno == EINTR) continue;
+            if (errno != EAGAIN && errno != EWOULDBLOCK) return -1;
+            if (!s->tlsBlocking) return -2;  // established session: report "no data yet"
             auto now = std::chrono::steady_clock::now();
-            if (now >= deadline) { err = "tls: timeout handshake"; return false; }
-            int left = (int)std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
-            struct pollfd p{s->fd, (short)(e == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT), 0};
-            int pr = ::poll(&p, 1, left);
-            if (pr == 0) { err = "tls: timeout handshake"; return false; }
-            if (pr < 0 && errno != EINTR) { err = std::string("tls: poll: ") + strerror(errno); return false; }
-            continue;
+            if (now >= s->tlsDeadline) return -1;
+            int left = (int)std::chrono::duration_cast<std::chrono::milliseconds>(s->tlsDeadline - now).count();
+            struct pollfd p{s->fd, POLLIN, 0};
+            if (::poll(&p, 1, left) < 0 && errno != EINTR) return -1;
         }
-        std::string detail = tlsLastError();
-        long vr = a.SSL_get_verify_result(s->ssl);
-        if (vr != X509_V_OK)
-            err = "tls: verifikasi sertifikat gagal (kode " + std::to_string(vr) + ")";
-        else
-            err = "tls: handshake gagal" + (detail.empty() ? std::string() : (": " + detail));
+    };
+    t.send = [s](const uint8_t* buf, size_t len) -> long {
+        for (;;) {
+            ssize_t n = ::send(s->fd, buf, len, MSG_NOSIGNAL);
+            if (n >= 0) return (long)n;
+            if (errno == EINTR) continue;
+            if (errno != EAGAIN && errno != EWOULDBLOCK) return -1;
+            struct pollfd p{s->fd, POLLOUT, 0};
+            if (::poll(&p, 1, 1000) < 0 && errno != EINTR) return -1;
+        }
+    };
+    try {
+        s->tls.reset(new tls::Connection(t, host));
+    } catch (const std::exception& e) {
+        err = std::string("tls: ") + e.what();
+        s->tlsBlocking = false;
         return false;
     }
-    long vr = a.SSL_get_verify_result(s->ssl);
-    if (vr != X509_V_OK) {
-        err = "tls: verifikasi sertifikat gagal (kode " + std::to_string(vr) + ")";
-        return false;
-    }
+    s->tlsBlocking = false;
     return true;
 }
 

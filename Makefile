@@ -120,14 +120,16 @@ plugins:
 				fi; \
 				vendor_objs="$$vendor_objs $$obj"; \
 			done; \
+			extra=""; \
+			[ -f "$$d/SOURCES" ] && extra=$$(cat "$$d/SOURCES"); \
 			ldflags=""; \
 			if [ "$(UNAME_S)" = "Darwin" ] && [ -f "$$d/LDFLAGS.darwin" ]; then \
 				ldflags=$$(cat "$$d/LDFLAGS.darwin"); \
 			elif [ -f "$$d/LDFLAGS" ]; then \
 				ldflags=$$(cat "$$d/LDFLAGS"); \
 			fi; \
-			echo "$(CXX) -std=c++17 $(SHLIB_FLAG) -fPIC -O2 -Wall -Wextra -Iinclude $$cflags $$src $$vendor_objs -o $$d/$$name.$(SHLIB_EXT) $$ldflags"; \
-			$(CXX) -std=c++17 $(SHLIB_FLAG) -fPIC -O2 -Wall -Wextra -Iinclude $$cflags $$src $$vendor_objs -o $$d/$$name.$(SHLIB_EXT) $$ldflags; \
+			echo "$(CXX) -std=c++17 $(SHLIB_FLAG) -fPIC -O2 -Wall -Wextra -Iinclude $$cflags $$src $$extra $$vendor_objs -o $$d/$$name.$(SHLIB_EXT) $$ldflags"; \
+			$(CXX) -std=c++17 $(SHLIB_FLAG) -fPIC -O2 -Wall -Wextra -Iinclude $$cflags $$src $$extra $$vendor_objs -o $$d/$$name.$(SHLIB_EXT) $$ldflags; \
 			ln -sf "../$$d/$$name.$(SHLIB_EXT)" "nusantara-plugins/$$name.$(SHLIB_EXT)"; \
 		fi; \
 	done

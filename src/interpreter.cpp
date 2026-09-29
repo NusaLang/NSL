@@ -753,6 +753,7 @@ Value Interpreter::callValue(const Value& callee, std::vector<Value>& args, Span
         auto state = std::make_shared<InstanceState>();
         state->classInfo = callee.klassShared();
         state->fields = std::make_shared<std::unordered_map<std::string, Value>>();
+        GC::instance().trackInstance(state->fields);
         Value instanceVal = Value::fromInstance(state);
         if (callee.klass()->isStruct) {
             const auto& fields = callee.klass()->structFields;

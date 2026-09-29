@@ -1353,6 +1353,7 @@ Value vmConstruct(const Value& callee, std::vector<Value>& args, VmContext& ctx)
     auto state = std::make_shared<InstanceState>();
     state->classInfo = callee.klassShared();
     state->fields = std::make_shared<std::unordered_map<std::string, Value>>();
+    GC::instance().trackInstance(state->fields);
     Value inst = Value::fromInstance(state);
     for (const char* ctorName : {"konstruktor", "constructor"}) {
         bool astShadow = false;

@@ -238,6 +238,7 @@ struct Connection::Impl {
         while (rawIn.size() < need) {
             uint8_t buf[16384];
             long n = io.recv(buf, sizeof buf);
+            if (n == -2) throw WouldBlock();
             if (n < 0) throw Error("connection read failed");
             if (n == 0) {
                 eof = true;
