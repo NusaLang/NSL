@@ -1780,12 +1780,56 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 goto redispatch;
             }
             case Op::GetIndex: {
+                // In-place fast path: bytecode array indexed by an in-range number.
+                if (stack.len >= 2) {
+                    Value& t = stack.data[stack.len - 2];
+                    const Value& ix = stack.data[stack.len - 1];
+                    if (t.type == ValueType::VmArray && ix.type == ValueType::Number) {
+                        VmArrayState& st = *t.vmArray();
+                        long long i = static_cast<long long>(ix.number);
+                        if (st.numeric) {
+                            if (i >= 0 && static_cast<size_t>(i) < st.nums.size()) {
+                                double v = st.nums[static_cast<size_t>(i)];
+                                t.ref.reset();  // drops the array reference; result replaces it
+                                t.type = ValueType::Number;
+                                t.number = v;
+                                stack.len--;  // index was a Number: no handle to drop
+                                break;
+                            }
+                        } else if (i >= 0 && static_cast<size_t>(i) < st.boxed->size()) {
+                            Value v = (*st.boxed)[static_cast<size_t>(i)];  // copy before `t` may free the array
+                            t = std::move(v);
+                            stack.len--;
+                            break;
+                        }
+                    }
+                }
                 Value idxv = pop();
                 Value target = pop();
                 stack.push_back(vmGetIndex(target, idxv));
                 break;
             }
             case Op::SetIndex: {
+                // In-place fast path: numeric bytecode array, in-range number
+                // index, number value. Leaves the assigned value as the result.
+                if (stack.len >= 3) {
+                    Value& t = stack.data[stack.len - 3];
+                    const Value& ix = stack.data[stack.len - 2];
+                    const Value& nv = stack.data[stack.len - 1];
+                    if (t.type == ValueType::VmArray && ix.type == ValueType::Number && nv.type == ValueType::Number) {
+                        VmArrayState& st = *t.vmArray();
+                        long long i = static_cast<long long>(ix.number);
+                        if (st.numeric && i >= 0 && static_cast<size_t>(i) < st.nums.size()) {
+                            double v = nv.number;
+                            st.nums[static_cast<size_t>(i)] = v;
+                            t.ref.reset();
+                            t.type = ValueType::Number;
+                            t.number = v;
+                            stack.len -= 2;  // index and value were Numbers
+                            break;
+                        }
+                    }
+                }
                 Value val = pop();
                 Value idxv = pop();
                 Value target = pop();
