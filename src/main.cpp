@@ -1058,17 +1058,6 @@ int runSetLang(int argc, char** argv) {
     return 0;
 }
 
-std::string escapeJsString(const std::string& s) {
-    std::string out;
-    for (char c : s) {
-        if (c == '\\') out += "\\\\";
-        else if (c == '`') out += "\\`";
-        else if (c == '$') out += "\\$";
-        else out += c;
-    }
-    return out;
-}
-
 // ── Modular .next build ─────────────────────────────────────────────────
 // Chunk format: non-executing part pusher. Runner menggabungkan semua part
 // secara berurutan -> satu kali _nusa_eval.
@@ -1108,29 +1097,6 @@ static const char* NUSA_RUNNER_JS =
 "es.onmessage=function(ev){try{if(JSON.parse(ev.data).op==='reload')location.reload()}catch(_){}}"
 ";}catch(_){}}"
 "})();";
-
-static const char* NUSA_ANIM_JS =
-"(function(){"
-"function reveal(el,delay){el.style.opacity='0';el.style.transform='translateY(16px)';"
-"setTimeout(function(){el.style.transition='opacity .55s ease,transform .55s ease';"
-"el.style.opacity='1';el.style.transform='none';},delay);}"
-"function stagger(sel,step){var c=document.querySelectorAll(sel+' > *');"
-"for(var i=0;i<c.length;i++)reveal(c[i],i*step);}"
-"window.__NUSA_ANIM=function(app){"
-"if(!app)return;"
-"stagger('[data-fade]',90);"
-"stagger('[data-stagger]',110);"
-"var th=app.querySelector('[data-thread]');"
-"if(th){var kids=th.children;var d=350;"
-"for(var k=0;k<kids.length;k++){(function(el,dd){el.style.opacity='0';"
-"setTimeout(function(){el.style.transition='opacity .4s ease,transform .4s ease';"
-"el.style.opacity='1';el.style.transform='none';},dd);})(kids[k],d);d+=520;}}"
-"if('IntersectionObserver' in window){"
-"var io=new IntersectionObserver(function(es){es.forEach(function(en){"
-"if(en.isIntersecting){en.target.classList.add('scroll-animated');io.unobserve(en.target);}});},{threshold:.12});"
-"document.querySelectorAll('.scroll-animate').forEach(function(x){io.observe(x);});}"
-"else{document.querySelectorAll('.scroll-animate').forEach(function(x){x.classList.add('scroll-animated');});}"
-"};})();";
 
 static std::string nextPageHtml(const std::string& title,
                                 const std::string& description,
@@ -1243,11 +1209,9 @@ int runBuild(int argc, char** argv) {
     };
 
     std::string source;
-    bool isNextNsApp = false;
 
     struct stat st {};
     if (stat("app", &st) == 0 && S_ISDIR(st.st_mode)) {
-        isNextNsApp = true;
         ensureDir("dist/.next/static/chunks");
         ensureDir("dist/.next/server/pages");
 
