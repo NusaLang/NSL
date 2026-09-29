@@ -40,6 +40,7 @@ static NsValue t_daftar(int argc, const NsValue* argv) { return nsGoInvoke(6, ar
 static NsValue t_bebas(int argc, const NsValue* argv) { return nsGoInvoke(7, argc, (NsValue*)argv); }
 static NsValue t_balas(int argc, const NsValue* argv) { return nsGoInvoke(8, argc, (NsValue*)argv); }
 static NsValue t_chan(int argc, const NsValue* argv) { return nsGoInvoke(9, argc, (NsValue*)argv); }
+static NsValue t_cepat(int argc, const NsValue* argv) { return nsGoInvoke(10, argc, (NsValue*)argv); }
 
 static void register_all(void* r, NsRegisterFn reg) {
     reg(r, "panggil", t_panggil);
@@ -52,6 +53,7 @@ static void register_all(void* r, NsRegisterFn reg) {
     reg(r, "bebas", t_bebas);
     reg(r, "balas", t_balas);
     reg(r, "chan_baru", t_chan);
+    reg(r, "cepat", t_cepat);
 }
 
 static NsValue make_string(const char* s, int n) {
@@ -241,14 +243,14 @@ func encodeOpt(v reflect.Value, methodsAsHandle bool) interface{} {
 		return nil
 	}
 	if !v.CanInterface() {
-		return nil
+		re)NSGO"
+         R"NSGO(turn nil
 	}
 	if methodsAsHandle {
 		switch v.Kind() {
 		case reflect.Interface, reflect.Ptr, reflect.Func, reflect.Chan:
 		default:
-	)NSGO"
-         R"NSGO(		if hasMethods(v.Type()) {
+			if hasMethods(v.Type()) {
 				return handleRef(v)
 			}
 		}
@@ -512,14 +514,14 @@ var (
 	queues = map[string]*eventQueue{}
 )
 
-func queueFor(name string) *eventQueue {
+func queueFor(name string) *even)NSGO"
+         R"NSGO(tQueue {
 	qmu.Lock()
 	defer qmu.Unlock()
 	q, ok := queues[name]
 	if !ok {
 		q = &eventQueue{ch: make(chan string, 8192)}
-		queues[nam)NSGO"
-         R"NSGO(e] = q
+		queues[name] = q
 	}
 	return q
 }
@@ -814,11 +816,11 @@ func invoke(fv reflect.Value, rawArgs []json.RawMessage) (res callResult) {
 	if variadic {
 		fixed = nIn - 1
 	}
-	if len(rawArgs) < fixed || (!variadic && len(rawArgs) > fixed) {
+	if len(rawArgs) < fixed || (!variadic && len(rawAr)NSGO"
+         R"NSGO(gs) > fixed) {
 		return callResult{Err: fmt.Errorf("butuh %d argumen, dapat %d", fixed, len(rawArgs))}
 	}
-	in := make([]reflect.Value)NSGO"
-         R"NSGO(, 0, len(rawArgs))
+	in := make([]reflect.Value, 0, len(rawArgs))
 	var outs []reflect.Value // {"$ptr": kind} arguments: pointers Go fills in (rows.Scan(&x))
 	for i, raw := range rawArgs {
 		var pt reflect.Type
@@ -838,12 +840,18 @@ func invoke(fv reflect.Value, rawArgs []json.RawMessage) (res callResult) {
 		}
 		in = append(in, v)
 	}
-	var out []reflect.Value
-	if variadic {
-		out = fv.Call(in)
-	} else {
-		out = fv.Call(in)
-	}
+	return callAndEncode(fv, in, outs)
+}
+
+// callAndEncode calls fv with already-converted arguments and encodes the results.
+func callAndEncode(fv reflect.Value, in []reflect.Value, outs []reflect.Value) (res callResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			res = callResult{Err: fmt.Errorf("panic di Go: %v", r)}
+		}
+	}()
+	t := fv.Type()
+	out := fv.Call(in)
 	n := len(out)
 	if n > 0 && t.Out(n-1) == errType {
 		if e := out[n-1]; !e.IsNil() {
@@ -941,12 +949,7 @@ func callTarget(target, name, argsJSON string) string {
 			return chanOp(hv, name, args)
 		}
 	}
-	mv := hv.MethodByName(name)
-	if !mv.IsValid() && hv.Kind() != reflect.Ptr && hv.Kind() != reflect.Interface {
-		p := reflect.New(hv.Type())
-		p.Elem().Set(hv)
-		mv = p.MethodByName(name)
-	}
+	mv := resolveMethod(hv, name)
 	if !mv.IsValid() {
 		return envelope(nil, fmt.Errorf("tipe %s tidak punya metode '%s'", hv.Type(), name))
 	}
@@ -1054,6 +1057,245 @@ func chanBaru(elem string, size int) string {
 	return envelope(handleRef(reflect.MakeChan(reflect.ChanOf(reflect.BothDir, et), size)), nil)
 }
 
+func resolveMethod(hv reflect.Value, name string) reflect.Value {
+	mv := hv.MethodByName(name)
+	if !mv.IsValid() && hv.Kind() != reflect.Ptr && hv.Kind() != reflect.Interface {
+		p := reflect.New(hv.Type())
+		p.Elem().Set(hv)
+		mv = p.MethodByName(name)
+	}
+	return mv
+}
+
+// ---- fast path: scalar arguments and results cross the plugin ABI directly, no JSON.
+//
+// cepat(target, name, args...) returns a scalar NsValue, or a string starting with \x01:
+//   \x01S    not eligible (non-scalar argument, variadic, arity mismatch...): use the JSON path
+//   \x01E..  the Go call failed; the rest is the message
+//   \x01J..  a data result as JSON
+//   \x01H..  a JSON result that contains handles (the Nusantara side wraps them)
+
+func nsSentinel(kind byte, msg string) C.NsValue {
+	n := 2 + len(msg)
+	buf := (*C.char)(C.malloc(C.size_t(n) + 1))
+	b := unsafe.Slice((*byte)(unsafe.Pointer(buf)), n+1)
+	b[0] = 1
+	b[1] = kind
+	copy(b[2:], msg)
+	b[n] = 0
+	var v C.NsValue
+	v._type = C.NS_STRING
+	v.str = buf
+	v.str_len = C.int(n)
+	return v
+}
+
+func nsRawString(s string) C.NsValue {
+	n := len(s)
+	buf := (*C.char)(C.malloc(C.size_t(n) + 1))
+	b := unsafe.Slice((*byte)(unsafe.Pointer(buf)), n+1)
+	copy(b, s)
+	b[n] = 0
+	var v C.NsValue
+	v._type = C.NS_STRING
+	v.str = buf
+	v.str_len = C.int(n)
+	return v
+}
+
+func scalarArg(a *C.NsValue, pt reflect.Type) (reflect.Value, bool) {
+	switch nsType(a) {
+	case C.NS_NULL:
+		if pt == ctxType {
+			return reflect.ValueOf(context.Background()), true
+		}
+		return reflect.Zero(pt), true
+	case C.NS_STRING:
+		n := int(a.str_len)
+		var s string
+		if n < )NSGO"
+         R"NSGO(0 {
+			s = C.GoString(a.str)
+		} else {
+			s = C.GoStringN(a.str, C.int(n))
+		}
+		switch pt.Kind() {
+		case reflect.String:
+			return reflect.ValueOf(s).Convert(pt), true
+		case reflect.Slice:
+			if pt.Elem().Kind() == reflect.Uint8 {
+				return reflect.ValueOf([]byte(s)).Convert(pt), true
+			}
+		case reflect.Interface:
+			if pt.NumMethod() == 0 {
+				return reflect.ValueOf(s), true
+			}
+		}
+		return reflect.Value{}, false
+	case C.NS_NUMBER:
+		f := float64(a.number)
+		switch pt.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			if f != math.Trunc(f) || math.Abs(f) > maxSafeInt {
+				return reflect.Value{}, false
+			}
+			v := reflect.New(pt).Elem()
+			if v.OverflowInt(int64(f)) {
+				return reflect.Value{}, false
+			}
+			v.SetInt(int64(f))
+			return v, true
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+			if f < 0 || f != math.Trunc(f) || f > maxSafeInt {
+				return reflect.Value{}, false
+			}
+			v := reflect.New(pt).Elem()
+			if v.OverflowUint(uint64(f)) {
+				return reflect.Value{}, false
+			}
+			v.SetUint(uint64(f))
+			return v, true
+		case reflect.Float32, reflect.Float64:
+			v := reflect.New(pt).Elem()
+			v.SetFloat(f)
+			return v, true
+		case reflect.Interface:
+			if pt.NumMethod() == 0 {
+				return reflect.ValueOf(f), true
+			}
+		}
+		return reflect.Value{}, false
+	case C.NS_BOOL:
+		b := a.boolean != 0
+		switch pt.Kind() {
+		case reflect.Bool:
+			return reflect.ValueOf(b).Convert(pt), true
+		case reflect.Interface:
+			if pt.NumMethod() == 0 {
+				return reflect.ValueOf(b), true
+			}
+		}
+		return reflect.Value{}, false
+	}
+	return reflect.Value{}, false
+}
+
+func fastCall(args []C.NsValue) C.NsValue {
+	if len(args) < 2 {
+		return nsSentinel('S', "")
+	}
+	// Borrowed views of the host's strings: only used for lookups during this call.
+	target := borrowString(&args[0])
+	name := borrowString(&args[1])
+	var fv reflect.Value
+	if target == "" {
+		f, ok := funcs[name]
+		if !ok {
+			return nsSentinel('E', fmt.Sprintf("fungsi Go '%s' tidak ada", name))
+		}
+		fv = f
+	} else {
+		hv, ok := lookupHandle(target)
+		if !ok {
+			return nsSentinel('E', fmt.Sprintf("handle %s sudah dibebaskan atau tidak ada", target))
+		}
+		fv = resolveMethod(hv, name)
+		if !fv.IsValid() {
+			return nsSentinel('S', "")
+		}
+	}
+	t := fv.Type()
+	n := len(args) - 2
+	if t.IsVariadic() || n != t.NumIn() {
+		return nsSentinel('S', "")
+	}
+	var buf [8]reflect.Value
+	in := buf[:0]
+	if n > len(buf) {
+		in = make([]reflect.Value, 0, n)
+	}
+	for i := 0; i < n; i++ {
+		v, ok := scalarArg(&args[2+i], t.In(i))
+		if !ok {
+			return nsSentinel('S', "")
+		}
+		in = append(in, v)
+	}
+	before := handleCount()
+	r := callAndEncode(fv, in, nil)
+	if r.Err != nil {
+		return nsSentinel('E', r.Err.Error())
+	}
+	var v C.NsValue
+	switch len(r.Values) {
+	case 0:
+		return v // NS_NULL
+	case 1:
+		switch x := r.Values[0].(type) {
+		case nil:
+			return v
+		case string:
+			if len(x) > 0 && x[0] == 1 {
+				break // would collide with the sentinel prefix: send as JSON
+			}
+			return nsRawString(x)
+		case bool:
+			v._type = C.NS_BOOL
+			if x {
+				v.boolean = 1
+			}
+			return v
+		case int64:
+			v._type = C.NS_NUMBER
+			v.number = C.double(x)
+			return v
+		case uint64:
+			v._type = C.NS_NUMBER
+			v.number = C.double(x)
+			return v
+		case int:
+			v._type = C.NS_NUMBER
+			v.number = C.double(x)
+			return v
+		case float64:
+			if !math.IsNaN(x) && !math.IsInf(x, 0) {
+				v._type = C.NS_NUMBER
+				v.number = C.double(x)
+				return v
+			}
+		}
+	}
+	b, err := json.Marshal(resultValue(r))
+	if err != nil {
+		return nsSentinel('E', "gagal meng-encode hasil: "+err.Error())
+	}
+	kind := byte('J')
+	if handleCount() != before || strings.Contains(string(b), "$b64") {
+		kind = 'H'
+	}
+	return nsSentinel(kind, string(b))
+}
+
+func borrowString(a *C.NsValue) string {
+	if nsType(a) != C.NS_STRING || a.str == nil {
+		return ""
+	}
+	n := int(a.str_len)
+	if n < 0 {
+		n = int(C.strlen(a.str))
+	}
+	if n == 0 {
+		return ""
+	}
+	return unsafe.String((*byte)(unsafe.Pointer(a.str)), n)
+}
+
+func handleCount() int {
+	hmu.Lock()
+	defer hmu.Unlock()
+	return hnext
+}
+
 func indirectValue(v reflect.Value) reflect.Value {
 	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
 		if v.IsNil() {
@@ -1123,8 +1365,7 @@ func manifest() string {
 
 // ------------------------------------------------------------ ABI entry ----
 
-func argString(argv []C.NsValue, i int) string {)NSGO"
-         R"NSGO(
+func argString(argv []C.NsValue, i int) string {
 	if i >= len(argv) || nsType(&argv[i]) != C.NS_STRING {
 		return ""
 	}
@@ -1188,13 +1429,16 @@ func nsGoInvoke(op C.int, argc C.int, argv *C.NsValue) (ret C.NsValue) {
 			return retString(envelope(encode(get()), nil))
 		}
 		return retString(envelope(nil, fmt.Errorf("konstanta/variabel Go '%s' tidak ada", name)))
+	case 10:
+		return fastCall(args)
 	case 9:
 		n, _ := strconv.Atoi(argString(args, 1))
 		return retString(chanBaru(argString(args, 0), n))
 	case 8:
 		n, _ := strconv.ParseInt(argString(args, 0), 10, 64)
 		deliverReply(n, argString(args, 1))
-		return retString(envelope(nil, nil))
+		return retString(envelope)NSGO"
+         R"NSGO((nil, nil))
 	case 5:
 		q := queueFor(argString(args, 0))
 		ms := 0
@@ -1644,8 +1888,17 @@ func writeManifestAndIndex(module string, pkgs []*pkgInfo) {
 				params = append(params, "resto = kosong")
 				args = "_gabung_arg(" + args + ", resto)"
 			}
-			fmt.Fprintf(&s, "%s[%q] = fungsi(%s) { hasil _panggil(\"\", %q, %s); };\n",
-				p.Namespace, f.Name, strings.Join(params, ", "), p.Namespace+"."+f.Name, args)
+			if f.Variadic {
+				fmt.Fprintf(&s, "%s[%q] = fungsi(%s) { hasil _panggil(\"\", %q, %s); };\n",
+					p.Namespace, f.Name, strings.Join(params, ", "), p.Namespace+"."+f.Name, args)
+			} else {
+				goArgs := ""
+				if len(params) > 0 {
+					goArgs = ", " + strings.Join(params, ", ")
+				}
+				fmt.Fprintf(&s, "%s[%q] = fungsi(%s) { hasil _go(_cfg, \"\", %q%s); };\n",
+					p.Namespace, f.Name, strings.Join(params, ", "), p.Namespace+"."+f.Name, goArgs)
+			}
 		}
 		for _, t := range p.Types {
 			fmt.Fprintf(&s, "%s[%q] = fungsi(data) { hasil _buat(%q, data); };\n", p.Namespace, t, p.Namespace+"."+t)
@@ -1761,20 +2014,20 @@ fungsi _konst(nama) {
 fungsi _metode(h, nama, jumlah) {
     // 100+n: metode variadik -- n argumen tetap lalu satu larik untuk sisanya.
     jika jumlah == 100 { hasil fungsi(r = kosong) { hasil _panggil(h, nama, _gabung_arg([], r)); }; }
-    jika jumlah == 101 { hasil fungsi(a, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a], r)); }; }
+    jika jumlah == 101 { hasil fungsi(a, r = kosong) { hasil _pang)NSGO"
+         R"NSGO(gil(h, nama, _gabung_arg([a], r)); }; }
     jika jumlah == 102 { hasil fungsi(a, b, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a, b], r)); }; }
     jika jumlah == 103 { hasil fungsi(a, b, c, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a, b, c], r)); }; }
-    jika jumlah == 104 { hasi)NSGO"
-         R"NSGO(l fungsi(a, b, c, d, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a, b, c, d], r)); }; }
-    jika jumlah == 0 { hasil fungsi() { hasil _panggil(h, nama, []); }; }
-    jika jumlah == 1 { hasil fungsi(a) { hasil _panggil(h, nama, [a]); }; }
-    jika jumlah == 2 { hasil fungsi(a, b) { hasil _panggil(h, nama, [a, b]); }; }
-    jika jumlah == 3 { hasil fungsi(a, b, c) { hasil _panggil(h, nama, [a, b, c]); }; }
-    jika jumlah == 4 { hasil fungsi(a, b, c, d) { hasil _panggil(h, nama, [a, b, c, d]); }; }
-    jika jumlah == 5 { hasil fungsi(a, b, c, d, e) { hasil _panggil(h, nama, [a, b, c, d, e]); }; }
-    jika jumlah == 6 { hasil fungsi(a, b, c, d, e, f) { hasil _panggil(h, nama, [a, b, c, d, e, f]); }; }
-    jika jumlah == 7 { hasil fungsi(a, b, c, d, e, f, g) { hasil _panggil(h, nama, [a, b, c, d, e, f, g]); }; }
-    jika jumlah == 8 { hasil fungsi(a, b, c, d, e, f, g, i) { hasil _panggil(h, nama, [a, b, c, d, e, f, g, i]); }; }
+    jika jumlah == 104 { hasil fungsi(a, b, c, d, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a, b, c, d], r)); }; }
+    jika jumlah == 0 { hasil fungsi() { hasil _go(_cfg, h, nama); }; }
+    jika jumlah == 1 { hasil fungsi(a) { hasil _go(_cfg, h, nama, a); }; }
+    jika jumlah == 2 { hasil fungsi(a, b) { hasil _go(_cfg, h, nama, a, b); }; }
+    jika jumlah == 3 { hasil fungsi(a, b, c) { hasil _go(_cfg, h, nama, a, b, c); }; }
+    jika jumlah == 4 { hasil fungsi(a, b, c, d) { hasil _go(_cfg, h, nama, a, b, c, d); }; }
+    jika jumlah == 5 { hasil fungsi(a, b, c, d, e) { hasil _go(_cfg, h, nama, a, b, c, d, e); }; }
+    jika jumlah == 6 { hasil fungsi(a, b, c, d, e, f) { hasil _go(_cfg, h, nama, a, b, c, d, e, f); }; }
+    jika jumlah == 7 { hasil fungsi(a, b, c, d, e, f, g) { hasil _go(_cfg, h, nama, a, b, c, d, e, f, g); }; }
+    jika jumlah == 8 { hasil fungsi(a, b, c, d, e, f, g, i) { hasil _go(_cfg, h, nama, a, b, c, d, e, f, g, i); }; }
     // Lebih dari 8 argumen: satu parameter larik berisi semua argumen.
     hasil fungsi(semua) { hasil _panggil(h, nama, semua); };
 }
@@ -1851,6 +2104,9 @@ fungsi _callback(f) {
 
 // Menghentikan semua pendengar callback (biar proses bisa selesai).
 fungsi berhenti_dengarkan() { _aktif = salah; }
+
+// Jalur cepat: _go() memanggil Go langsung (argumen/hasil skalar tanpa JSON), sisanya lewat _panggil.
+buat _cfg = {"panggil": _panggil, "bungkus": _bungkus, "cepat": _p.cepat};
 `
 
 // ---- generics: no way to call an uninstantiated generic function through reflection, so each
@@ -1975,7 +2231,8 @@ func genericVariants(d *ast.FuncDecl) []genericVariant {
 			args = append(args, t)
 		}
 		if !ok {
-			return out
+			ret)NSGO"
+         R"NSGO(urn out
 		}
 		suffix := ""
 		if ki == 1 {
@@ -1989,8 +2246,7 @@ func genericVariants(d *ast.FuncDecl) []genericVariant {
 // std interfaces worth being able to implement from Nusantara, besides the wrapped packages' own.
 var stdInterfaces = []ifaceRef{
 	{"sort", "Interface"}, {"container/heap", "Interface"}, {"io", "Closer"}, {"io", "ReadCloser"},
-	{"io", "WriteCloser"}, {"io", "ReadWriteCloser"}, {"io", "ReadWriter"}, {)NSGO"
-         R"NSGO("io", "Seeker"},
+	{"io", "WriteCloser"}, {"io", "ReadWriteCloser"}, {"io", "ReadWriter"}, {"io", "Seeker"},
 	{"net/http", "RoundTripper"}, {"net/http", "CookieJar"}, {"net/http", "Handler"},
 	{"encoding/json", "Marshaler"}, {"encoding/json", "Unmarshaler"},
 	{"encoding", "TextMarshaler"}, {"encoding", "TextUnmarshaler"}, {"fmt", "Stringer"},

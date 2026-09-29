@@ -252,7 +252,7 @@ bool isRegularFile(const std::string& path) {
 const std::vector<std::string>& builtinNames() {
     static const std::vector<std::string> names = {
         "cetak", "panjang", "tambah", "hapus_akhir", "potong", "gabung", "pisah",
-        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "pegang", "_peta", "_in", "_callkw", "_callkwm", "_close",
+        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "pegang", "_peta", "_in", "_callkw", "_callkwm", "_close", "_go",
         "base64_encode", "base64_decode",
         "baca_file", "tulis_file", "file_ada",
         "tcp_konek", "tcp_kirim", "tcp_terima", "tcp_tutup",
@@ -1193,6 +1193,73 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         auto now = std::chrono::system_clock::now();
         double secs = std::chrono::duration<double>(now.time_since_epoch()).count();
         return Value::fromNumber(secs);
+    }
+
+    if (name == "_go") {
+        // _go(cfg, target, name, args...): calls a wrapped Go function. Scalar arguments and results
+        // cross the plugin ABI directly (no JSON); anything else goes through cfg["panggil"].
+        if (args.size() < 3 || args[0].type != ValueType::Map) throw RuntimeError("_go(): argumen tidak valid");
+        ValueMap& cfg = *args[0].map();
+        auto slow = [&]() -> Value {
+            std::vector<Value> rest(args.begin() + 3, args.end());
+            std::vector<Value> pa{args[1], args[2], Value::fromArray(std::make_shared<std::vector<Value>>(std::move(rest)))};
+            return callValue(cfg.at("panggil"), pa, Span{});
+        };
+        bool scalar = true;
+        for (size_t i = 1; i < args.size(); i++) {
+            ValueType t = args[i].type;
+            if (t != ValueType::Number && t != ValueType::String && t != ValueType::Bool && t != ValueType::Null) { scalar = false; break; }
+        }
+        auto pit = cfg.find("cepat");
+        if (!scalar || pit == cfg.end() || !pit->second.native()) return slow();
+        NsValue stackBuf[10];
+        std::vector<NsValue> heapBuf;
+        NsValue* argv = stackBuf;
+        size_t n = args.size() - 1;
+        if (n > 10) { heapBuf.resize(n); argv = heapBuf.data(); }
+        for (size_t i = 0; i < n; i++) {
+            const Value& v = args[i + 1];
+            NsValue& a = argv[i];
+            a = NsValue{};
+            switch (v.type) {
+                case ValueType::String:
+                    a.type = NS_STRING;
+                    a.str = const_cast<char*>(v.str().data());  // borrowed for the call
+                    a.str_len = static_cast<int>(v.str().size());
+                    break;
+                case ValueType::Number: a.type = NS_NUMBER; a.number = v.number; break;
+                case ValueType::Bool: a.type = NS_BOOL; a.boolean = v.boolean() ? 1 : 0; break;
+                default: a.type = NS_NULL; break;
+            }
+        }
+        NsValue result{};
+        {
+            ValueVectorRootGuard argsRoot(args);
+            DepthResetGuard depthReset(exprDepth_);
+            GilRelease release;
+            result = reinterpret_cast<NsFn>(pit->second.native()->fnPtr)(static_cast<int>(n), argv);
+        }
+        Value out;
+        switch (result.type) {
+            case NS_NUMBER: return Value::fromNumber(result.number);
+            case NS_BOOL: return Value::fromBool(result.boolean != 0);
+            case NS_NULL: return Value::null();
+            default: break;
+        }
+        std::string payload = result.str ? std::string(result.str, result.str_len >= 0 ? static_cast<size_t>(result.str_len) : std::strlen(result.str)) : std::string();
+        if (result.str) free(result.str);
+        if (payload.size() >= 2 && payload[0] == '\x01') {
+            char kind = payload[1];
+            if (kind == 'S') return slow();
+            if (kind == 'E') throw ThrownValue(Value::fromString(payload.substr(2)));
+            Value data = json::decode(payload.substr(2));
+            if (kind == 'H') {
+                std::vector<Value> ba{data};
+                return callValue(cfg.at("bungkus"), ba, Span{});
+            }
+            return data;
+        }
+        return Value::fromString(std::move(payload));
     }
 
     if (name == "pegang") {

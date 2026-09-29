@@ -394,8 +394,17 @@ func writeManifestAndIndex(module string, pkgs []*pkgInfo) {
 				params = append(params, "resto = kosong")
 				args = "_gabung_arg(" + args + ", resto)"
 			}
-			fmt.Fprintf(&s, "%s[%q] = fungsi(%s) { hasil _panggil(\"\", %q, %s); };\n",
-				p.Namespace, f.Name, strings.Join(params, ", "), p.Namespace+"."+f.Name, args)
+			if f.Variadic {
+				fmt.Fprintf(&s, "%s[%q] = fungsi(%s) { hasil _panggil(\"\", %q, %s); };\n",
+					p.Namespace, f.Name, strings.Join(params, ", "), p.Namespace+"."+f.Name, args)
+			} else {
+				goArgs := ""
+				if len(params) > 0 {
+					goArgs = ", " + strings.Join(params, ", ")
+				}
+				fmt.Fprintf(&s, "%s[%q] = fungsi(%s) { hasil _go(_cfg, \"\", %q%s); };\n",
+					p.Namespace, f.Name, strings.Join(params, ", "), p.Namespace+"."+f.Name, goArgs)
+			}
 		}
 		for _, t := range p.Types {
 			fmt.Fprintf(&s, "%s[%q] = fungsi(data) { hasil _buat(%q, data); };\n", p.Namespace, t, p.Namespace+"."+t)
@@ -515,15 +524,15 @@ fungsi _metode(h, nama, jumlah) {
     jika jumlah == 102 { hasil fungsi(a, b, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a, b], r)); }; }
     jika jumlah == 103 { hasil fungsi(a, b, c, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a, b, c], r)); }; }
     jika jumlah == 104 { hasil fungsi(a, b, c, d, r = kosong) { hasil _panggil(h, nama, _gabung_arg([a, b, c, d], r)); }; }
-    jika jumlah == 0 { hasil fungsi() { hasil _panggil(h, nama, []); }; }
-    jika jumlah == 1 { hasil fungsi(a) { hasil _panggil(h, nama, [a]); }; }
-    jika jumlah == 2 { hasil fungsi(a, b) { hasil _panggil(h, nama, [a, b]); }; }
-    jika jumlah == 3 { hasil fungsi(a, b, c) { hasil _panggil(h, nama, [a, b, c]); }; }
-    jika jumlah == 4 { hasil fungsi(a, b, c, d) { hasil _panggil(h, nama, [a, b, c, d]); }; }
-    jika jumlah == 5 { hasil fungsi(a, b, c, d, e) { hasil _panggil(h, nama, [a, b, c, d, e]); }; }
-    jika jumlah == 6 { hasil fungsi(a, b, c, d, e, f) { hasil _panggil(h, nama, [a, b, c, d, e, f]); }; }
-    jika jumlah == 7 { hasil fungsi(a, b, c, d, e, f, g) { hasil _panggil(h, nama, [a, b, c, d, e, f, g]); }; }
-    jika jumlah == 8 { hasil fungsi(a, b, c, d, e, f, g, i) { hasil _panggil(h, nama, [a, b, c, d, e, f, g, i]); }; }
+    jika jumlah == 0 { hasil fungsi() { hasil _go(_cfg, h, nama); }; }
+    jika jumlah == 1 { hasil fungsi(a) { hasil _go(_cfg, h, nama, a); }; }
+    jika jumlah == 2 { hasil fungsi(a, b) { hasil _go(_cfg, h, nama, a, b); }; }
+    jika jumlah == 3 { hasil fungsi(a, b, c) { hasil _go(_cfg, h, nama, a, b, c); }; }
+    jika jumlah == 4 { hasil fungsi(a, b, c, d) { hasil _go(_cfg, h, nama, a, b, c, d); }; }
+    jika jumlah == 5 { hasil fungsi(a, b, c, d, e) { hasil _go(_cfg, h, nama, a, b, c, d, e); }; }
+    jika jumlah == 6 { hasil fungsi(a, b, c, d, e, f) { hasil _go(_cfg, h, nama, a, b, c, d, e, f); }; }
+    jika jumlah == 7 { hasil fungsi(a, b, c, d, e, f, g) { hasil _go(_cfg, h, nama, a, b, c, d, e, f, g); }; }
+    jika jumlah == 8 { hasil fungsi(a, b, c, d, e, f, g, i) { hasil _go(_cfg, h, nama, a, b, c, d, e, f, g, i); }; }
     // Lebih dari 8 argumen: satu parameter larik berisi semua argumen.
     hasil fungsi(semua) { hasil _panggil(h, nama, semua); };
 }
@@ -600,6 +609,9 @@ fungsi _callback(f) {
 
 // Menghentikan semua pendengar callback (biar proses bisa selesai).
 fungsi berhenti_dengarkan() { _aktif = salah; }
+
+// Jalur cepat: _go() memanggil Go langsung (argumen/hasil skalar tanpa JSON), sisanya lewat _panggil.
+buat _cfg = {"panggil": _panggil, "bungkus": _bungkus, "cepat": _p.cepat};
 `
 
 // ---- generics: no way to call an uninstantiated generic function through reflection, so each
