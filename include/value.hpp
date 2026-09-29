@@ -284,31 +284,31 @@ struct ValueWindow {
     const Value* begin() const { return data; }
     const Value* end() const { return data + len; }
     size_t size() const { return len; }
-    Value& operator[](size_t i) { return data[i]; }
-    Value& back() { return data[len - 1]; }
+    __attribute__((always_inline)) Value& operator[](size_t i) { return data[i]; }
+    __attribute__((always_inline)) Value& back() { return data[len - 1]; }
     // Slots at or above `len` keep a null `ref` (pop_back and the callers'
     // moves preserve that), so a push only has to write type/number and,
     // when there is one, the handle.
-    void push_back(Value&& v) {
+    __attribute__((always_inline)) inline void push_back(Value&& v) {
         if (data + len >= limit) overflow();
         Value& d = data[len++];
         d.type = v.type;
         d.number = v.number;
         if (v.ref) d.ref = std::move(v.ref);
     }
-    void push_back(const Value& v) {
+    __attribute__((always_inline)) inline void push_back(const Value& v) {
         if (data + len >= limit) overflow();
         Value& d = data[len++];
         d.type = v.type;
         d.number = v.number;
         if (v.ref) d.ref = v.ref;
     }
-    void pop_back() {
+    __attribute__((always_inline)) inline void pop_back() {
         Value& v = data[--len];
         if (v.ref) v.ref.reset();
     }
     // Shrink only.
-    void resize(size_t n) { while (len > n) pop_back(); }
+    __attribute__((always_inline)) inline void resize(size_t n) { while (len > n) pop_back(); }
     void clear() { resize(0); }
     [[noreturn]] static void overflow();
 };

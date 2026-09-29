@@ -880,6 +880,7 @@ struct VmContext {
     int depth = 0;
 
     VmArena* arena = &VmArena::current();
+    uint32_t gcTick = 0;  // calls + backward jumps since start, across frames
 };
 
 Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
@@ -994,13 +995,13 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
     // see GC::pushVmRoots in gc.hpp.
     VmRootGuard vmRootGuard(GC::VmFrameRoots{&stack, &locals, &boxedLocals});
 
-    auto readByte = [&]() -> uint8_t { return code[ip++]; };
-    auto readU16 = [&]() -> uint16_t {
+    auto readByte = [&]() __attribute__((always_inline)) -> uint8_t { return code[ip++]; };
+    auto readU16 = [&]() __attribute__((always_inline)) -> uint16_t {
         uint16_t v = static_cast<uint16_t>(code[ip] | (code[ip + 1] << 8));
         ip += 2;
         return v;
     };
-    auto pop = [&]() -> Value {
+    auto pop = [&]() __attribute__((always_inline)) -> Value {
         Value v = std::move(stack.back());
         stack.pop_back();
         return v;
@@ -1011,12 +1012,8 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
     auto syncTop = [&]() { ctx.arena->top = stack.data + stack.len; };
 
     // The VM loop otherwise has no GC safepoint at all (unlike execBlock's
-    // per-statement check) -- checked every 64 ops, cheap until the
-    // allocation threshold is actually crossed.
-    uint32_t opsSinceGcCheck = 0;
-
+    // per-statement check) -- see ctx.gcTick at Op::Call / Op::Loop.
     while (true) {
-        if ((++opsSinceGcCheck & 0x3F) == 0) GC::instance().collectIfNeeded();
         Op op = static_cast<Op>(readByte());
         switch (op) {
             case Op::Const: stack.push_back(fn->constants[readU16()]); break;
@@ -1258,10 +1255,14 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
             case Op::Loop: {
                 uint16_t offset = readU16();
                 ip -= offset;
+                // GC safepoint: only backward jumps and calls can keep a frame
+                // running unboundedly, so nothing else needs to check.
+                if ((++ctx.gcTick & 0x3F) == 0) GC::instance().collectIfNeeded();
                 break;
             }
             case Op::Call: {
                 uint8_t argCount = readByte();
+                if ((++ctx.gcTick & 0x3F) == 0) GC::instance().collectIfNeeded();
                 // Fast path: JIT-compiled all-numeric function called directly
                 // off the stack, zero heap allocation. Any mismatch (type,
                 // arity) falls through to the general callValue() path.
