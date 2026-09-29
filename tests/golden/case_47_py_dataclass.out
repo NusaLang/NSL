@@ -1,0 +1,4 @@
+Point(x=1, y=0) benar salah
+Item(name='a', price=1.5, tags=["t"]) Item(name='b', price=2, tags=["x"]) benar []
+Point3(x=1, y=2, z=9) {x: 1, y: 0} Point(x=1, y=5)
+--- exit: 0

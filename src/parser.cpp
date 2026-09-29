@@ -3,6 +3,7 @@
 #include <functional>
 
 #include "i18n.hpp"
+#include "lexer.hpp"
 
 namespace {
 std::string tokenTypeName(TokenType t) {
@@ -472,6 +473,7 @@ StmtPtr Parser::classDecl() {
     expect(TokenType::LBrace, i18n::tr("'{' diharapkan setelah nama kelas", "Expected '{' after class name"));
     std::vector<std::unique_ptr<FnDeclStmt>> methods;
     std::vector<std::pair<std::string, ExprPtr>> classAttrs;
+    std::vector<std::pair<std::string, bool>> annotated;
     while (!check(TokenType::RBrace) && !atEnd()) {
         if (isWord(peek(), "pass") && peekAt(1).type == TokenType::Semi) {  // empty class body
             advance();
@@ -481,10 +483,13 @@ StmtPtr Parser::classDecl() {
         // class attribute: `name = value` (or `name: type = value`)
         if (check(TokenType::Ident) && (peekAt(1).type == TokenType::Eq || peekAt(1).type == TokenType::Colon)) {
             std::string attr = advance().text;
-            if (match(TokenType::Colon)) typeAnnotation();
+            bool hasAnnotation = false;
+            if (match(TokenType::Colon)) { typeAnnotation(); hasAnnotation = true; }
             if (match(TokenType::Eq)) {
+                if (hasAnnotation) annotated.emplace_back(attr, true);
                 classAttrs.emplace_back(attr, expression());
             } else {
+                if (hasAnnotation) annotated.emplace_back(attr, false);
                 classAttrs.emplace_back(attr, LiteralExpr::makeNull());
             }
             expectEnd(i18n::tr("';' diharapkan setelah atribut kelas", "Expected end of line after class attribute"));
@@ -530,7 +535,57 @@ StmtPtr Parser::classDecl() {
         st->span = sp;
         pendingStmts_.push_back(std::move(st));
     }
+    lastAnnotated_ = annotated;
+    dcFields_[name] = std::move(annotated);
+    lastParent_ = parentName;
     return std::make_unique<ClassDeclStmt>(std::move(name), std::move(parentName), std::move(methods));
+}
+
+// @dataclass: __init__, __repr__, __eq__ (and ordering) written from the annotated fields.
+void Parser::makeDataclass(ClassDeclStmt& cls, bool order) {
+    std::vector<std::pair<std::string, bool>> fields;
+    auto inherited = dcFields_.find(cls.parentName);
+    if (inherited != dcFields_.end()) fields = inherited->second;
+    for (auto& f : lastAnnotated_) {
+        bool replaced = false;
+        for (auto& g : fields) if (g.first == f.first) { g = f; replaced = true; }
+        if (!replaced) fields.push_back(f);
+    }
+    dcFields_[cls.name] = fields;
+    const std::string& C = cls.name;
+    std::string params = "self", body, repr = "\"" + C + "(\"", eq = "isinstance(o, " + C + ")", tup;
+    for (size_t i = 0; i < fields.size(); i++) {
+        const std::string& n = fields[i].first;
+        params += ", " + n + (fields[i].second ? "=" + C + "." + n : "");
+        body += "        self." + n + " = _dcv(" + n + ")\n";
+        repr += std::string(i ? " + \", " : " + \"") + n + "=\" + repr(self." + n + ")";
+        eq += " and self." + n + " == o." + n;
+        tup += (i ? ", " : "") + std::string("self.") + n;
+    }
+    if (fields.empty()) body = "        pass\n";
+    repr += " + \")\"";
+    std::string src = "class __DC:\n    def __init__(" + params + "):\n" + body +
+                      "    def __repr__(self):\n        return " + repr + "\n" +
+                      "    def __eq__(self, o):\n        return " + eq + "\n";
+    if (order) {
+        src += "    def _dc_key(self):\n        return [" + tup + "]\n"
+               "    def __lt__(self, o):\n        return self._dc_key() < o._dc_key()\n"
+               "    def __le__(self, o):\n        return self._dc_key() <= o._dc_key()\n"
+               "    def __gt__(self, o):\n        return self._dc_key() > o._dc_key()\n"
+               "    def __ge__(self, o):\n        return self._dc_key() >= o._dc_key()\n";
+    }
+    Lexer lx(src);
+    Parser sub(lx.tokenize());
+    auto prog = sub.parse();
+    for (auto& st : prog->statements) {
+        if (st->kind != StmtKind::ClassDecl) continue;
+        for (auto& m : static_cast<ClassDeclStmt*>(st.get())->methods) {
+            if (m->name == "__init__") m->name = "konstruktor";
+            bool own = false;
+            for (auto& e : cls.methods) if (e->name == m->name) own = true;  // hand-written methods win
+            if (!own) cls.methods.push_back(std::move(m));
+        }
+    }
 }
 
 StmtPtr Parser::structDecl() {
@@ -733,6 +788,24 @@ StmtPtr Parser::decoratedStmt() {
     } else if (match(TokenType::Class)) {
         def = classDecl();
         name = static_cast<ClassDeclStmt*>(def.get())->name;
+        // @dataclass / @dataclass(order=True, ...) is done here, at parse time
+        for (size_t i = decorators.size(); i-- > 0;) {
+            Expr* d = decorators[i].get();
+            bool order = false;
+            if (d->kind == ExprKind::Call) {
+                auto* c = static_cast<CallExpr*>(d);
+                bool plain = c->callee->kind == ExprKind::Identifier && static_cast<IdentifierExpr*>(c->callee.get())->name == "dataclass";
+                bool viaKw = c->callee->kind == ExprKind::Identifier && static_cast<IdentifierExpr*>(c->callee.get())->name == "_callkw" &&
+                             !c->args.empty() && c->args[0]->kind == ExprKind::Identifier &&
+                             static_cast<IdentifierExpr*>(c->args[0].get())->name == "dataclass";
+                if (!plain && !viaKw) continue;
+                order = true;  // ordering methods are harmless when not asked for
+            } else if (d->kind != ExprKind::Identifier || static_cast<IdentifierExpr*>(d)->name != "dataclass") {
+                continue;
+            }
+            makeDataclass(*static_cast<ClassDeclStmt*>(def.get()), order);
+            decorators.erase(decorators.begin() + static_cast<std::ptrdiff_t>(i));
+        }
     } else {
         throw ParseError(i18n::tr("Dekorator harus diikuti def atau class", "A decorator must be followed by def or class"), peek());
     }

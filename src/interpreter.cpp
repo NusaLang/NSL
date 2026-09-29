@@ -304,7 +304,7 @@ bool isRegularFile(const std::string& path) {
 const std::vector<std::string>& builtinNames() {
     static const std::vector<std::string> names = {
         "cetak", "panjang", "tambah", "hapus_akhir", "potong", "gabung", "pisah",
-        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "iter", "next", "_callmeth", "_with_enter", "_with_exit", "getattr", "setattr", "hasattr", "delattr", "vars", "dir", "id", "hash", "issubclass", "__get", "_exc_match", "_exc_wrap", "_defaultdict", "_namedtuple", "_gennew", "_genresume", "_genclose", "_isvmgen", "pegang", "_peta", "_in", "_callkw", "_callkwm", "_close", "_go",
+        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "iter", "next", "_dcv", "_callmeth", "_with_enter", "_with_exit", "getattr", "setattr", "hasattr", "delattr", "vars", "dir", "id", "hash", "issubclass", "__get", "_exc_match", "_exc_wrap", "_defaultdict", "_namedtuple", "_gennew", "_genresume", "_genclose", "_isvmgen", "pegang", "_peta", "_in", "_callkw", "_callkwm", "_close", "_go",
         "base64_encode", "base64_decode",
         "baca_file", "tulis_file", "file_ada",
         "tcp_konek", "tcp_kirim", "tcp_terima", "tcp_tutup",
@@ -1687,6 +1687,19 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         if (found) return got;
         if (args.size() == 3) return args[2];
         throw RuntimeError("AttributeError: '" + std::string(o.typeName()) + "' object has no attribute '" + args[1].str() + "'");
+    }
+    if (name == "_dcv") {  // dataclass field value: field(default_factory=f) markers are expanded here
+        need(1);
+        const Value& v = args[0];
+        if (v.type == ValueType::Map && v.map()->count("__dcfield__")) {
+            auto fit = v.map()->find("default_factory");
+            if (fit != v.map()->end() && fit->second.type != ValueType::Null) {
+                std::vector<Value> none;
+                return vmIsActive() ? vmCallValue(fit->second, none, this) : callValue(fit->second, none, Span{});
+            }
+            return (*v.map())["default"];
+        }
+        return v;
     }
     if (name == "_callmeth") {  // (object, name, [args]) -> object.name(*args)
         need(3);

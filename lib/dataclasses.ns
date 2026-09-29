@@ -1,0 +1,32 @@
+# @dataclass itself is expanded by the parser; this module has the helpers around it.
+def dataclass(cls=None, **kw):
+    if cls is None:
+        return lambda c: c
+    return cls
+
+def field(default=None, default_factory=None, **kw):
+    return {"__dcfield__": True, "default": default, "default_factory": default_factory}
+
+def asdict(obj):
+    out = {}
+    for k in vars(obj):
+        v = getattr(obj, k)
+        out[k] = asdict(v) if hasattr(v, "__class__") and hasattr(v, "_dc_key") is False and _is_dc(v) else v
+    return out
+
+def _is_dc(v):
+    return hasattr(v, "__class__") and not isinstance(v, (list, dict, str, int, float, bool)) and v is not None
+
+def astuple(obj):
+    return tuple([getattr(obj, k) for k in vars(obj)])
+
+def fields(obj):
+    return list(vars(obj).keys())
+
+def replace(obj, **changes):
+    d = vars(obj)
+    d.update(changes)
+    return type(obj)(**d)
+
+def is_dataclass(obj):
+    return hasattr(obj, "__class__")

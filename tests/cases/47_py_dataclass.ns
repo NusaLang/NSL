@@ -1,0 +1,26 @@
+from dataclasses import dataclass, field, asdict, replace
+from typing import List
+
+@dataclass
+class Point:
+    x: int
+    y: int = 0
+
+@dataclass(order=True)
+class Item:
+    name: str
+    price: float = 1.5
+    tags: List[str] = field(default_factory=list)
+
+@dataclass
+class Point3(Point):
+    z: int = 9
+
+p = Point(1)
+q = Point(1, 0)
+print(p, p == q, p == Point(2))
+a = Item("a")
+b = Item("b", 2.0, ["x"])
+a.tags.append("t")
+print(a, b, a < b, Item("z").tags)
+print(Point3(1, 2), asdict(p), replace(p, y=5))
