@@ -103,9 +103,9 @@ Memori dikelola GC mark-sweep otomatis, gak ada alokasi/pembebasan manual.
 - `http_get`/`http_post` (HTTPS beneran, TLS 1.2/1.3 ditulis sendiri di `src/tls*.cpp`, tanpa pustaka luar), `tcp_konek`/`tcp_kirim`/`tcp_terima`, `http_dengar` buat bikin server
 - `json_encode`/`json_decode`, `base64_encode`/`decode`
 - `sha256_hex`, `hmac_sha256_hex`, `jwt_buat`/`jwt_verifikasi`
-- `qr_baca` — baca QR code dari gambar (PNG/JPEG/BMP/dst)
+- `qr_baca` — baca QR code dari gambar (PNG/JPEG/BMP/dst); dikerjakan plugin sistem `qr`
 - `jalankan_perintah` — jalanin proses eksternal, argv-safe (gak lewat shell)
-- `impor()` buat modul lokal, `muat_plugin()` buat native plugin (`.so` lewat dlopen — ada plugin bawaan SQLite, HTTP+TLS, WebSocket, crypto lanjutan, forensik gambar BMP)
+- `impor()` buat modul lokal, `muat_plugin()` buat native plugin (`.so` lewat dlopen — ada plugin bawaan SQLite, HTTP, WebSocket, crypto lanjutan, forensik gambar BMP, `js` (QuickJS buat file `.js`) dan `qr`)
 
 Daftar lengkap + signature-nya ada di `src/interpreter.cpp` (cari `callBuiltin`).
 
@@ -126,11 +126,28 @@ nusa get github.com/user/repo#dev   # branch/tag spesifik
 include/    header (.hpp)
 src/        implementasi (.cpp) + main.cpp (CLI)
 examples/   contoh program
-plugins/    plugin native (muat_plugin, .so via dlopen)
+plugins/    plugin native (muat_plugin, .so via dlopen); kode C vendor (SQLite, QuickJS, quirc) cuma ada di sini
+tools/      jembatan modul Go (tools/gobridge) dan skrip generator
 tests/      regression/golden test suite
 ```
 
-Eksekusi lewat bytecode VM dulu (`src/vm.cpp`, dengan JIT buat fungsi/loop aritmatika murni di `src/jit.cpp`), fallback ke tree-walking langsung di AST (`src/interpreter.cpp`) buat konstruksi yang belum didukung VM (struct, enum, try/catch, fungsi anonim, `induk`, dan kelas yang dideklarasi di dalam fungsi/blok). Kelas top-level jalan di VM.
+Eksekusi lewat bytecode VM (`src/vm.cpp`, dengan JIT buat fungsi/loop aritmatika murni di `src/jit.cpp`). Tree-walker (`src/interpreter.cpp`) tinggal jadi cadangan buat kelas yang dideklarasi di dalam fungsi/blok dan JSX; `# nusa:tree-walker` di 10 baris pertama atau `NUSA_NO_VM=1` memaksanya.
+
+## Sintaks gaya Python
+
+Blok berindentasi dengan `:`, `;` gak wajib (baris baru mengakhiri pernyataan, juga di gaya kurung kurawal), `def`/`class`/`if`/`elif`/`for x in ...`/`while`/`try`/`except`/`return`/`import`, `range()`, slice `a[1:3]`, `True/False/None`. Kata kunci Indonesia tetap jalan dan sengaja dipendekkan (`kem` = return, dst).
+
+## Modul Go
+
+```bash
+nusa go add github.com/user/modul --pkg sub/paket --std strings --blank github.com/mattn/go-sqlite3
+```
+
+Membangun `nusantara_modules/<nama>/` (plugin.so + index.ns) dari API Go lewat refleksi, lalu `import <nama>`. Go cuma dibutuhkan buat MEMBANGUN; hasilnya jalan di mesin tanpa Go. Metode variadik menerima satu larik buat argumen sisa (`db.Exec(sql, [a, b])`), `penunjuk("teks"|"angka"|"boolean"|"bytes"|"apa")` buat parameter keluaran seperti `rows.Scan`, objek Go dibebaskan otomatis begitu jadi sampah, dan callback (`AddEventHandler(fungsi)`) jalan di goroutine latar.
+
+## Tanpa pustaka luar
+
+Inti (`nusa`) gak butuh OpenSSL, libcurl, atau kode C vendor: TLS 1.2/1.3 (X25519/P-256/P-384, AES-GCM, ChaCha20-Poly1305, verifikasi X.509) ditulis sendiri di `src/tls*.cpp` dan dipakai bareng oleh `http_get`, plugin `http` (dengan proxy `https_proxy`/`no_proxy`) dan plugin `ws`. `make` cuma butuh compiler C++17; `make plugins` membangun plugin (SQLite/QuickJS/quirc ikut divendor di foldernya masing-masing).
 
 ## Lisensi
 
