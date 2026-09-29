@@ -98,7 +98,7 @@ bool usesLayout(const std::vector<Token>& toks, const Lines& lines) {
             if (eol || isBlockKeyword(lineFirst)) return true;
         }
     }
-    return !anySemi && firstLine >= 0 && lastLine > firstLine;
+    return !anySemi && firstLine >= 0;  // no braces, no `;`: only Python layout can parse it
 }
 
 struct Scope {

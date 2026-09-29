@@ -1,3 +1,6 @@
+#ifndef CONFIG_VERSION
+#define CONFIG_VERSION "2024-01-13"
+#endif
 /*
  * QuickJS Javascript Engine
  * 

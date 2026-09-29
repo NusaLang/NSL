@@ -1,6 +1,7 @@
-// QuickJS-backed .js execution path. Independent engine, independent
-// object model/GC from the rest of Nusantara -- see js_runtime.hpp.
-#include "js_runtime.hpp"
+// QuickJS-backed .js execution, shipped as a plugin (nusantara-plugins/js.so) so the core
+// binary carries no vendored C. Independent engine, independent object model/GC from the
+// rest of Nusantara; `nusa file.js` loads this plugin and calls js_jalan(path).
+#include "plugin_abi.h"
 
 #include <cerrno>
 #include <cstdio>
@@ -16,7 +17,6 @@ extern "C" {
 #include "quickjs.h"
 }
 
-namespace jsrt {
 namespace {
 
 // Node console.log-style formatting: objects/arrays via JSON.stringify
@@ -151,8 +151,6 @@ bool drainJobs(JSRuntime* rt, JSContext* ctx) {
     return true;
 }
 
-}  // namespace
-
 int runJsFile(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file) {
@@ -197,4 +195,22 @@ int runJsFile(const std::string& path) {
     return exitCode;
 }
 
-}  // namespace jsrt
+NsValue jsJalan(int argc, const NsValue* argv) {
+    NsValue out{};
+    out.type = NS_NUMBER;
+    if (argc != 1 || argv[0].type != NS_STRING) {
+        std::cerr << "nusa: js error: js_jalan(path) butuh 1 argumen teks\n";
+        out.number = 1;
+        return out;
+    }
+    out.number = runJsFile(std::string(argv[0].str, argv[0].str_len > 0 ? argv[0].str_len : std::strlen(argv[0].str)));
+    return out;
+}
+
+}  // namespace
+
+extern "C" int nusa_abi_version(void) { return NS_PLUGIN_ABI_VERSION; }
+
+extern "C" void ns_plugin_init(void* registry, NsRegisterFn reg) {
+    reg(registry, "js_jalan", jsJalan);
+}

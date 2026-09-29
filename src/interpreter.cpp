@@ -39,7 +39,7 @@ static const size_t kUkuranStackGoroutine = 512 * 1024;
 #include "parser.hpp"
 #include "plugin.hpp"
 #include "plugin_abi.h"
-#include "qr.hpp"
+#include "sysmod.hpp"
 #include "sysplugin.hpp"
 #include "vm.hpp"
 
@@ -1298,9 +1298,23 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
     if (name == "qr_baca") {
         need(1);
         expectType(args[0], ValueType::String);
-        std::vector<std::string> payloads = qr::decode(args[0].str());
+        Value packed;
+        try {
+            packed = sysmod::call("qr", "qr_baca", {args[0]});
+        } catch (const std::exception& e) {
+            throw RuntimeError(std::string("qr_baca(): ") + e.what());
+        }
+        // "<panjang>:<byte>" berurutan.
         auto arr = std::make_shared<std::vector<Value>>();
-        for (const auto& s : payloads) arr->push_back(Value::fromString(s));
+        const std::string& data = packed.str();
+        size_t pos = 0;
+        while (pos < data.size()) {
+            size_t colon = data.find(':', pos);
+            if (colon == std::string::npos) break;
+            size_t len = static_cast<size_t>(std::stoul(data.substr(pos, colon - pos)));
+            arr->push_back(Value::fromString(data.substr(colon + 1, len)));
+            pos = colon + 1 + len;
+        }
         return Value::fromArray(arr);
     }
 

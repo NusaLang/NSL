@@ -1,4 +1,4 @@
-#include "qr.hpp"
+#include "plugin_abi.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_STDIO
@@ -6,10 +6,13 @@
 
 #include "quirc.h"
 
+#include <cstdlib>
 #include <cstring>
+#include <string>
+#include <vector>
 #include <memory>
 
-namespace qr {
+namespace {
 
 std::vector<std::string> decode(const std::string& imageBytes) {
     std::vector<std::string> out;
@@ -52,4 +55,26 @@ std::vector<std::string> decode(const std::string& imageBytes) {
     return out;
 }
 
-}  // namespace qr
+// Hasil: tiap payload sebagai "<panjang>:<byte>" berurutan (aman untuk data biner).
+NsValue qrBaca(int argc, const NsValue* argv) {
+    NsValue out{};
+    out.type = NS_STRING;
+    std::string packed;
+    if (argc == 1 && argv[0].type == NS_STRING && argv[0].str) {
+        size_t n = argv[0].str_len > 0 ? static_cast<size_t>(argv[0].str_len) : std::strlen(argv[0].str);
+        for (const std::string& p : decode(std::string(argv[0].str, n))) packed += std::to_string(p.size()) + ":" + p;
+    }
+    out.str = static_cast<char*>(std::malloc(packed.size() + 1));
+    std::memcpy(out.str, packed.data(), packed.size());
+    out.str[packed.size()] = '\0';
+    out.str_len = static_cast<int>(packed.size());
+    return out;
+}
+
+}  // namespace
+
+extern "C" int nusa_abi_version(void) { return NS_PLUGIN_ABI_VERSION; }
+
+extern "C" void ns_plugin_init(void* registry, NsRegisterFn reg) {
+    reg(registry, "qr_baca", qrBaca);
+}

@@ -1,0 +1,8 @@
+buat x = 1
+buat y = x + 2
+cetak(y)
+fungsi f(a) {
+  hasil a * 2
+}
+cetak(f(4))
+untuk (buat i = 0; i < 2; i = i + 1) { cetak(i) }

@@ -1,6 +1,6 @@
 CXX ?= g++
 CC ?= cc
-CXXFLAGS := -std=c++17 -O3 -flto=auto -DNDEBUG -Wall -Wextra -Iinclude -Ithird_party/quickjs/vendor -Ithird_party/stb/vendor -Ithird_party/quirc/vendor -pthread
+CXXFLAGS := -std=c++17 -O3 -flto=auto -DNDEBUG -Wall -Wextra -Iinclude -pthread
 SRC := $(filter-out src/wasm_main.cpp, $(wildcard src/*.cpp))
 BIN := nusantara
 PLUGIN_DIRS := $(wildcard plugins/*)
@@ -13,39 +13,12 @@ else
 	SHLIB_EXT := so
 endif
 
-# --- QuickJS (vendored, single-source-of-truth for .js execution) ----------
-# Amalgamation-style vendoring, same convention as plugins/sqlite/vendor's
-# sqlite3.c: source dropped in verbatim under third_party/quickjs/vendor,
-# compiled once as plain C objects and cached (quickjs.c alone is ~55k
-# lines -- recompiling it with every `make` would make iteration painful).
-# Linked straight into the main $(BIN)/$(OPT_BIN), not built as a plugin
-# .so, since .js execution is a core dispatch branch in main.cpp, not a
-# muat_plugin()-loadable library.
-QJS_DIR := third_party/quickjs/vendor
-QJS_VERSION := $(shell cat $(QJS_DIR)/VERSION)
-QJS_SRCS := $(QJS_DIR)/quickjs.c $(QJS_DIR)/libregexp.c $(QJS_DIR)/libunicode.c $(QJS_DIR)/libbf.c $(QJS_DIR)/cutils.c
-QJS_OBJS := $(QJS_SRCS:.c=.o)
-QJS_CFLAGS := -O2 -w -D_GNU_SOURCE -DCONFIG_VERSION=\"$(QJS_VERSION)\" -DCONFIG_BIGNUM
-
-$(QJS_DIR)/%.o: $(QJS_DIR)/%.c
-	$(CC) $(QJS_CFLAGS) -c $< -o $@
-
-# quirc (vendored, QR decode for qr_baca()). stb_image is header-only,
-# compiled via src/qr.cpp, no separate object rule needed.
-QUIRC_DIR := third_party/quirc/vendor
-QUIRC_SRCS := $(wildcard $(QUIRC_DIR)/*.c)
-QUIRC_OBJS := $(QUIRC_SRCS:.c=.o)
-QUIRC_CFLAGS := -O2 -w -I$(QUIRC_DIR)
-
-$(QUIRC_DIR)/%.o: $(QUIRC_DIR)/%.c
-	$(CC) $(QUIRC_CFLAGS) -c $< -o $@
-
 .PHONY: all clean run plugins clean-plugins test test-update opt sizeof bench
 
 all: $(BIN)
 
-$(BIN): $(SRC) $(QJS_OBJS) $(QUIRC_OBJS)
-	$(CXX) $(CXXFLAGS) $(SRC) $(QJS_OBJS) $(QUIRC_OBJS) -o $(BIN) -ldl -lm
+$(BIN): $(SRC)
+	$(CXX) $(CXXFLAGS) $(SRC) -o $(BIN) -ldl -lm
 
 run: $(BIN)
 	./$(BIN) run examples/hello.ns
@@ -58,10 +31,10 @@ OPT_BIN := build-opt/nusa
 
 opt: $(OPT_BIN)
 
-$(OPT_BIN): $(SRC) $(wildcard include/*.hpp) $(QJS_OBJS) $(QUIRC_OBJS)
+$(OPT_BIN): $(SRC) $(wildcard include/*.hpp)
 	@mkdir -p build-opt
 	@ln -sfn ../nusantara-plugins build-opt/nusantara-plugins
-	$(CXX) $(CXXFLAGS) $(SRC) $(QJS_OBJS) $(QUIRC_OBJS) -o $(OPT_BIN) -ldl -lm
+	$(CXX) $(CXXFLAGS) $(SRC) -o $(OPT_BIN) -ldl -lm
 
 # Regression / golden test suite. Lihat tests/run.sh.
 test: $(OPT_BIN)
@@ -139,7 +112,7 @@ clean-plugins:
 	@rm -rf nusantara-plugins
 
 clean: clean-plugins
-	rm -f $(BIN) $(QJS_OBJS) $(QUIRC_OBJS)
+	rm -f $(BIN)
 
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin

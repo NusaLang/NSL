@@ -30,6 +30,8 @@ private:
     bool check(TokenType type) const;
     bool match(TokenType type);
     const Token& expect(TokenType type, const std::string& message);
+    // End of a statement: `;` is optional -- a line break, `}` or end of file also ends it.
+    void expectEnd(const std::string& message);
 
     StmtPtr statement();
     StmtPtr letStmt();

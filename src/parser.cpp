@@ -50,6 +50,13 @@ const Token& Parser::expect(TokenType type, const std::string& message) {
     throw ParseError(message + i18n::tr(", dapet ", ", got ") + tokenTypeName(peek().type), peek());
 }
 
+void Parser::expectEnd(const std::string& message) {
+    if (peek().type == TokenType::Semi) { pos_++; return; }
+    if (peek().type == TokenType::RBrace || peek().type == TokenType::Eof) return;
+    if (pos_ > 0 && peek().span.line > tokens_[pos_ - 1].span.line) return;
+    throw ParseError(message, peek());
+}
+
 std::unique_ptr<Program> Parser::parse() {
     auto program = std::make_unique<Program>();
     while (!atEnd()) {
@@ -166,7 +173,7 @@ StmtPtr Parser::importStmt() {
         name = path.substr(path.find_last_of('/') == std::string::npos ? 0 : path.find_last_of('/') + 1);
     }
     if (matchWord("as", "sbg")) name = expect(TokenType::Ident, i18n::tr("Nama alias diharapkan setelah 'as'", "Expected alias after 'as'")).text;
-    expect(TokenType::Semi, i18n::tr("';' diharapkan setelah 'import'", "Expected ';' after import"));
+    expectEnd( i18n::tr("';' diharapkan setelah 'import'", "Expected ';' after import"));
     std::vector<ExprPtr> args;
     args.push_back(LiteralExpr::makeString(path));
     return mkLet(name, mkCall("impor", std::move(args), sp), sp);
@@ -192,7 +199,7 @@ StmtPtr Parser::fromImportStmt() {
         get->span = sp;
         out.push_back(mkLet(alias, std::move(get), sp));
     } while (match(TokenType::Comma));
-    expect(TokenType::Semi, i18n::tr("';' diharapkan setelah 'import'", "Expected ';' after import"));
+    expectEnd( i18n::tr("';' diharapkan setelah 'import'", "Expected ';' after import"));
     StmtPtr first = std::move(out.front());
     for (size_t i = 1; i < out.size(); i++) pendingStmts_.push_back(std::move(out[i]));
     return first;
@@ -206,7 +213,7 @@ StmtPtr Parser::letStmt() {
     }
     expect(TokenType::Eq, i18n::tr("'=' diharapkan setelah nama variabel", "Expected '=' after variable name"));
     ExprPtr value = expression();
-    expect(TokenType::Semi, i18n::tr("';' diharapkan setelah pernyataan 'buat'", "Expected ';' after let statement"));
+    expectEnd( i18n::tr("';' diharapkan setelah pernyataan 'buat'", "Expected ';' after let statement"));
     return std::make_unique<LetStmt>(std::move(name), std::move(value), std::move(typeAnnotation));
 }
 
@@ -333,7 +340,7 @@ StmtPtr Parser::tryStmt() {
 
 StmtPtr Parser::throwStmt() {
     ExprPtr value = expression();
-    expect(TokenType::Semi, i18n::tr("';' diharapkan setelah 'lempar'", "Expected ';' after 'lempar'"));
+    expectEnd( i18n::tr("';' diharapkan setelah 'lempar'", "Expected ';' after 'lempar'"));
     return std::make_unique<ThrowStmt>(std::move(value));
 }
 
@@ -507,17 +514,17 @@ StmtPtr Parser::returnStmt() {
     if (!check(TokenType::Semi)) {
         value = expression();
     }
-    expect(TokenType::Semi, i18n::tr("';' diharapkan setelah pernyataan 'hasil'", "Expected ';' after return statement"));
+    expectEnd( i18n::tr("';' diharapkan setelah pernyataan 'hasil'", "Expected ';' after return statement"));
     return std::make_unique<ReturnStmt>(std::move(value));
 }
 
 StmtPtr Parser::breakStmt() {
-    expect(TokenType::Semi, i18n::tr("';' diharapkan setelah 'berhenti'", "Expected ';' after 'berhenti'"));
+    expectEnd( i18n::tr("';' diharapkan setelah 'berhenti'", "Expected ';' after 'berhenti'"));
     return std::make_unique<BreakStmt>();
 }
 
 StmtPtr Parser::continueStmt() {
-    expect(TokenType::Semi, i18n::tr("';' diharapkan setelah 'lanjut'", "Expected ';' after 'lanjut'"));
+    expectEnd( i18n::tr("';' diharapkan setelah 'lanjut'", "Expected ';' after 'lanjut'"));
     return std::make_unique<ContinueStmt>();
 }
 
@@ -535,7 +542,7 @@ std::unique_ptr<BlockStmt> Parser::block() {
 
 StmtPtr Parser::exprStmt() {
     ExprPtr expr = expression();
-    expect(TokenType::Semi, i18n::tr("';' diharapkan setelah ekspresi", "Expected ';' after expression"));
+    expectEnd( i18n::tr("';' diharapkan setelah ekspresi", "Expected ';' after expression"));
     return std::make_unique<ExprStmtNode>(std::move(expr));
 }
 

@@ -30,7 +30,7 @@
 #include "gil.hpp"
 #include "i18n.hpp"
 #include "interpreter.hpp"
-#include "js_runtime.hpp"
+#include "sysmod.hpp"
 #include "json.hpp"
 #include "lexer.hpp"
 #include "net.hpp"
@@ -94,7 +94,12 @@ bool wantsTreeWalker(const std::string& source) {
 
 int runFile(const std::string& path) {
     if (hasExtension(path, ".js")) {
-        return jsrt::runJsFile(path);
+        try {
+            return static_cast<int>(sysmod::call("js", "js_jalan", {Value::fromString(path)}).number);
+        } catch (const std::exception& e) {
+            std::cerr << "nusantara: error: " << e.what() << '\n';
+            return 1;
+        }
     }
     std::ifstream file(path);
     if (!file) {
