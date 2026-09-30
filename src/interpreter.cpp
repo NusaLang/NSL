@@ -1889,7 +1889,7 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
             if (has("KeyError") || has("kunci") ) return "KeyError";
             if (has("Undefined variable") || has("belum didefinisikan") || has("NameError")) return "NameError";
             if (has("FileNotFoundError") || has("nggak bisa buka") || has("tidak bisa membuka") || has("file tidak ada")) return "FileNotFoundError";
-            if (has("rekursi") || has("recursion")) return "RecursionError";
+            if (has("rekursi") || has("Rekursi") || has("recursion")) return "RecursionError";
             if (has("AssertionError")) return "AssertionError";
             if (has("nggak bisa dikonversi") || has("invalid literal") || has("ValueError")) return "ValueError";
             if (has("harus ") || has("bukan fungsi") || has("nggak bisa di-") || has("butuh ") || has("TypeError")) return "TypeError";

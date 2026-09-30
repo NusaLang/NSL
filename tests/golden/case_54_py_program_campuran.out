@@ -1,0 +1,18 @@
+x 2 20 c
+y 1 20 b
+[{"name": "a", "dept": "x", "sal": 10, "mgr": null}]
+[["the", 3], ["and", 2]] 3
+9 9
+[[0, 0, 0], [0, 1, 2], [0, 2, 4]] [[0, 0, 0], [0, 1, 2], [0, 2, 4]]
+{a: 0, b: 1, c: 2} [0, 1, 2]
+3 dlroW ,olleH ["Hello", "World"] World-Hello
+left    |   right|   3.142|0xff|1,000,000
+12586269025
+fnf
+["line 0", "line 1", "line 2"]
+[["c", 1], ["a", 2], ["b", 2]]
+["1", "2"] [1, "a"] benar
+2 3
+benar 7 1024 0.1 2.5 8 0b101 0xff 0o10
+A 97 benar benar a A B
+--- exit: 0

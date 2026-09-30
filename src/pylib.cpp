@@ -457,7 +457,7 @@ bool matchesType(const Value& v, const Value& t) {
         return false;
     }
     std::string k = kindOf(t);
-    if (k == "int") return v.type == ValueType::Number && v.number == std::floor(v.number);
+    if (k == "int") return (v.type == ValueType::Number && v.number == std::floor(v.number)) || v.type == ValueType::Bool;
     if (k == "float") return v.type == ValueType::Number;
     if (k == "str") return v.type == ValueType::String;
     if (k == "list") return isSeq(v);

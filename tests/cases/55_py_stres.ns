@@ -1,0 +1,41 @@
+import time, asyncio, threading, itertools
+# stress: many generators + gc + objects
+class N:
+    def __init__(self, v):
+        self.v = v
+        self.self = self
+def gen(n):
+    for i in range(n):
+        yield N(i)
+t = time.time()
+tot = 0
+for rep in range(200):
+    for o in gen(500):
+        tot += o.v
+print(tot)
+gs = [gen(10) for _ in range(2000)]
+print(sum(next(g).v for g in gs))
+del gs
+# nested generators recursion
+def walk(d):
+    if d == 0:
+        yield 1
+    else:
+        yield from walk(d - 1)
+        yield from walk(d - 1)
+print(sum(walk(12)))
+# threads + generators
+res = []
+def w(k):
+    res.append(sum(x.v for x in gen(200)) + k)
+ts = [threading.Thread(target=w, args=(i,)) for i in range(8)]
+for x in ts: x.start()
+for x in ts: x.join()
+print(sorted(res)[:3], len(res))
+async def a(i):
+    await asyncio.sleep(0.01)
+    return i
+async def m():
+    return sum(await asyncio.gather(*[a(i) for i in range(200)]))
+print(asyncio.run(m()))
+print("t", round(time.time() - t, 1) < 30)

@@ -1382,9 +1382,34 @@ StmtPtr Parser::tupleAssign(ExprPtr first, Span sp) {
 
 StmtPtr Parser::exprStmt() {
     Span sp = peek().span;
-    if (isWord(peek(), "del", "hapus") && peekAt(1).type == TokenType::Ident) {
+    if (isWord(peek(), "del", "hapus") && (peekAt(1).type == TokenType::Ident || peekAt(1).type == TokenType::This)) {
         advance();
         ExprPtr target = expression();
+        if (target->kind == ExprKind::Identifier || check(TokenType::Comma)) {
+            // del x / del a, b, xs[i]: a plain name is reset to None (names can't be unbound), subscripts are removed
+            std::vector<StmtPtr> parts;
+            auto one = [&](ExprPtr t) {
+                if (t->kind == ExprKind::Identifier) {
+                    ExprPtr as = std::make_unique<AssignExpr>(static_cast<IdentifierExpr*>(t.get())->name, LiteralExpr::makeNull());
+                    as->span = sp;
+                    parts.push_back(std::make_unique<ExprStmtNode>(std::move(as)));
+                } else if (t->kind == ExprKind::Index) {
+                    auto* ix = static_cast<IndexExpr*>(t.get());
+                    std::vector<ExprPtr> a;
+                    a.push_back(std::move(ix->target));
+                    a.push_back(std::move(ix->index));
+                    parts.push_back(std::make_unique<ExprStmtNode>(mkCall("_delitem", std::move(a), sp)));
+                } else {
+                    throw ParseError(i18n::tr("'del' butuh nama, x[i] atau x[kunci]", "'del' needs a name, x[i] or x[key]"), peek());
+                }
+            };
+            one(std::move(target));
+            while (match(TokenType::Comma)) one(expression());
+            expectEnd(i18n::tr("';' diharapkan setelah 'del'", "Expected ';' after 'del'"));
+            StmtPtr first = std::move(parts[0]);
+            for (size_t i = 1; i < parts.size(); i++) pendingStmts_.push_back(std::move(parts[i]));
+            return first;
+        }
         expectEnd(i18n::tr("';' diharapkan setelah 'del'", "Expected ';' after 'del'"));
         if (target->kind != ExprKind::Index) {
             throw ParseError(i18n::tr("'del' butuh x[i] atau x[kunci]", "'del' needs x[i] or x[key]"), peek());
