@@ -1,5 +1,6 @@
 #include "vm.hpp"
 #include "pynum.hpp"
+#include "utf8str.hpp"
 #include "pylib.hpp"
 #include "varargs.hpp"
 #include "repeat.hpp"
@@ -669,7 +670,7 @@ public:
             case ExprKind::Index: {
                 auto* n = static_cast<const IndexExpr*>(e);
                 compileExpr(n->target.get());
-                if (isStringLiteral(n->index.get())) {
+                if (isStringLiteral(n->index.get()) && !n->strict) {
                     current->emitOp(Op::GetField);
                     current->emitU16(static_cast<uint16_t>(current->addConstant(Value::fromString(stringLiteralOf(n->index.get())))));
                     return;
@@ -1249,7 +1250,7 @@ inline const Value* findVmMethod(const ClassInfo* c, const std::string& name, bo
 // Same lookup interpreter.cpp's indexGet() does for Array/Map/String/
 // Instance -- kept in sync by hand since VmArray needs a distinct
 // numeric/boxed fast path indexGet doesn't have.
-Value vmGetIndex(const Value& target, const Value& idxv) {
+Value vmGetIndex(const Value& target, const Value& idxv, bool strict = false) {
     if (target.type == ValueType::VmArray) {
         if (idxv.type != ValueType::Number) throw VmRuntimeError("Index larik harus angka");
         long long i = static_cast<long long>(idxv.number);
@@ -1280,15 +1281,16 @@ Value vmGetIndex(const Value& target, const Value& idxv) {
             GC::instance().noteStore(target, made);
             return made;
         }
+        if (strict) throw VmRuntimeError("KeyError: " + (idxv.type == ValueType::String ? "'" + key + "'" : key));
         return Value::null();
     }
     if (target.type == ValueType::String) {
         if (idxv.type != ValueType::Number) throw VmRuntimeError("Index teks harus angka");
         long long i = static_cast<long long>(idxv.number);
-        const std::string& str = target.str();
-        if (i < 0) i += static_cast<long long>(str.size());
-        if (i < 0 || static_cast<size_t>(i) >= str.size()) throw VmRuntimeError("Index teks di luar batas: " + std::to_string(i));
-        return Value::fromString(std::string(1, str[static_cast<size_t>(i)]));
+        long long n = static_cast<long long>(u8::length(target));
+        if (i < 0) i += n;
+        if (i < 0 || i >= n) throw VmRuntimeError("Index teks di luar batas: " + std::to_string(i));
+        return Value::fromString(u8::slice(target, static_cast<size_t>(i), static_cast<size_t>(i) + 1));
     }
     if (target.type == ValueType::Instance) {
         if (idxv.type != ValueType::String) {
@@ -1421,6 +1423,15 @@ Value callVmWithSelf(VmClosure* cl, const Value& self, std::vector<Value>& args,
 // bytecode constructor when the class has one.
 Value vmConstruct(const Value& callee, std::vector<Value>& args, VmContext& ctx) {
     ClassInfo* ci = callee.klass();
+    if (args.size() == 1) {  // Color(1): an Enum looks its member up by value
+        auto mem = ci->classAttrs.find("_members_");
+        if (mem != ci->classAttrs.end() && mem->second.type == ValueType::Array) {
+            for (const Value& m : *mem->second.array()) {
+                if (m.type == ValueType::Instance && valuesDeepEqual((*m.instance()->fields)["value"], args[0])) return m;
+            }
+            throw VmRuntimeError("ValueError: " + args[0].stringify() + " is not a valid " + ci->name);
+        }
+    }
     auto viaInterpreter = [&]() -> Value {
         if (!ctx.interpreter) throw VmRuntimeError("Bikin instance butuh interpreter context");
         try {
@@ -2410,7 +2421,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 Value idxv = pop();
                 Value target = pop();
                 syncTop();  // __getitem__ may re-enter the VM
-                stack.push_back(vmGetIndex(target, idxv));
+                stack.push_back(vmGetIndex(target, idxv, true));
                 break;
             }
             case Op::SetIndex: {
@@ -2508,7 +2519,7 @@ Value runFrame(const VmFunction* fn, VmClosure* closure, Value* localsBase,
                 } else if (v.type == ValueType::Map) {
                     stack.push_back(Value::fromNumber(static_cast<double>(v.map()->size())));
                 } else if (v.type == ValueType::String) {
-                    stack.push_back(Value::fromNumber(static_cast<double>(v.str().size())));
+                    stack.push_back(Value::fromNumber(static_cast<double>(u8::length(v))));
                 } else if (v.type == ValueType::Instance) {
                     std::vector<Value> none;
                     syncTop();
@@ -3038,7 +3049,7 @@ int vmRun(VmProgram& program, Interpreter* interpreter) {
 namespace {
 
 constexpr uint32_t kCacheMagic = 0x4E534256; // "NSBV"
-constexpr uint32_t kCacheVersion = 11;  // 6: + MakeClass, BinLK, BinLL, GetField, SetField, CallMethodK, Throw, handlers, lines, MakeStruct, MakeEnum, MakeSuper
+constexpr uint32_t kCacheVersion = 12;  // 6: + MakeClass, BinLK, BinLL, GetField, SetField, CallMethodK, Throw, handlers, lines, MakeStruct, MakeEnum, MakeSuper
 
 void writeU32(std::ofstream& f, uint32_t v) { f.write(reinterpret_cast<const char*>(&v), sizeof(v)); }
 void writeI32(std::ofstream& f, int32_t v) { f.write(reinterpret_cast<const char*>(&v), sizeof(v)); }

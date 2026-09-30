@@ -10,6 +10,7 @@
 #include <unordered_set>
 
 #include "value_eq.hpp"
+#include "utf8str.hpp"
 
 namespace pylib {
 namespace {
@@ -82,6 +83,10 @@ std::vector<Value> elems(const Value& v, const char* who = "argumen") {
         std::vector<Value> out;
         for (const auto& kv : *v.map()) out.push_back(Value::fromString(kv.first));
         return out;
+    }
+    if (v.type == ValueType::Class) {  // list(Color): the members of an Enum
+        auto mem = v.klass()->classAttrs.find("_members_");
+        if (mem != v.klass()->classAttrs.end() && mem->second.type == ValueType::Array) return *mem->second.array();
     }
     if (v.type == ValueType::Instance && g_methodHook) {
         std::vector<Value> none;
@@ -282,7 +287,7 @@ std::string formatValue(const Value& v, const std::string& spec) {
         }
         body = sgn + body;
     }
-    int len = static_cast<int>(body.size());
+    int len = static_cast<int>(u8::charCount(body));
     if (width > len) {
         int pad = width - len;
         if (align == '<') body.append(static_cast<size_t>(pad), fill);
@@ -501,8 +506,8 @@ Value strMethod(const std::string& m, std::vector<Value>& a, const ValueMap* kw)
         if (i >= a.size() || a[i].type != ValueType::String) fail(std::string(who) + "(): argumen harus teks");
         return a[i].str();
     };
-    if (m == "upper") { std::string r = s; for (char& c : r) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c))); return Value::fromString(r); }
-    if (m == "lower" || m == "casefold") { std::string r = s; for (char& c : r) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return Value::fromString(r); }
+    if (m == "upper") return Value::fromString(u8::mapCase(s, true));
+    if (m == "lower" || m == "casefold") return Value::fromString(u8::mapCase(s, false));
     if (m == "swapcase") { std::string r = s; for (char& c : r) c = std::isupper(static_cast<unsigned char>(c)) ? static_cast<char>(std::tolower(c)) : static_cast<char>(std::toupper(static_cast<unsigned char>(c))); return Value::fromString(r); }
     if (m == "strip" || m == "lstrip" || m == "rstrip") {
         std::string chars = a.size() > 1 && a[1].type == ValueType::String ? a[1].str() : "";
@@ -543,7 +548,7 @@ Value strMethod(const std::string& m, std::vector<Value>& a, const ValueMap* kw)
             if (m == "index") fail("ValueError: substring not found");
             return Value::fromNumber(-1);
         }
-        return Value::fromNumber(static_cast<double>(p));
+        return Value::fromNumber(static_cast<double>(u8::charIndexOfByte(s, p)));  // character index, like Python
     }
     if (m == "count") {
         const std::string& sub = argStr(1, "count");
@@ -633,15 +638,17 @@ Value strMethod(const std::string& m, std::vector<Value>& a, const ValueMap* kw)
     if (m == "islower") { bool any = false; for (char c : s) { if (std::isupper(static_cast<unsigned char>(c))) return Value::fromBool(false); if (std::islower(static_cast<unsigned char>(c))) any = true; } return Value::fromBool(any); }
     if (m == "zfill") {
         size_t w = static_cast<size_t>(numArg(a[1], "zfill"));
-        if (s.size() >= w) return Value::fromString(s);
+        size_t cw = u8::charCount(s);
+        if (cw >= w) return Value::fromString(s);
         size_t signLen = (!s.empty() && (s[0] == '-' || s[0] == '+')) ? 1 : 0;
-        return Value::fromString(s.substr(0, signLen) + std::string(w - s.size(), '0') + s.substr(signLen));
+        return Value::fromString(s.substr(0, signLen) + std::string(w - cw, '0') + s.substr(signLen));
     }
     if (m == "center" || m == "ljust" || m == "rjust") {
         size_t w = static_cast<size_t>(numArg(a[1], m.c_str()));
         char fill = a.size() > 2 && a[2].type == ValueType::String && !a[2].str().empty() ? a[2].str()[0] : ' ';
-        if (s.size() >= w) return Value::fromString(s);
-        size_t pad = w - s.size();
+        size_t cw = u8::charCount(s);
+        if (cw >= w) return Value::fromString(s);
+        size_t pad = w - cw;
         if (m == "ljust") return Value::fromString(s + std::string(pad, fill));
         if (m == "rjust") return Value::fromString(std::string(pad, fill) + s);
         size_t left = pad / 2 + (pad % 2 && w % 2 ? 1 : 0);

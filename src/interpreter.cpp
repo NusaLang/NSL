@@ -1,5 +1,6 @@
 #include "interpreter.hpp"
 #include "pynum.hpp"
+#include "utf8str.hpp"
 #include "methods.hpp"
 #include "value_eq.hpp"
 
@@ -94,7 +95,7 @@ std::shared_ptr<Function> lookupMethod(const std::shared_ptr<ClassInfo>& start, 
 
 Interpreter* g_propInterpreter = nullptr;  // set by the constructor: property getters/setters run through it
 
-Value indexGet(const Value& target, const Value& idx) {
+Value indexGet(const Value& target, const Value& idx, bool strict = false) {
     if (target.type == ValueType::VmArray) {
         if (idx.type != ValueType::Number) throw RuntimeError(i18n::tr("Index larik harus angka", "Array index must be a number"));
         long long i = static_cast<long long>(idx.number);
@@ -128,6 +129,7 @@ Value indexGet(const Value& target, const Value& idx) {
                 GC::instance().noteStore(target, made);
                 return made;
             }
+            if (strict) throw RuntimeError("KeyError: " + (idx.type == ValueType::String ? "'" + key + "'" : key));
             return Value::null();
         }
         return it->second;
@@ -135,11 +137,12 @@ Value indexGet(const Value& target, const Value& idx) {
     if (target.type == ValueType::String) {
         if (idx.type != ValueType::Number) throw RuntimeError(i18n::tr("Index teks harus angka", "String index must be a number"));
         long long i = static_cast<long long>(idx.number);
-        if (i < 0) i += static_cast<long long>(target.str().size());
-        if (i < 0 || static_cast<size_t>(i) >= target.str().size()) {
+        long long n = static_cast<long long>(u8::length(target));
+        if (i < 0) i += n;
+        if (i < 0 || i >= n) {
             throw RuntimeError(i18n::tr("Index teks di luar batas: ", "String index out of bounds: ") + std::to_string(i));
         }
-        return Value::fromString(std::string(1, target.str()[static_cast<size_t>(i)]));
+        return Value::fromString(u8::slice(target, static_cast<size_t>(i), static_cast<size_t>(i) + 1));
     }
     if (target.type == ValueType::Instance) {
         if (idx.type != ValueType::String) {
@@ -304,7 +307,7 @@ bool isRegularFile(const std::string& path) {
 const std::vector<std::string>& builtinNames() {
     static const std::vector<std::string> names = {
         "cetak", "panjang", "tambah", "hapus_akhir", "potong", "gabung", "pisah",
-        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "iter", "next", "_dcv", "_callmeth", "_with_enter", "_with_exit", "getattr", "setattr", "hasattr", "delattr", "vars", "dir", "id", "hash", "issubclass", "__get", "_exc_match", "_exc_wrap", "_defaultdict", "_namedtuple", "_gennew", "_genresume", "_genclose", "_isvmgen", "pegang", "_peta", "_in", "_callkw", "_callkwm", "_close", "_go",
+        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "iter", "next", "_bytelen", "_enum_init", "_pkg", "_pkgsub", "_dcv", "_callmeth", "_with_enter", "_with_exit", "getattr", "setattr", "hasattr", "delattr", "vars", "dir", "id", "hash", "issubclass", "__get", "_exc_match", "_exc_wrap", "_defaultdict", "_namedtuple", "_gennew", "_genresume", "_genclose", "_isvmgen", "pegang", "_peta", "_in", "_callkw", "_callkwm", "_close", "_go",
         "base64_encode", "base64_decode",
         "baca_file", "tulis_file", "file_ada",
         "tcp_konek", "tcp_kirim", "tcp_terima", "tcp_tutup",
@@ -920,7 +923,7 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
             Value target = eval(node->target.get(), env);
             ValueRootGuard targetGuard(target);
             Value idx = eval(node->index.get(), env);
-            return indexGet(target, idx);
+            return indexGet(target, idx, node->strict);
         }
         case ExprKind::IndexAssign: {
             auto* node = static_cast<const IndexAssignExpr*>(expr);
@@ -962,6 +965,15 @@ Value Interpreter::callValue(const Value& callee, std::vector<Value>& args, Span
         }
     }
     if (callee.type == ValueType::Class) {
+        if (args.size() == 1) {  // Color(1): an Enum looks its member up by value
+            auto mem = callee.klass()->classAttrs.find("_members_");
+            if (mem != callee.klass()->classAttrs.end() && mem->second.type == ValueType::Array) {
+                for (const Value& m : *mem->second.array()) {
+                    if (m.type == ValueType::Instance && valuesDeepEqual((*m.instance()->fields)["value"], args[0])) return m;
+                }
+                throw RuntimeError("ValueError: " + args[0].stringify() + " is not a valid " + callee.klass()->name);
+            }
+        }
         auto state = std::make_shared<InstanceState>();
         state->classInfo = callee.klassShared();
         state->fields = std::make_shared<ValueMap>();
@@ -1218,10 +1230,14 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
     if (name == "panjang") {
         need(1);
         const Value& v = args[0];
-        if (v.type == ValueType::String) return Value::fromNumber(static_cast<double>(v.str().size()));
+        if (v.type == ValueType::String) return Value::fromNumber(static_cast<double>(u8::length(v)));
         if (v.type == ValueType::Array) return Value::fromNumber(static_cast<double>(v.array()->size()));
         if (v.type == ValueType::VmArray) return Value::fromNumber(static_cast<double>(v.vmArray()->numeric ? v.vmArray()->nums.size() : v.vmArray()->boxed->size()));
         if (v.type == ValueType::Map) return Value::fromNumber(static_cast<double>(v.map()->size()));
+        if (v.type == ValueType::Class) {
+            auto mem = v.klass()->classAttrs.find("_members_");
+            if (mem != v.klass()->classAttrs.end() && mem->second.type == ValueType::Array) return Value::fromNumber(static_cast<double>(mem->second.array()->size()));
+        }
         if (v.type == ValueType::Instance) {
             if (vmIsActive()) { std::vector<Value> none; Value o = v; return vmCallMethod(o, "__len__", none, this); }
             std::shared_ptr<ClassInfo> owner;
@@ -1297,11 +1313,10 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         long long start = static_cast<long long>(args[1].number);
         long long end = static_cast<long long>(args[2].number);
         if (args[0].type == ValueType::String) {
-            long long len = static_cast<long long>(args[0].str().size());
+            long long len = static_cast<long long>(u8::length(args[0]));
             start = std::max<long long>(0, std::min(start, len));
             end = std::max<long long>(start, std::min(end, len));
-            return Value::fromString(args[0].str().substr(static_cast<size_t>(start),
-                                                          static_cast<size_t>(end - start)));
+            return Value::fromString(u8::slice(args[0], static_cast<size_t>(start), static_cast<size_t>(end)));
         }
         if (args[0].type == ValueType::Array) {
             long long len = static_cast<long long>(args[0].array()->size());
@@ -1386,13 +1401,7 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
     if (name == "huruf_besar" || name == "huruf_kecil") {
         need(1);
         expectType(args[0], ValueType::String);
-        std::string out = args[0].str();
-        bool upper = name == "huruf_besar";
-        for (char& c : out) {
-            c = static_cast<char>(upper ? std::toupper(static_cast<unsigned char>(c))
-                                         : std::tolower(static_cast<unsigned char>(c)));
-        }
-        return Value::fromString(out);
+        return Value::fromString(u8::mapCase(args[0].str(), name == "huruf_besar"));
     }
 
     if (name == "ke_angka") {
@@ -1702,6 +1711,68 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         if (found) return got;
         if (args.size() == 3) return args[2];
         throw RuntimeError("AttributeError: '" + std::string(o.typeName()) + "' object has no attribute '" + args[1].str() + "'");
+    }
+    if (name == "_enum_init") {  // members of `class C(Enum)` become objects with .name / .value
+        need(1);
+        if (args[0].type != ValueType::Class) return Value::null();
+        ClassInfo* ci = args[0].klass();
+        auto members = std::make_shared<std::vector<Value>>();
+        double last = 0;
+        std::vector<std::string> names;
+        for (const auto& kv : ci->classAttrs) names.push_back(kv.first);
+        for (const std::string& n : names) {
+            if (n.empty() || n[0] == '_') continue;
+            Value v = ci->classAttrs[n];
+            if (v.type == ValueType::Fn || v.type == ValueType::VmFn || v.type == ValueType::Builtin || v.type == ValueType::Class ||
+                v.type == ValueType::Native) continue;
+            if (v.type == ValueType::Map && v.map()->count("__auto__")) v = Value::fromNumber(last + 1);
+            if (v.type == ValueType::Number) last = v.number;
+            auto st = std::make_shared<InstanceState>();
+            st->classInfo = args[0].klassShared();
+            st->fields = std::make_shared<ValueMap>();
+            GC::instance().trackInstance(st->fields);
+            (*st->fields)["name"] = Value::fromString(n);
+            (*st->fields)["value"] = v;
+            Value inst = Value::fromInstance(st);
+            ci->classAttrs[n] = inst;
+            members->push_back(inst);
+        }
+        ci->classAttrs["_members_"] = Value::fromArray(members);
+        for (const Value& m : *members) GC::instance().noteStore(args[0], m);
+        return Value::null();
+    }
+    if (name == "_pkg") {  // `import a.b` binds a: the module if it exists, else an empty namespace
+        need(1);
+        try {
+            return doImport(args[0].str());
+        } catch (const RuntimeError&) {
+            return Value::newMap();
+        }
+    }
+    if (name == "_pkgsub") {  // (root, "a/b/c"): attach module a/b/c at root.b.c when it can be imported
+        need(2);
+        Value holder = args[0];
+        const std::string& full = args[1].str();
+        std::vector<std::string> segs;
+        std::string cur;
+        for (char c : full + "/") { if (c == '/') { segs.push_back(cur); cur.clear(); } else cur += c; }
+        for (size_t i = 1; i + 1 < segs.size() && holder.type == ValueType::Map; i++) {
+            auto it = holder.map()->find(segs[i]);
+            if (it == holder.map()->end()) return Value::null();
+            holder = it->second;
+        }
+        if (holder.type != ValueType::Map || segs.size() < 2) return Value::null();
+        try {
+            Value mod = doImport(full);
+            if (!holder.map()->count(segs.back())) { (*holder.map())[segs.back()] = mod; GC::instance().noteStore(holder, mod); }
+        } catch (const RuntimeError&) {
+        }
+        return Value::null();
+    }
+    if (name == "_bytelen") {  // size in UTF-8 bytes (len() counts characters)
+        need(1);
+        expectType(args[0], ValueType::String);
+        return Value::fromNumber(static_cast<double>(args[0].str().size()));
     }
     if (name == "_dcv") {  // dataclass field value: field(default_factory=f) markers are expanded here
         need(1);
@@ -2462,7 +2533,7 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         const Value& v = args[0];
         long long len;
         bool isStr = v.type == ValueType::String;
-        if (isStr) len = static_cast<long long>(v.str().size());
+        if (isStr) len = static_cast<long long>(u8::length(v));
         else if (v.type == ValueType::Array) len = static_cast<long long>(v.array()->size());
         else if (v.type == ValueType::VmArray) len = static_cast<long long>(v.vmArray()->numeric ? v.vmArray()->nums.size() : v.vmArray()->boxed->size());
         else throw RuntimeError(std::string(i18n::tr("Tipe '", "Type '")) + v.typeName() + i18n::tr("' nggak bisa di-slice", "' can't be sliced"));
@@ -2489,8 +2560,7 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         else { lo = bound(args[1], len - 1, -1, len - 1); hi = bound(args[2], -1, -1, len - 1); }
         if (isStr) {
             std::string out;
-            const std::string& s = v.str();
-            for (long long k = lo; step > 0 ? k < hi : k > hi; k += step) out += s[static_cast<size_t>(k)];
+            for (long long k = lo; step > 0 ? k < hi : k > hi; k += step) out += u8::slice(v, static_cast<size_t>(k), static_cast<size_t>(k) + 1);
             return Value::fromString(out);
         }
         std::vector<Value> src = arrayElements(v);
@@ -2505,6 +2575,10 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         need(1);
         const Value& v = args[0];
         if (v.type == ValueType::Array || v.type == ValueType::VmArray || v.type == ValueType::String) return v;
+        if (v.type == ValueType::Class) {  // for c in Color
+            auto mem = v.klass()->classAttrs.find("_members_");
+            if (mem != v.klass()->classAttrs.end()) return mem->second;
+        }
         if (v.type == ValueType::Instance) {
             // Lazy iteration: a generator (or anything with __len__/__getitem__ semantics) is walked in place.
             std::vector<Value> none;

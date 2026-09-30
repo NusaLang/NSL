@@ -3,7 +3,7 @@ _safe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-~"
 def quote(s, safe="/"):
     s = str(s)
     out = ""
-    for i in range(len(s)):
+    for i in range(_bytelen(s)):
         b = byte_di(s, i)
         ch = chr(b) if b < 128 else ""
         if b < 128 and (ch in _safe or ch in safe):
@@ -28,7 +28,7 @@ def unquote(s):
                 continue
             except Exception:
                 pass
-        for j in range(len(c)):
+        for j in range(_bytelen(c)):
             raw.append(byte_di(c, j))
         i += 1
     out = ""

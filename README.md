@@ -110,6 +110,7 @@ def luas(p: angka, l: angka) -> angka:
 - **Generator:** `yield`, `yield from`, `x = yield v`, `gen.send/throw_/close`, ekspresi generator `(x * x for x in xs)`, `next(g, default)`, `iter(x)`; `for`, `list()`, `sum()`, `sorted()`, ... membacanya secara lazy. Di VM generator = frame yang disimpan/dilanjutkan (tanpa thread, ~1,7 µs per `yield`).
 - **Eksepsi ala Python:** hierarki `BaseException > Exception > ValueError/TypeError/KeyError/IndexError/ZeroDivisionError/OSError/...`; `raise ValueError("x")`, `raise Kelas`, `raise` (lempar ulang), `except (A, B) as e:` berjenjang, `except:`, `else:`, `finally:`, kelas sendiri `class MyErr(Exception)`. Error bawaan (`1/0`, indeks di luar batas, ...) bisa ditangkap dengan kelasnya. `raise "teks"` gaya lama tetap jalan.
 - **Protokol objek:** `__str__`, `__repr__`, `__eq__`, `__lt__/__le__/__gt__/__ge__`, `__add__/__sub__/__mul__/__truediv__/__mod__`, `__len__`, `__bool__`, `__getitem__`, `__contains__`, `__iter__`/`__next__`, `__call__`, `__enter__`/`__exit__` (`with` penuh, termasuk penelan error), `getattr/setattr/hasattr/vars/dir/type(x).__name__/isinstance/issubclass`.
+- **Lain-lain:** default mutabel dibagi seperti Python (`def f(x, acc=[])`), alias di badan kelas (`baca = tulis`), `import a.b` mengikat `a`, `Enum` dengan `.name/.value/Color(1)/Color['RED']/for c in Color`, `KeyError`, `async def` / `await` / `asyncio.run/gather/create_task/sleep/wait_for`, `fractions.Fraction`.
 - **Anotasi tipe Python:** `x: List[int] = []`, `def f(a: Dict[str, int]) -> Optional[str]:` diterima dan diabaikan (tipe polos seperti `int`/`str` tetap diperiksa).
 - **`try/finally`** tanpa `except`, `with` beberapa manajer, `yield` di dalam `try`.
 - **Impor:** `import math, json`, `import a.b`, `from modul import nama as alias`.
@@ -364,8 +365,8 @@ make tls-test                     # vektor kripto TLS (dari implementasi indepen
 
 - `angka` selalu `double` (bilangan bulat tepat sampai 2^53); tuple = larik; `set` = larik tanpa duplikat.
 - Satu GIL: goroutine tidak paralel untuk CPU murni.
-- Beda dari Python: `d[k]` pada kunci yang tidak ada mengembalikan `None` (bukan `KeyError`; pakai `d.get`); `Enum` tidak punya `.name/.value`; `import a.b` mengikat nama `b` (bukan `a`); alias di badan kelas (`baca = tulis`) belum jalan; `yield from` hanya sebagai pernyataan; generator yang tidak dihabiskan tidak menjalankan blok `finally`-nya saat dibuang; `asyncio`, `decimal`, `fractions`, `struct` belum ada.
-- Teks berbasis byte UTF-8: `len("é")` = 2 dan indeks/`upper()` pada huruf non-ASCII tidak seperti Python; nilai default mutabel (`b=[]`) dibuat baru tiap panggilan.
+- Beda dari Python: `d[k]` pada kunci yang tidak ada hanya melempar `KeyError` di file bergaya Python (di gaya `{ }` tetap `None`; `d.k` titik selalu `None`); `Enum` tidak mendukung `Flag` bitwise (`|`) dan alias nilai; `yield from` hanya sebagai pernyataan; generator yang dibuang tidak menjalankan `finally`-nya; `asyncio` memakai goroutine (tugas yang di-`wait_for` timeout tetap selesai di latar); `decimal`, `struct`, `async for` pada async generator belum ada.
+- Teks disimpan sebagai UTF-8; `len`, indeks, slice, `find`, `upper/lower` (Latin, Yunani, Sirilik) menghitung karakter seperti Python. `title()`/`isalpha()` dan sejenisnya hanya paham ASCII.
 - Pembagian dengan nol melempar `ZeroDivisionError` di VM dan interpreter, tetapi tidak di loop numerik hasil JIT.
 - Modul Go: lihat batasannya di bagian "Modul Go".
 

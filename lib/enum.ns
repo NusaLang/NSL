@@ -1,8 +1,16 @@
-# Enum members are plain class attributes here (Color.RED is its value).
+# class Color(Enum): RED = 1  -- members are objects with .name and .value (made by the parser's _enum_init)
 class Enum:
-    pass
+    def __str__(self):
+        return type(self).__name__ + "." + self.name
+    def __repr__(self):
+        return "<" + type(self).__name__ + "." + self.name + ": " + repr(self.value) + ">"
+    def __hash__(self):
+        return hash(self.name)
 
 class IntEnum(Enum):
+    pass
+
+class StrEnum(Enum):
     pass
 
 class Flag(Enum):
@@ -11,11 +19,8 @@ class Flag(Enum):
 class IntFlag(Flag):
     pass
 
-_auto_counter = [0]
-
 def auto():
-    _auto_counter[0] += 1
-    return _auto_counter[0]
+    return {"__auto__": True}
 
 def unique(cls):
     return cls

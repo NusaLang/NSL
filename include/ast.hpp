@@ -103,6 +103,7 @@ struct ArrayLitExpr : Expr {
 struct IndexExpr : Expr {
     ExprPtr target;
     ExprPtr index;
+    bool strict = false;  // written as x[k] (not x.k): a missing dict key is a KeyError
     IndexExpr(ExprPtr t, ExprPtr i)
         : Expr(ExprKind::Index), target(std::move(t)), index(std::move(i)) {}
 };

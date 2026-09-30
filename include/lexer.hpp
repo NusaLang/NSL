@@ -42,6 +42,10 @@ public:
     int column;
 };
 
+// Set by Lexer::tokenize(): was the file just tokenized Python-style (indent blocks)? The parser built next
+// reads it: only Python-style files get KeyError on x[missing_key] (brace-style keeps null).
+inline bool& lexerLastWasPython() { static bool v = false; return v; }
+
 class Lexer {
 public:
     explicit Lexer(std::string source);

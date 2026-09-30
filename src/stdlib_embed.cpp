@@ -276,6 +276,241 @@ class ArgumentDefaultsHelpFormatter(HelpFormatter):
     pass
 )NSLIB"
         },
+        {"asyncio",
+         R"NSLIB(# async def f(): ... becomes  def f(): return _mkco(lambda: ...)  -- a coroutine, started by await / run / create_task.
+# Tasks run on goroutines, so gather() and create_task() really overlap while they sleep or wait.
+import time
+
+class CancelledError(Exception):
+    pass
+
+class TimeoutError(Exception):
+    pass
+
+class Coroutine:
+    def __init__(self, fn):
+        self._fn = fn
+        self._used = False
+    def _run(self):
+        if self._used:
+            raise RuntimeError("cannot reuse already awaited coroutine")
+        self._used = True
+        return self._fn()
+    def close(self):
+        self._used = True
+
+class Task:
+    def __init__(self, coro):
+        self._coro = coro
+        self._done = kanal_baru(1)
+        self._finished = False
+        self._result = None
+        self._error = None
+        self._cancelled = False
+    def _main(self):
+        try:
+            self._result = self._coro._run()
+        except Exception as e:
+            self._error = e
+        self._finished = True
+        kanal_tutup(self._done)
+    def _start(self):
+        me = self
+        jalan(lambda: me._main())
+    def done(self):
+        return self._finished
+    def cancelled(self):
+        return self._cancelled
+    def cancel(self):
+        self._cancelled = True
+        return not self._finished
+    def result(self):
+        if not self._finished:
+            kanal_terima(self._done)
+        if self._error is not None:
+            raise self._error
+        return self._result
+    def exception(self):
+        if not self._finished:
+            kanal_terima(self._done)
+        return self._error
+    def add_done_callback(self, fn):
+        fn(self)
+
+def _mkco(fn):
+    return Coroutine(fn)
+
+def _await(x):
+    if isinstance(x, Task):
+        return x.result()
+    if isinstance(x, Coroutine):
+        return x._run()
+    if isinstance(x, Future):
+        return x.result()
+    return x
+
+class Future:
+    def __init__(self):
+        self._value = None
+        self._set = False
+        self._error = None
+    def set_result(self, v):
+        self._value = v
+        self._set = True
+    def set_exception(self, e):
+        self._error = e
+        self._set = True
+    def done(self):
+        return self._set
+    def result(self):
+        while not self._set:
+            tidur(1)
+        if self._error is not None:
+            raise self._error
+        return self._value
+
+def run(coro, debug=None):
+    return _await(coro)
+
+def create_task(coro, name=None):
+    t = Task(coro)
+    t._start()
+    return t
+
+ensure_future = create_task
+
+def sleep(delay, result=None):
+    tidur(delay * 1000)
+    return result
+
+def gather(*aws, return_exceptions=False):
+    tasks = []
+    for a in aws:
+        if isinstance(a, Coroutine):
+            tasks.append(create_task(a))
+        else:
+            tasks.append(a)
+    out = []
+    for t in tasks:
+        if isinstance(t, Task):
+            if return_exceptions:
+                e = t.exception()
+                out.append(e if e is not None else t.result())
+            else:
+                out.append(t.result())
+        else:
+            out.append(t)
+    return out
+
+def wait_for(aw, timeout=None):
+    if timeout is None:
+        return _await(aw)
+    t = aw if isinstance(aw, Task) else create_task(aw)
+    waited = 0.0
+    while not t.done():
+        tidur(1)
+        waited += 0.001
+        if waited >= timeout:
+            raise TimeoutError("timed out")
+    return t.result()
+
+def wait(aws, timeout=None):
+    done = [a.result() and a for a in aws]
+    return (set(aws), set())
+
+class Lock:
+    def __init__(self):
+        self._held = False
+    def locked(self):
+        return self._held
+    def acquire(self):
+        while self._held:
+            tidur(1)
+        self._held = True
+        return True
+    def release(self):
+        self._held = False
+    def __enter__(self):
+        self.acquire()
+        return self
+    def __exit__(self, a, b, c):
+        self.release()
+        return False
+
+class Event:
+    def __init__(self):
+        self._flag = False
+    def set(self):
+        self._flag = True
+    def clear(self):
+        self._flag = False
+    def is_set(self):
+        return self._flag
+    def wait(self):
+        while not self._flag:
+            tidur(1)
+        return True
+
+class Semaphore:
+    def __init__(self, value=1):
+        self._value = value
+    def acquire(self):
+        while self._value <= 0:
+            tidur(1)
+        self._value -= 1
+        return True
+    def release(self):
+        self._value += 1
+    def __enter__(self):
+        self.acquire()
+        return self
+    def __exit__(self, a, b, c):
+        self.release()
+        return False
+
+class Queue:
+    def __init__(self, maxsize=0):
+        self._items = []
+        self.maxsize = maxsize
+    def put_nowait(self, item):
+        self._items.append(item)
+    def put(self, item):
+        while self.maxsize > 0 and len(self._items) >= self.maxsize:
+            tidur(1)
+        self._items.append(item)
+    def get(self):
+        while len(self._items) == 0:
+            tidur(1)
+        return self._items.pop(0)
+    def get_nowait(self):
+        return self._items.pop(0)
+    def qsize(self):
+        return len(self._items)
+    def empty(self):
+        return len(self._items) == 0
+
+class _Loop:
+    def run_until_complete(self, coro):
+        return _await(coro)
+    def close(self):
+        pass
+    def create_task(self, coro):
+        return create_task(coro)
+    def time(self):
+        return time.time()
+
+_loop = _Loop()
+
+def get_event_loop():
+    return _loop
+
+new_event_loop = get_event_loop
+get_running_loop = get_event_loop
+
+def set_event_loop(loop):
+    pass
+)NSLIB"
+        },
         {"bisect",
          R"NSLIB(def bisect_left(a, x, lo=0, hi=None):
     if hi is None:
@@ -635,11 +870,19 @@ def is_dataclass(obj):
 )NSLIB"
         },
         {"enum",
-         R"NSLIB(# Enum members are plain class attributes here (Color.RED is its value).
+         R"NSLIB(# class Color(Enum): RED = 1  -- members are objects with .name and .value (made by the parser's _enum_init)
 class Enum:
-    pass
+    def __str__(self):
+        return type(self).__name__ + "." + self.name
+    def __repr__(self):
+        return "<" + type(self).__name__ + "." + self.name + ": " + repr(self.value) + ">"
+    def __hash__(self):
+        return hash(self.name)
 
 class IntEnum(Enum):
+    pass
+
+class StrEnum(Enum):
     pass
 
 class Flag(Enum):
@@ -648,11 +891,8 @@ class Flag(Enum):
 class IntFlag(Flag):
     pass
 
-_auto_counter = [0]
-
 def auto():
-    _auto_counter[0] += 1
-    return _auto_counter[0]
+    return {"__auto__": True}
 
 def unique(cls):
     return cls
@@ -703,6 +943,92 @@ fnmatchcase = fnmatch
 def filter(names, pat):
     rx = translate(pat)
     return [n for n in names if re.match(rx, n) is not None]
+)NSLIB"
+        },
+        {"fractions",
+         R"NSLIB(import math
+
+class Fraction:
+    def __init__(self, numerator=0, denominator=1):
+        if isinstance(numerator, str):
+            if "/" in numerator:
+                a, _, b = numerator.partition("/")
+                numerator = int(a)
+                denominator = int(b)
+            elif "." in numerator:
+                whole, _, frac = numerator.partition(".")
+                denominator = 10 ** len(frac)
+                numerator = int(whole + frac)
+            else:
+                numerator = int(numerator)
+        elif isinstance(numerator, float) and numerator != int(numerator):
+            s = repr(numerator)
+            whole, _, frac = s.partition(".")
+            denominator = 10 ** len(frac)
+            numerator = int(whole + frac)
+        if denominator == 0:
+            raise ZeroDivisionError("Fraction(" + str(numerator) + ", 0)")
+        if denominator < 0:
+            numerator = -numerator
+            denominator = -denominator
+        g = math.gcd(abs(int(numerator)), int(denominator))
+        if g == 0:
+            g = 1
+        self.numerator = int(numerator) // g
+        self.denominator = int(denominator) // g
+    def _f(self, o):
+        return o if isinstance(o, Fraction) else Fraction(o)
+    def __add__(self, o):
+        o = self._f(o)
+        return Fraction(self.numerator * o.denominator + o.numerator * self.denominator, self.denominator * o.denominator)
+    def __radd__(self, o):
+        return self.__add__(o)
+    def __sub__(self, o):
+        o = self._f(o)
+        return Fraction(self.numerator * o.denominator - o.numerator * self.denominator, self.denominator * o.denominator)
+    def __rsub__(self, o):
+        return self._f(o).__sub__(self)
+    def __mul__(self, o):
+        o = self._f(o)
+        return Fraction(self.numerator * o.numerator, self.denominator * o.denominator)
+    def __rmul__(self, o):
+        return self.__mul__(o)
+    def __truediv__(self, o):
+        o = self._f(o)
+        return Fraction(self.numerator * o.denominator, self.denominator * o.numerator)
+    def __rtruediv__(self, o):
+        return self._f(o).__truediv__(self)
+    def __neg__(self):
+        return Fraction(-self.numerator, self.denominator)
+    def __eq__(self, o):
+        if isinstance(o, (int, float, Fraction)):
+            o = self._f(o)
+            return self.numerator == o.numerator and self.denominator == o.denominator
+        return False
+    def __lt__(self, o):
+        o = self._f(o)
+        return self.numerator * o.denominator < o.numerator * self.denominator
+    def __le__(self, o):
+        o = self._f(o)
+        return self.numerator * o.denominator <= o.numerator * self.denominator
+    def __gt__(self, o):
+        o = self._f(o)
+        return self.numerator * o.denominator > o.numerator * self.denominator
+    def __ge__(self, o):
+        o = self._f(o)
+        return self.numerator * o.denominator >= o.numerator * self.denominator
+    def __hash__(self):
+        return hash(self.numerator / self.denominator)
+    def __float__(self):
+        return self.numerator / self.denominator
+    def __str__(self):
+        if self.denominator == 1:
+            return str(self.numerator)
+        return str(self.numerator) + "/" + str(self.denominator)
+    def __repr__(self):
+        return "Fraction(" + str(self.numerator) + ", " + str(self.denominator) + ")"
+    def limit_denominator(self, max_denominator=1000000):
+        return self
 )NSLIB"
         },
         {"functools",
@@ -2358,7 +2684,7 @@ def main(classes=None, **kw):
 def quote(s, safe="/"):
     s = str(s)
     out = ""
-    for i in range(len(s)):
+    for i in range(_bytelen(s)):
         b = byte_di(s, i)
         ch = chr(b) if b < 128 else ""
         if b < 128 and (ch in _safe or ch in safe):
@@ -2383,7 +2709,7 @@ def unquote(s):
                 continue
             except Exception:
                 pass
-        for j in range(len(c)):
+        for j in range(_bytelen(c)):
             raw.append(byte_di(c, j))
         i += 1
     out = ""

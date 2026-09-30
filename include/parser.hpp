@@ -69,6 +69,11 @@ private:
     std::vector<std::string> usedExc_;            // exception class names this file mentions
     std::vector<std::string> declaredClasses_;    // classes this file defines itself
     StmtPtr classPre_;
+    bool nextFnAsync_ = false;
+    bool usesAsync_ = false;
+    bool strictKeys_ = false;
+    std::vector<StmtPtr> preStmts_;
+    ExprPtr hoistDefault(ExprPtr e);
     bool leadingStar_ = false;
     StmtPtr loopElse(StmtPtr loop);
     bool loopVarDeclared_ = false;

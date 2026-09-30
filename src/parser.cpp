@@ -21,7 +21,7 @@ ParseError::ParseError(const std::string& msg, const Token& token)
     : std::runtime_error(msg + " (line " + std::to_string(token.span.line) +
                           ", col " + std::to_string(token.span.column) + ")") {}
 
-Parser::Parser(std::vector<Token> tokens) : tokens_(std::move(tokens)) {}
+Parser::Parser(std::vector<Token> tokens) : tokens_(std::move(tokens)), strictKeys_(lexerLastWasPython()) {}
 
 const Token& Parser::peek() const { return tokens_[pos_]; }
 const Token& Parser::peekAt(size_t offset) const {
@@ -100,6 +100,8 @@ StmtPtr Parser::statement() {
     // statement kind gets a location for free -- see Stmt::span.
     Span start = peek().span;
     StmtPtr result;
+    std::vector<StmtPtr> outerPre = std::move(preStmts_);  // hoisted default values belong to THIS statement
+    preStmts_.clear();
     if (isWord(peek(), "pass") && peekAt(1).type == TokenType::Semi) {
         advance();
         advance();
@@ -155,6 +157,13 @@ StmtPtr Parser::statement() {
     else if (check(TokenType::LBrace)) result = block();
     else result = exprStmt();
     result->span = start;
+    if (!preStmts_.empty()) {  // `let __dflt = <expr>` for each mutable default, evaluated once, before the def
+        pendingStmts_.insert(pendingStmts_.begin(), std::move(result));
+        for (size_t i = preStmts_.size(); i-- > 1;) pendingStmts_.insert(pendingStmts_.begin(), std::move(preStmts_[i]));
+        result = std::move(preStmts_[0]);
+        result->span = start;
+    }
+    preStmts_ = std::move(outerPre);
     return result;
 }
 
@@ -250,8 +259,34 @@ StmtPtr Parser::importStmt() {
         path = readModulePath(*this, [&]() -> const Token& { return peek(); }, [&]() -> const Token& { return advance(); });
         name = path.substr(path.find_last_of('/') == std::string::npos ? 0 : path.find_last_of('/') + 1);
     }
-    if (matchWord("as", "sbg")) name = expect(TokenType::Ident, i18n::tr("Nama alias diharapkan setelah 'as'", "Expected alias after 'as'")).text;
+    bool aliased = false;
+    if (matchWord("as", "sbg")) {
+        name = expect(TokenType::Ident, i18n::tr("Nama alias diharapkan setelah 'as'", "Expected alias after 'as'")).text;
+        aliased = true;
+    }
     if (!check(TokenType::Comma)) expectEnd( i18n::tr("';' diharapkan setelah 'import'", "Expected ';' after import"));
+    size_t firstSlash = path.find('/');
+    if (!aliased && firstSlash != std::string::npos && !check(TokenType::String)) {
+        // `import a.b.c` binds `a` (Python): a = _pkg("a"), then a.b / a.b.c are attached when importable
+        std::string top = path.substr(0, firstSlash);
+        std::vector<ExprPtr> pa;
+        pa.push_back(LiteralExpr::makeString(top));
+        StmtPtr first = mkLet(top, mkCall("_pkg", std::move(pa), sp), sp);
+        size_t pos = firstSlash;
+        while (pos != std::string::npos) {
+            size_t next = path.find('/', pos + 1);
+            std::string sub = path.substr(0, next);
+            // a.b = <module a/b> when importable (a.b.c walks through the map stored at a.b)
+            std::vector<ExprPtr> sa;
+            sa.push_back(mkIdent(top, sp));
+            sa.push_back(LiteralExpr::makeString(sub));
+            StmtPtr st = std::make_unique<ExprStmtNode>(mkCall("_pkgsub", std::move(sa), sp));
+            st->span = sp;
+            pendingStmts_.push_back(std::move(st));
+            pos = next;
+        }
+        return first;
+    }
     std::vector<ExprPtr> args;
     args.push_back(LiteralExpr::makeString(path));
     return mkLet(name, mkCall("impor", std::move(args), sp), sp);
@@ -334,11 +369,27 @@ std::string Parser::typeAnnotation() {
 }
 
 StmtPtr Parser::fnDecl() {
+    nextFnAsync_ = pos_ > 0 && tokens_[pos_ - 1].text == "async";
     std::string name = expect(TokenType::Ident, i18n::tr("Nama fungsi diharapkan", "Expected function name")).text;
     return fnDeclBody(std::move(name));
 }
 
+// Python evaluates a default once, when the def runs: `def f(x, acc=[])` shares one list. Literals stay inline;
+// anything else is computed into a hidden variable just before the statement.
+ExprPtr Parser::hoistDefault(ExprPtr e) {
+    if (e->kind == ExprKind::Literal || e->kind == ExprKind::Identifier) return e;
+    if (e->kind == ExprKind::Unary && static_cast<UnaryExpr*>(e.get())->operand->kind == ExprKind::Literal) return e;
+    if (e->kind == ExprKind::Index && static_cast<IndexExpr*>(e.get())->target->kind == ExprKind::Identifier &&
+        static_cast<IndexExpr*>(e.get())->index->kind == ExprKind::Literal) return e;  // Name.attr (dataclass defaults)
+    Span sp = e->span;
+    std::string name = "__dflt" + std::to_string(hiddenCounter_++);
+    preStmts_.push_back(mkLet(name, std::move(e), sp));
+    return mkIdent(name, sp);
+}
+
 std::unique_ptr<FnDeclStmt> Parser::fnDeclBody(std::string name) {
+    bool isAsync = nextFnAsync_;
+    nextFnAsync_ = false;
     expect(TokenType::LParen, i18n::tr("'(' diharapkan setelah nama fungsi", "Expected '(' after function name"));
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
@@ -403,7 +454,7 @@ std::unique_ptr<FnDeclStmt> Parser::fnDeclBody(std::string name) {
         if (!defaults[i]) continue;  // the *args / **kwargs slots
         Span sp = defaults[i]->span;
         ExprPtr cond = mkBin("==", mkIdent(params[i], sp), LiteralExpr::makeNull(), sp);
-        ExprPtr assign = std::make_unique<AssignExpr>(params[i], std::move(defaults[i]));
+        ExprPtr assign = std::make_unique<AssignExpr>(params[i], hoistDefault(std::move(defaults[i])));
         assign->span = sp;
         std::vector<StmtPtr> thenStmts;
         StmtPtr st = std::make_unique<ExprStmtNode>(std::move(assign));
@@ -412,6 +463,22 @@ std::unique_ptr<FnDeclStmt> Parser::fnDeclBody(std::string name) {
         StmtPtr ifs = std::make_unique<IfStmt>(std::move(cond), std::make_unique<BlockStmt>(std::move(thenStmts)), nullptr);
         ifs->span = sp;
         body->statements.insert(body->statements.begin(), std::move(ifs));
+    }
+    if (isAsync && !isGenerator) {
+        // async def f(..): body -> def f(..): return _mkco(fn(): body)   (a coroutine object, run by await / asyncio)
+        usesAsync_ = true;
+        Span sp = body->span;
+        auto inner = std::make_unique<FnDeclStmt>("", std::vector<std::string>{}, std::move(body));
+        ExprPtr fe = std::make_unique<FnExprNode>(std::move(inner));
+        fe->span = sp;
+        std::vector<ExprPtr> ga;
+        ga.push_back(std::move(fe));
+        StmtPtr ret = std::make_unique<ReturnStmt>(mkCall("_mkco", std::move(ga), sp));
+        ret->span = sp;
+        std::vector<StmtPtr> outerBody;
+        outerBody.push_back(std::move(ret));
+        body = std::make_unique<BlockStmt>(std::move(outerBody));
+        body->span = sp;
     }
     if (isGenerator) {
         // def f(..): ..yield.. -> def f(..): return _mkgen(fn(__y): ..)   (the body runs on demand)
@@ -446,18 +513,20 @@ std::unique_ptr<FnDeclStmt> Parser::fnDeclBody(std::string name) {
 StmtPtr Parser::classDecl() {
     std::string name = expect(TokenType::Ident, i18n::tr("Nama kelas diharapkan", "Expected class name")).text;
     declaredClasses_.push_back(name);
-    std::string parentName;
+    std::string parentName, parentBase;
     if (match(TokenType::Extends)) {
         parentName = expect(TokenType::Ident, i18n::tr("Nama kelas induk diharapkan", "Expected parent class name")).text;
         noteName(parentName);
     } else if (match(TokenType::LParen)) {  // Python: class A(B):
         if (!check(TokenType::RParen)) {
             parentName = expect(TokenType::Ident, i18n::tr("Nama kelas induk diharapkan", "Expected parent class name")).text;
+            parentBase = parentName;
             if (check(TokenType::Dot)) {  // unittest.TestCase: bind the module attribute to a hidden name first
                 Span psp = peek().span;
                 ExprPtr chain = mkIdent(parentName, psp);
                 while (match(TokenType::Dot)) {
                     std::string field = expect(TokenType::Ident, i18n::tr("Nama kelas induk diharapkan", "Expected parent class name")).text;
+                    parentBase = field;
                     chain = std::make_unique<IndexExpr>(std::move(chain), LiteralExpr::makeString(field));
                     chain->span = psp;
                 }
@@ -482,6 +551,7 @@ StmtPtr Parser::classDecl() {
     std::vector<std::unique_ptr<FnDeclStmt>> methods;
     std::vector<std::pair<std::string, ExprPtr>> classAttrs;
     std::vector<std::pair<std::string, bool>> annotated;
+    std::vector<std::pair<std::string, std::string>> aliases;  // (new name, existing method)
     while (!check(TokenType::RBrace) && !atEnd()) {
         if (isWord(peek(), "pass") && peekAt(1).type == TokenType::Semi) {  // empty class body
             advance();
@@ -495,7 +565,19 @@ StmtPtr Parser::classDecl() {
             if (match(TokenType::Colon)) { typeAnnotation(); hasAnnotation = true; }
             if (match(TokenType::Eq)) {
                 if (hasAnnotation) annotated.emplace_back(attr, true);
-                classAttrs.emplace_back(attr, expression());
+                ExprPtr value = expression();
+                bool aliased = false;
+                if (value->kind == ExprKind::Identifier) {  // `baca = tulis` inside the body: another name for a method
+                    const std::string& target = static_cast<IdentifierExpr*>(value.get())->name;
+                    for (auto& m : methods) {
+                        if (m->name == target || (target == "__init__" && m->name == "konstruktor")) {
+                            aliases.emplace_back(attr, m->name == "konstruktor" ? "__init__" : target);
+                            aliased = true;
+                        }
+                    }
+                }
+                if (aliased) { expectEnd(i18n::tr("';' diharapkan setelah atribut kelas", "Expected end of line after class attribute")); continue; }
+                classAttrs.emplace_back(attr, std::move(value));
             } else {
                 if (hasAnnotation) annotated.emplace_back(attr, false);
                 classAttrs.emplace_back(attr, LiteralExpr::makeNull());
@@ -541,6 +623,22 @@ StmtPtr Parser::classDecl() {
         set->span = sp;
         StmtPtr st = std::make_unique<ExprStmtNode>(std::move(set));
         st->span = sp;
+        pendingStmts_.push_back(std::move(st));
+    }
+    for (auto& [alias, target] : aliases) {  // forwarding method: def alias(self, *a, **kw): return self.target(*a, **kw)
+        std::string src = "class __AL:\n    def " + alias + "(self, *a, **kw):\n        return self." + target + "(*a, **kw)\n";
+        Lexer lx(src);
+        Parser sub(lx.tokenize());
+        auto prog = sub.parse();
+        for (auto& st : prog->statements) {
+            if (st->kind != StmtKind::ClassDecl) continue;
+            for (auto& m : static_cast<ClassDeclStmt*>(st.get())->methods) methods.push_back(std::move(m));
+        }
+    }
+    if (parentBase == "Enum" || parentBase == "IntEnum" || parentBase == "Flag" || parentBase == "IntFlag" || parentBase == "StrEnum") {
+        std::vector<ExprPtr> ea;  // members become objects with .name and .value once the attributes exist
+        ea.push_back(mkIdent(name, peek().span));
+        StmtPtr st = std::make_unique<ExprStmtNode>(mkCall("_enum_init", std::move(ea), peek().span));
         pendingStmts_.push_back(std::move(st));
     }
     lastAnnotated_ = annotated;
@@ -1332,6 +1430,16 @@ ExprPtr Parser::expression() { return assignment(); }
 
 // Builtin exception classes used here (and not defined here) come from the embedded __exc module.
 void Parser::injectExceptionClasses(Program& program) {
+    if (usesAsync_) {
+        Span sp{};
+        for (const char* nm : {"_await", "_mkco"}) {
+            std::vector<ExprPtr> a;
+            a.push_back(LiteralExpr::makeString("asyncio"));
+            ExprPtr get = std::make_unique<IndexExpr>(mkCall("impor", std::move(a), sp), LiteralExpr::makeString(nm));
+            get->span = sp;
+            program.statements.insert(program.statements.begin(), mkLet(nm, std::move(get), sp));
+        }
+    }
     for (const auto& name : usedExc_) {
         bool own = false;
         for (const auto& d : declaredClasses_) if (d == name) own = true;
@@ -1748,6 +1856,17 @@ ExprPtr Parser::factor() {
 
 ExprPtr Parser::unary() {
     Span start = peek().span;
+    if (check(TokenType::Ident) && peek().text == "await") {
+        TokenType nx = peekAt(1).type;
+        if (nx != TokenType::Eq && nx != TokenType::Dot && nx != TokenType::Comma && nx != TokenType::RParen &&
+            nx != TokenType::Semi && nx != TokenType::RBracket && nx != TokenType::Colon) {
+            advance();
+            usesAsync_ = true;
+            std::vector<ExprPtr> a;
+            a.push_back(unary());
+            return mkCall("_await", std::move(a), start);
+        }
+    }
     if (check(TokenType::Not) && (peek().text == "not" || peek().text == "bukan")) {
         // Python `not`: binds looser than comparison (`not a == b` is `!(a == b)`).
         advance();
@@ -1910,7 +2029,9 @@ ExprPtr Parser::call() {
                 callee->span = start;
                 expr = std::make_unique<CallExpr>(std::move(callee), std::move(args));
             } else {
-                expr = std::make_unique<IndexExpr>(std::move(expr), std::move(index));
+                auto ix = std::make_unique<IndexExpr>(std::move(expr), std::move(index));
+                ix->strict = strictKeys_;
+                expr = std::move(ix);
             }
             expr->span = start;
         } else if (check(TokenType::Dot)) {
@@ -1994,7 +2115,7 @@ ExprPtr Parser::primary() {
                                                                 "Non-default parameter follows a default one"), peek());
                     Span sp = defaults[i]->span;
                     ExprPtr cond = mkBin("==", mkIdent(params[i], sp), LiteralExpr::makeNull(), sp);
-                    ExprPtr assign = std::make_unique<AssignExpr>(params[i], std::move(defaults[i]));
+                    ExprPtr assign = std::make_unique<AssignExpr>(params[i], hoistDefault(std::move(defaults[i])));
                     assign->span = sp;
                     std::vector<StmtPtr> thenStmts;
                     thenStmts.push_back(std::make_unique<ExprStmtNode>(std::move(assign)));

@@ -236,6 +236,19 @@ std::vector<Token> Lexer::tokenize() {
         for (auto& t : next) tokens.push_back(std::move(t));
         if (sawEof) break;
     }
+    // `async def` -> the def token remembers it (text "async"); `async with` / `async for` are just with / for
+    for (size_t i = 0; i + 1 < tokens.size(); i++) {
+        if (tokens[i].type == TokenType::Ident && tokens[i].text == "async") {
+            const Token& nx = tokens[i + 1];
+            bool def = nx.type == TokenType::Fn;
+            bool other = nx.type == TokenType::For || (nx.type == TokenType::Ident && nx.text == "with");
+            if (def || other) {
+                if (def) tokens[i + 1].text = "async";
+                tokens.erase(tokens.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+        }
+    }
+    lexerLastWasPython() = pyStyle_;
     markDictBraces(tokens);
     return applyLayout(std::move(tokens), source_);
 }

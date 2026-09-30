@@ -1,0 +1,28 @@
+import asyncio, time
+from fractions import Fraction
+
+async def work(name, d):
+    await asyncio.sleep(d)
+
+    return name.upper()
+
+async def main():
+    t0 = time.time()
+    r = await asyncio.gather(work("a", 0.2), work("b", 0.2), work("c", 0.2))
+    print(r, round(time.time() - t0, 1))
+    t = asyncio.create_task(work("x", 0.1))
+    v = await t
+    print(v)
+    try:
+        await asyncio.wait_for(work("slow", 0.3), 0.05)
+    except asyncio.TimeoutError:
+        print("timeout")
+    return 42
+
+print(asyncio.run(main()))
+print(Fraction(1, 3) + Fraction(1, 6), Fraction("0.25") * 2, Fraction(3, 4) < 1, sum([Fraction(1, 2), Fraction(1, 3)], Fraction(0)))
+class A:
+    async def m(self, x):
+        await asyncio.sleep(0)
+        return x + 1
+print(asyncio.run(A().m(4)))
