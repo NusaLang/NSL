@@ -686,7 +686,9 @@ Value setOp(const std::string& op, const std::vector<Value>& x, const std::vecto
         for (const Value& e : uniqueValues(x)) if (!containsValue(y, e)) out.push_back(e);
         for (const Value& e : uniqueValues(y)) if (!containsValue(x, e)) out.push_back(e);
     }
-    return mkArr(std::move(out));
+    Value res = mkArr(std::move(out));
+    markSet(res);
+    return res;
 }
 
 Value listMethod(const std::string& m, std::vector<Value>& a, const ValueMap* kw, const CallFn& callFn) {
@@ -754,7 +756,7 @@ Value listMethod(const std::string& m, std::vector<Value>& a, const ValueMap* kw
         return Value::null();
     }
     if (m == "reverse") { auto& v = mutElems(self); std::reverse(v.begin(), v.end()); return Value::null(); }
-    if (m == "copy") return mkArr(elems(self));
+    if (m == "copy") { Value c = mkArr(elems(self)); if (isSetValue(self)) markSet(c); return c; }
     if (m == "clear") { mutElems(self).clear(); return Value::null(); }
     fail("metode larik tidak dikenal: " + m);
 }
@@ -959,7 +961,9 @@ Value call(const std::string& name, std::vector<Value>& a, const ValueMap* kw, c
             for (const Value& o : out) if (valuesDeepEqual(o, v)) { dup = true; break; }
             if (!dup) out.push_back(v);
         }
-        return mkArr(std::move(out));
+        Value res = mkArr(std::move(out));
+        markSet(res);
+        return res;
     }
     if (name == "dict") {
         auto m = std::make_shared<ValueMap>();

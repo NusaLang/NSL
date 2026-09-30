@@ -104,7 +104,7 @@ def luas(p: angka, l: angka) -> angka:
 - **Slice:** `a[1:3]`, `a[-2:]`, `a[::-1]`, `a[::2]`, `a[3:0:-1]` untuk teks dan larik.
 - **String:** kutip ganda/tunggal, triple-quote multi-baris, f-string `f"halo {nama}, {x + 1}"` (`{{` `}}` untuk kurung literal), template `` `halo ${nama}` ``, angka ilmiah `1e3`, `2.5e-2`.
 - **`*args` / `**kwargs` dan spread:** `def f(*a, **kw)`, `f(*xs, **d)`, `[*a, *b]`, `{**d1, **d2}`.
-- **Himpunan & bit:** `{1, 2}`, `a | b`, `a & b`, `a - b`, `a ^ b` (himpunan = larik tanpa duplikat; untuk angka: operator bit), `~x`, `<<`, `>>`. Literal `0x1F`, `0b101`, `0o17`, `1_000`, `.5`.
+- **Himpunan & bit:** `{1, 2}` (tercetak `{1, 2}`, kosong `set()`), `a | b`, `a & b`, `a - b`, `a ^ b` (himpunan = larik tanpa duplikat; untuk angka: operator bit), `~x`, `<<`, `>>`. Literal `0x1F`, `0b101`, `0o17`, `1_000`, `.5`.
 - **f-string dengan format spec:** `f"{x:.2f}"`, `f"{n:>8,}"`, `f"{v!r}"`.
 - **Dekorator:** `@dec`, `@dec(arg)` untuk fungsi dan kelas; di dalam kelas `@staticmethod`, `@classmethod`, `@property` + `@x.setter`; atribut kelas (`total = 0`, `name: str = "x"`); `@dataclass` (`order=True`, `field(default_factory=list)`, pewarisan).
 - **Generator:** `yield`, `yield from`, `x = yield v`, `gen.send/throw_/close`, ekspresi generator `(x * x for x in xs)`, `next(g, default)`, `iter(x)`; `for`, `list()`, `sum()`, `sorted()`, ... membacanya secara lazy. Di VM generator = frame yang disimpan/dilanjutkan (tanpa thread, ~1,7 µs per `yield`).
@@ -365,9 +365,9 @@ make tls-test                     # vektor kripto TLS (dari implementasi indepen
 
 - `angka` selalu `double` (bilangan bulat tepat sampai 2^53); tuple = larik; `set` = larik tanpa duplikat.
 - Satu GIL: goroutine tidak paralel untuk CPU murni.
-- Beda dari Python: `d[k]` pada kunci yang tidak ada hanya melempar `KeyError` di file bergaya Python (di gaya `{ }` tetap `None`; `d.k` titik selalu `None`); `Enum` tidak mendukung `Flag` bitwise (`|`) dan alias nilai; `yield from` hanya sebagai pernyataan; generator yang dibuang tidak menjalankan `finally`-nya; `asyncio` memakai goroutine (tugas yang di-`wait_for` timeout tetap selesai di latar); `decimal`, `struct`, `async for` pada async generator belum ada.
+- Beda dari Python: `d[k]` pada kunci yang tidak ada hanya melempar `KeyError` di file bergaya Python (di gaya `{ }` tetap `None`; `d.k` titik selalu `None`); urutan `set` mengikuti urutan sisip (bukan hash); `Enum` tidak mendukung `Flag` bitwise (`|`); `yield from` hanya sebagai pernyataan; generator yang dibuang tidak menjalankan `finally`-nya; `decimal`, `struct`, `async for` pada async generator belum ada.
 - Teks disimpan sebagai UTF-8; `len`, indeks, slice, `find`, `upper/lower` (Latin, Yunani, Sirilik) menghitung karakter seperti Python. `title()`/`isalpha()` dan sejenisnya hanya paham ASCII.
-- Pembagian dengan nol melempar `ZeroDivisionError` di VM dan interpreter, tetapi tidak di loop numerik hasil JIT.
+- Pembagian dengan nol melempar `ZeroDivisionError` di semua jalur (JIT hanya mengompilasi pembagian dengan pembagi literal bukan nol).
 - Modul Go: lihat batasannya di bagian "Modul Go".
 
 ## Lisensi

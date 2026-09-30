@@ -287,6 +287,13 @@ class CancelledError(Exception):
 class TimeoutError(Exception):
     pass
 
+_tasks = {}
+
+def _check_cancel():
+    t = _tasks.get(_gid())
+    if t is not None and t._cancelled:
+        raise CancelledError()
+
 class Coroutine:
     def __init__(self, fn):
         self._fn = fn
@@ -308,10 +315,13 @@ class Task:
         self._error = None
         self._cancelled = False
     def _main(self):
+        gid = _gid()
+        _tasks[gid] = self
         try:
             self._result = self._coro._run()
         except Exception as e:
             self._error = e
+        _tasks.pop(gid)
         self._finished = True
         kanal_tutup(self._done)
     def _start(self):
@@ -380,7 +390,13 @@ def create_task(coro, name=None):
 ensure_future = create_task
 
 def sleep(delay, result=None):
-    tidur(delay * 1000)
+    left = delay
+    while left > 0:
+        step = 0.005 if left > 0.005 else left
+        tidur(step * 1000)
+        left -= step
+        _check_cancel()
+    _check_cancel()
     return result
 
 def gather(*aws, return_exceptions=False):
@@ -411,6 +427,7 @@ def wait_for(aw, timeout=None):
         tidur(1)
         waited += 0.001
         if waited >= timeout:
+            t.cancel()
             raise TimeoutError("timed out")
     return t.result()
 
@@ -481,6 +498,7 @@ class Queue:
     def get(self):
         while len(self._items) == 0:
             tidur(1)
+            _check_cancel()
         return self._items.pop(0)
     def get_nowait(self):
         return self._items.pop(0)

@@ -307,7 +307,7 @@ bool isRegularFile(const std::string& path) {
 const std::vector<std::string>& builtinNames() {
     static const std::vector<std::string> names = {
         "cetak", "panjang", "tambah", "hapus_akhir", "potong", "gabung", "pisah",
-        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "iter", "next", "_bytelen", "_enum_init", "_pkg", "_pkgsub", "_dcv", "_callmeth", "_with_enter", "_with_exit", "getattr", "setattr", "hasattr", "delattr", "vars", "dir", "id", "hash", "issubclass", "__get", "_exc_match", "_exc_wrap", "_defaultdict", "_namedtuple", "_gennew", "_genresume", "_genclose", "_isvmgen", "pegang", "_peta", "_in", "_callkw", "_callkwm", "_close", "_go",
+        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "iter", "next", "_gid", "_bytelen", "_enum_init", "_pkg", "_pkgsub", "_dcv", "_callmeth", "_with_enter", "_with_exit", "getattr", "setattr", "hasattr", "delattr", "vars", "dir", "id", "hash", "issubclass", "__get", "_exc_match", "_exc_wrap", "_defaultdict", "_namedtuple", "_gennew", "_genresume", "_genclose", "_isvmgen", "pegang", "_peta", "_in", "_callkw", "_callkwm", "_close", "_go",
         "base64_encode", "base64_decode",
         "baca_file", "tulis_file", "file_ada",
         "tcp_konek", "tcp_kirim", "tcp_terima", "tcp_tutup",
@@ -1768,6 +1768,9 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         } catch (const RuntimeError&) {
         }
         return Value::null();
+    }
+    if (name == "_gid") {  // id of the running goroutine (asyncio uses it to find the current task)
+        return Value::fromNumber(static_cast<double>(std::hash<std::thread::id>{}(std::this_thread::get_id()) % 1000000007ULL));
     }
     if (name == "_bytelen") {  // size in UTF-8 bytes (len() counts characters)
         need(1);

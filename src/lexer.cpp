@@ -204,7 +204,7 @@ static void markDictBraces(std::vector<Token>& toks) {
             prev != TokenType::Comma && prev != TokenType::Colon && prev != TokenType::Return &&
             prev != TokenType::LDict && prev != TokenType::Else && prev != TokenType::And &&
             prev != TokenType::Or && prev != TokenType::StarStar && prev != TokenType::Pipe && prev != TokenType::Amp &&
-            prev != TokenType::Caret && !inWord) continue;
+            prev != TokenType::Caret && prev != TokenType::Minus && !inWord) continue;
         // Find the matching `}` and whether a top-level ':' sits before it.
         int nest = 0;
         bool colon = false;

@@ -456,6 +456,36 @@ inline std::function<bool(const Value&, std::string&)>& instanceStrHook() {
     return hook;
 }
 
+// Sets are lists without duplicates; this registry remembers which lists were made by set(...) so they
+// print as {1, 2} (and `set()` when empty) like Python. Entries expire with their lists.
+struct SetRegistry {
+    std::mutex mu;
+    std::unordered_map<const void*, std::weak_ptr<std::vector<Value>>> items;
+    size_t purgeAt = 4096;
+};
+inline SetRegistry& setRegistry() {
+    static SetRegistry r;
+    return r;
+}
+inline void markSet(const Value& arr) {
+    if (arr.type != ValueType::Array || !arr.array()) return;
+    SetRegistry& r = setRegistry();
+    std::lock_guard<std::mutex> lock(r.mu);
+    if (r.items.size() >= r.purgeAt) {
+        for (auto it = r.items.begin(); it != r.items.end();) it = it->second.expired() ? r.items.erase(it) : std::next(it);
+        r.purgeAt = std::max<size_t>(4096, r.items.size() * 2);
+    }
+    r.items[arr.array()] = std::static_pointer_cast<std::vector<Value>>(arr.ref);
+}
+inline bool isSetValue(const Value& v) {
+    if (v.type != ValueType::Array) return false;
+    SetRegistry& r = setRegistry();
+    std::lock_guard<std::mutex> lock(r.mu);
+    if (r.items.empty()) return false;
+    auto it = r.items.find(v.array());
+    return it != r.items.end() && !it->second.expired();
+}
+
 inline std::string Value::stringify() const {
     switch (type) {
         case ValueType::Null: return "kosong";
@@ -465,13 +495,15 @@ inline std::string Value::stringify() const {
         case ValueType::Builtin: return "<builtin " + builtinName() + ">";
         case ValueType::Number: return formatNumber(number);
         case ValueType::Array: {
-            std::string out = "[";
+            bool isSet = isSetValue(*this);
+            if (isSet && array()->empty()) return "set()";
+            std::string out = isSet ? "{" : "[";
             for (size_t i = 0; i < array()->size(); i++) {
                 if (i > 0) out += ", ";
                 const Value& el = (*array())[i];
                 out += (el.type == ValueType::String) ? ("\"" + el.str() + "\"") : el.stringify();
             }
-            out += "]";
+            out += isSet ? "}" : "]";
             return out;
         }
         case ValueType::Map: {
