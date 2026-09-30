@@ -30,7 +30,8 @@
 #include "gil.hpp"
 #include "i18n.hpp"
 #include "interpreter.hpp"
-#include "js_runtime.hpp"
+#include "sysmod.hpp"
+#include "pystd.hpp"
 #include "json.hpp"
 #include "lexer.hpp"
 #include "net.hpp"
@@ -38,11 +39,14 @@
 #include "plugin.hpp"
 #include "proc.hpp"
 #include "sha256.hpp"
+#include "gobridge.hpp"
 #include "sysplugin.hpp"
 #include "typechecker.hpp"
 #include "vm.hpp"
 
 #define NUSA_VERSION "0.0.1"
+
+int runUpdate(const std::string& currentVersion);  // src/update.cpp
 
 namespace {
 
@@ -58,7 +62,7 @@ struct NetCleanupGuard {
 };
 
 void waitForGoroutines() {
-    while (GC::liveGoroutines.load() > 0) {
+    while (GC::liveGoroutines.load() - GC::daemonGoroutines.load() > 0) {
         GilRelease release;
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
@@ -75,9 +79,30 @@ bool hasExtension(const std::string& path, const std::string& ext) {
     return path.size() >= ext.size() && path.compare(path.size() - ext.size(), ext.size(), ext) == 0;
 }
 
+// Escape hatch to the tree-walking interpreter (the reference implementation,
+// and the only engine with Environment garbage collection): a `nusa:tree-walker`
+// comment in the first lines of a script, or NUSA_NO_VM=1 for everything.
+bool wantsTreeWalker(const std::string& source) {
+    if (std::getenv("NUSA_NO_VM")) return true;
+    size_t pos = 0;
+    for (int line = 0; line < 10 && pos < source.size(); line++) {
+        size_t eol = source.find('\n', pos);
+        std::string text = source.substr(pos, eol == std::string::npos ? std::string::npos : eol - pos);
+        if ((text.rfind("//", 0) == 0 || text.rfind("#", 0) == 0) && text.find("nusa:tree-walker") != std::string::npos) return true;
+        if (eol == std::string::npos) break;
+        pos = eol + 1;
+    }
+    return false;
+}
+
 int runFile(const std::string& path) {
     if (hasExtension(path, ".js")) {
-        return jsrt::runJsFile(path);
+        try {
+            return static_cast<int>(sysmod::call("js", "js_jalan", {Value::fromString(path)}).number);
+        } catch (const std::exception& e) {
+            std::cerr << "nusantara: error: " << e.what() << '\n';
+            return 1;
+        }
     }
     std::ifstream file(path);
     if (!file) {
@@ -158,12 +183,16 @@ int runFile(const std::string& path) {
             }
         }
         
-        std::string combinedHash = "";
+        // Keyed on the CONTENT of every source file (an mtime has one-second granularity, so a
+        // quick edit kept the stale bytecode) and on this build, so a new compiler never reuses
+        // bytecode from an older one.
+        std::string combinedHash = std::string(__DATE__ " " __TIME__ " " NUSA_VERSION "|");
         for (const auto& d : deps) {
-            struct stat st;
-            if (stat(d.c_str(), &st) == 0) {
-                combinedHash += d + ":" + std::to_string(st.st_mtime) + ":" + std::to_string(st.st_size) + "|";
-            }
+            std::ifstream depFile(d, std::ios::binary);
+            if (!depFile) continue;
+            std::ostringstream depBuf;
+            depBuf << depFile.rdbuf();
+            combinedHash += d + ":" + std::to_string(std::hash<std::string>{}(depBuf.str())) + ":" + std::to_string(depBuf.str().size()) + "|";
         }
         // quick hash string
         size_t h = std::hash<std::string>{}(combinedHash);
@@ -173,7 +202,7 @@ int runFile(const std::string& path) {
         std::string fname = (lastSlash == std::string::npos) ? path : path.substr(lastSlash + 1);
         std::string cachePath = cacheDir + "/_" + fname + ".bin";
         
-        std::unique_ptr<VmProgram> vmProgram = vmDeserialize(cachePath, finalHash);
+        std::unique_ptr<VmProgram> vmProgram = wantsTreeWalker(source) ? nullptr : vmDeserialize(cachePath, finalHash);
         if (vmProgram) {
             // Cache hit: bytecode came from disk without the native-code JIT
             // attachment (vmSerialize never writes it) -- re-derive it here.
@@ -193,6 +222,7 @@ int runFile(const std::string& path) {
         }
 
         try {
+            if (wantsTreeWalker(source)) throw VmCompileError("dipaksa tree-walker (nusa:tree-walker / NUSA_NO_VM)");
             vmProgram = vmCompile(*program);
             mkdir(cacheDir.c_str(), 0755);
             vmSerialize(*vmProgram, cachePath, finalHash);
@@ -210,7 +240,8 @@ int runFile(const std::string& path) {
                 return 1;
             }
         } catch (const VmCompileError& e) {
-            // fallback to tree-walking
+            // Fall back to the (much slower) tree-walking interpreter.
+            if (std::getenv("NUSA_VM_DEBUG")) std::cerr << "[vm] fallback ke tree-walker: " << e.what() << "\n";
         }
 
         Interpreter interpreter(dirOf(path));
@@ -916,82 +947,72 @@ bool collectFilesRecursive(const std::string& baseDir, const std::string& relPre
     return ok;
 }
 
-void printUsage() {
+void printUsage(std::ostream& out = std::cerr) {
     if (i18n::isEn()) {
-        std::cerr <<
-            "nusa " NUSA_VERSION " -- Nusantara (.ns) toolchain\n"
+        out <<
+            "Nusantara is a Python-style programming language (Indonesian or English keywords)\n"
+            "that runs on its own bytecode VM.\n"
             "\n"
-            "Usage: nusa [options] [file.ns]\n"
-            "       nusa <command> [args]\n"
+            "Usage:\n"
+            "\n"
+            "        nusa [options] [file.ns] [arguments]\n"
+            "        nusa <command> [arguments]\n"
+            "\n"
+            "The commands are:\n"
+            "\n"
+            "        run       run a program\n"
+            "        watch     run a program again every time it is saved\n"
+            "        get       add a package (git clone)\n"
+            "        install   install the dependencies listed in nusa.json\n"
+            "        go        build a Nusantara module from a Go module (nusa go add)\n"
+            "        update    update nusa itself to the latest release\n"
+            "        set       change a setting (nusa set lang ind|en)\n"
+            "        version   print the version\n"
             "\n"
             "Options:\n"
-            "  (no arguments)                 start an interactive REPL\n"
-            "  <file.ns>                      run a file (same as 'nusa run <file.ns>')\n"
-            "  <file.js>                      run a real JavaScript file via the embedded QuickJS engine\n"
-            "  -e, --eval=<code>              eval a code snippet directly, no file\n"
-            "  -c, --check <file.ns>          lex/parse/typecheck only, no execution\n"
-            "  -v, --version                  print nusa's version\n"
-            "  -h, --help                     show this\n"
             "\n"
-            "Commands:\n"
-            "  run <file.ns>                  run a file once\n"
-            "  watch <file.ns>                run it, then auto re-run on every save\n"
-            "  repl                           same as nusa with no arguments\n"
-            "  get <host/path>[#ref] [-g]     install a package via git clone (e.g. github.com/user/repo)\n"
-            "  install                        install every dep listed in ./nusa.json (like `go mod download`)\n"
-            "  install <host/path>[#ref] [-g] same as `get` (also updates nusa.json/nusa-lock.json)\n"
-            "  set lang <ind|en>              switch CLI/runtime error message language\n"
+            "        -e code   run a snippet of code\n"
+            "        -c file   check syntax and types only, do not run\n"
+            "        -v        print the version and exit\n"
+            "        -h        print this help and exit\n"
             "\n"
-            "  -g above: install/update to the global folder (next to the nusa binary),\n"
-            "  not ./nusantara_modules cwd -- see the README's 'Package manager' section.\n"
-            "  Language can also be set for one run via env var NUSA_LANG=ind|en.\n"
+            "With no arguments, nusa starts an interactive prompt. Files ending in .js run on\n"
+            "the embedded QuickJS engine.\n"
             "\n"
-            "Examples:\n"
-            "  nusa main.ns\n"
-            "  nusa -e 'cetak(1 + 1)'\n"
-            "  nusa -c modul.ns\n"
-            "  nusa watch main.ns\n"
-            "  nusa get github.com/user/repo\n"
-            "  nusa app.js\n";
+            "Environment: NUSA_LANG=ind|en (message language), NUSA_NO_VM=1 (tree-walking interpreter).\n";
         return;
     }
-    std::cerr <<
-        "nusa " NUSA_VERSION " -- Nusantara (.ns) toolchain\n"
+    out <<
+        "Nusantara adalah bahasa pemrograman bergaya Python (keyword Indonesia atau Inggris)\n"
+        "yang berjalan di bytecode VM sendiri.\n"
         "\n"
-        "Usage: nusa [options] [file.ns]\n"
-        "       nusa <command> [args]\n"
+        "Pemakaian:\n"
         "\n"
-        "Options:\n"
-        "  (tanpa argumen)                mulai REPL interaktif\n"
-        "  <file.ns>                      jalanin file (sama kayak 'nusa run <file.ns>')\n"
-        "  <file.js>                      jalanin file JavaScript asli lewat engine QuickJS bawaan\n"
-        "  -e, --eval=<kode>               eval satu potong kode langsung, tanpa file\n"
-        "  -c, --check <file.ns>          cek lexer/parser/tipe doang, nggak dieksekusi\n"
-        "  -v, --version                  cetak versi nusa\n"
-        "  -h, --help                     tampilin ini\n"
+        "        nusa [opsi] [file.ns] [argumen]\n"
+        "        nusa <perintah> [argumen]\n"
         "\n"
-        "Commands:\n"
-        "  run <file.ns>                  jalanin file sekali\n"
-        "  watch <file.ns>                jalanin, terus auto re-run tiap file disimpan\n"
-        "  build [file.ns]                rakit bundel produksi next-ns (WASM/HTML/JS obfuscated)\n"
-        "  dev [file.ns]                  jalankan server dev next-ns dengan live-reload\n"
-        "  deploy [file.ns]               rakit & publikasikan server produksi next-ns\n"
-        "  repl                           sama kayak nusa tanpa argumen\n"
-        "  get <host/path>[#ref] [-g]     install paket lewat git clone (mis. github.com/user/repo)\n"
-        "  install                        install semua dep di ./nusa.json (kayak `go mod download`)\n"
-        "  install <host/path>[#ref] [-g] sama kayak `get` (ikut update nusa.json/nusa-lock.json)\n"
-        "  set lang <ind|en>              ganti bahasa pesan CLI/error runtime\n"
+        "Perintah:\n"
         "\n"
-        "  -g di atas: install/update ke folder global (sebelah binary nusa), bukan\n"
-        "  ./nusantara_modules cwd -- lihat README bagian 'Package manager'.\n"
-        "  Bahasa juga bisa di-set buat satu kali run lewat env var NUSA_LANG=ind|en.\n"
+        "        run       jalankan program\n"
+        "        watch     jalankan ulang program setiap kali disimpan\n"
+        "        get       tambah paket (git clone)\n"
+        "        install   pasang dependensi yang tercatat di nusa.json\n"
+        "        go        bangun modul Nusantara dari modul Go (nusa go add)\n"
+        "        update    perbarui nusa ke rilis terbaru\n"
+        "        set       ubah pengaturan (nusa set lang ind|en)\n"
+        "        version   cetak versi\n"
         "\n"
-        "Contoh:\n"
-        "  nusa main.ns\n"
-        "  nusa -e 'cetak(1 + 1)'\n"
-        "  nusa -c modul.ns\n"
-        "  nusa watch main.ns\n"
-        "  nusa get github.com/user/repo\n";
+        "Opsi:\n"
+        "\n"
+        "        -e kode   jalankan potongan kode\n"
+        "        -c file   cek sintaks dan tipe saja, tidak dijalankan\n"
+        "        -v        cetak versi lalu keluar\n"
+        "        -h        cetak bantuan ini lalu keluar\n"
+        "\n"
+        "Tanpa argumen, nusa membuka prompt interaktif. File berakhiran .js dijalankan oleh\n"
+        "mesin QuickJS bawaan.\n"
+        "\n"
+        "Lingkungan: NUSA_LANG=ind|en (bahasa pesan), NUSA_NO_VM=1 (interpreter tree-walking).\n";
 }
 
 std::string langConfigPath() {
@@ -1058,483 +1079,6 @@ int runSetLang(int argc, char** argv) {
     return 0;
 }
 
-std::string escapeJsString(const std::string& s) {
-    std::string out;
-    for (char c : s) {
-        if (c == '\\') out += "\\\\";
-        else if (c == '`') out += "\\`";
-        else if (c == '$') out += "\\$";
-        else out += c;
-    }
-    return out;
-}
-
-// ── Modular .next build ─────────────────────────────────────────────────
-// Chunk format: non-executing part pusher. Runner menggabungkan semua part
-// secara berurutan -> satu kali _nusa_eval.
-static std::string emitChunkScript(const std::string& rawSource) {
-    std::ostringstream hexList;
-    hexList << "\"";
-    char buf[8];
-    for (size_t i = 0; i < rawSource.size(); i++) {
-        if (i) hexList << ",";
-        std::snprintf(buf, sizeof(buf), "0x%02x", static_cast<unsigned char>(rawSource[i]));
-        hexList << buf;
-    }
-    hexList << "\"";
-    std::ostringstream out;
-    out << "(window.__NUSA_PARTS=window.__NUSA_PARTS||[]).push(" << hexList.str() << ");\n";
-    return out.str();
-}
-
-static const char* NUSA_RUNNER_JS =
-"(async function(){"
-"if(typeof NusantaraWasm!=='function')return;"
-"try{"
-"const w=await NusantaraWasm();"
-"const bytes=[];"
-"const parts=window.__NUSA_PARTS||[];"
-"for(let i=0;i<parts.length;i++){const hs=parts[i].split(',');for(let j=0;j<hs.length;j++)bytes.push(parseInt(hs[j],16));}"
-"const src=new TextDecoder('utf-8').decode(new Uint8Array(bytes));"
-"const ptr=w.allocateUTF8(src);"
-"const out=w._nusa_eval(ptr);"
-"const html=w.UTF8ToString(out);"
-"w._free(ptr);"
-"const app=document.getElementById('app');if(app)app.innerHTML=html;"
-"if(window.__NUSA_ANIM)__NUSA_ANIM(app);"
-"}catch(e){console.error(e)}"
-"if(location.protocol!=='file:'){try{"
-"const es=new EventSource('/dev-sse');"
-"es.onmessage=function(ev){try{if(JSON.parse(ev.data).op==='reload')location.reload()}catch(_){}}"
-";}catch(_){}}"
-"})();";
-
-static const char* NUSA_ANIM_JS =
-"(function(){"
-"function reveal(el,delay){el.style.opacity='0';el.style.transform='translateY(16px)';"
-"setTimeout(function(){el.style.transition='opacity .55s ease,transform .55s ease';"
-"el.style.opacity='1';el.style.transform='none';},delay);}"
-"function stagger(sel,step){var c=document.querySelectorAll(sel+' > *');"
-"for(var i=0;i<c.length;i++)reveal(c[i],i*step);}"
-"window.__NUSA_ANIM=function(app){"
-"if(!app)return;"
-"stagger('[data-fade]',90);"
-"stagger('[data-stagger]',110);"
-"var th=app.querySelector('[data-thread]');"
-"if(th){var kids=th.children;var d=350;"
-"for(var k=0;k<kids.length;k++){(function(el,dd){el.style.opacity='0';"
-"setTimeout(function(){el.style.transition='opacity .4s ease,transform .4s ease';"
-"el.style.opacity='1';el.style.transform='none';},dd);})(kids[k],d);d+=520;}}"
-"if('IntersectionObserver' in window){"
-"var io=new IntersectionObserver(function(es){es.forEach(function(en){"
-"if(en.isIntersecting){en.target.classList.add('scroll-animated');io.unobserve(en.target);}});},{threshold:.12});"
-"document.querySelectorAll('.scroll-animate').forEach(function(x){io.observe(x);});}"
-"else{document.querySelectorAll('.scroll-animate').forEach(function(x){x.classList.add('scroll-animated');});}"
-"};})();";
-
-static std::string nextPageHtml(const std::string& title,
-                                const std::string& description,
-                                const std::vector<std::string>& chunks,
-                                bool devReload) {
-    std::ostringstream html;
-    html << "<!DOCTYPE html><html lang=\"id\"><head><meta charset=\"UTF-8\">"
-         << "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
-         << "<title>" << title << "</title>"
-         << "<meta name=\"description\" content=\"" << description << "\">"
-         << "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">"
-         << "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>"
-         << "<link href=\"https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@300..800&family=Space+Mono:wght@400;700&display=swap\" rel=\"stylesheet\">"
-         << "<script src=\"https://cdn.tailwindcss.com\"></script>"
-         << "<script>tailwind.config={theme:{extend:{colors:{kertas:'#070B14','kertas-deep':'#0E1626',panel:'#14203A',tinta:'#EDF1F8',chrome:'#C7D0DC',volt:'#2F6BFF',stabilo:'#2F6BFF',lunas:'#2F6BFF',pensil:'#8A98AE'},fontFamily:{display:['var(--font-bricolage)','system-ui','sans-serif'],body:['var(--font-hanken)','system-ui','sans-serif'],mono:['var(--font-space-mono)','ui-monospace','monospace']}}}}</script>"
-         << "<style>"
-         << ":root{--font-bricolage:'Bricolage Grotesque';--font-hanken:'Hanken Grotesk';--font-space-mono:'Space Mono';"
-         << "--kertas:#070B14;--kertas-deep:#0E1626;--panel:#14203A;--tinta:#EDF1F8;--tinta-soft:#C7D0DC;--chrome:#C7D0DC;"
-         << "--stabilo:#2F6BFF;--volt:#2F6BFF;--volt-bright:#5B8DFF;--lunas:#2F6BFF;--pensil:#8A98AE;--garis:rgba(150,172,214,0.16);}"
-         << "*{box-sizing:border-box;margin:0;padding:0}"
-         << "html{scroll-behavior:smooth}"
-         << "body{background:var(--kertas);color:var(--tinta);font-family:var(--font-hanken),system-ui,sans-serif;overflow-x:hidden;-webkit-font-smoothing:antialiased}"
-         << "::selection{background:var(--volt);color:#fff}"
-         << "#app{min-height:100vh}"
-         << ".mark-stabilo{background:linear-gradient(180deg,transparent 56%,var(--volt) 56%,var(--volt) 96%,transparent 96%);padding:0 0.08em}"
-         << ".bubble{position:relative;max-width:30rem;padding:0.7rem 0.95rem;border-radius:18px;font-size:0.98rem;line-height:1.5;word-wrap:break-word}"
-         << ".bubble-in{background:var(--panel);color:var(--tinta);border:1px solid var(--garis);border-bottom-left-radius:5px}"
-         << ".bubble-out{background:var(--volt);color:#fff;border-bottom-right-radius:5px;margin-left:auto}"
-         << ".bubble-meta{font-family:var(--font-space-mono),monospace;font-size:0.62rem;letter-spacing:0.04em;color:var(--pensil);margin-top:0.3rem}"
-         << ".bubble-out .bubble-meta{color:rgba(255,255,255,0.75)}"
-         << "@keyframes bubbleIn{from{opacity:0;transform:translateY(10px) scale(0.97)}to{opacity:1;transform:translateY(0) scale(1)}}"
-         << ".bubble-enter{animation:bubbleIn 0.4s cubic-bezier(0.34,1.4,0.64,1) both}"
-         << ".cyber-card{background:var(--kertas-deep);border:1px solid var(--garis);border-radius:14px;position:relative;transition:transform 0.25s ease,box-shadow 0.25s ease,border-color 0.25s ease;text-decoration:none}"
-         << ".cyber-card:hover{border-color:var(--volt);transform:translateY(-3px);box-shadow:0 14px 34px rgba(0,0,0,0.45),0 0 0 1px rgba(47,107,255,0.25)}"
-         << ".btn-primary{position:relative;display:inline-flex;align-items:center;gap:0.5rem;padding:0.8rem 1.6rem;background:var(--volt);border:1px solid var(--volt);color:#fff;font-family:var(--font-space-mono),monospace;font-size:0.8rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;cursor:pointer;border-radius:999px;text-decoration:none;transition:all 0.18s ease;box-shadow:0 8px 22px rgba(47,107,255,0.35)}"
-         << ".btn-primary:hover{background:var(--volt-bright);border-color:var(--volt-bright);transform:translateY(-2px)}"
-         << ".btn-outline{position:relative;display:inline-flex;align-items:center;gap:0.5rem;padding:0.8rem 1.6rem;background:transparent;border:1.5px solid var(--chrome);color:var(--tinta);font-family:var(--font-space-mono),monospace;font-size:0.8rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;cursor:pointer;border-radius:999px;text-decoration:none;transition:all 0.18s ease}"
-         << ".btn-outline:hover{background:var(--volt);border-color:var(--volt);color:#fff}"
-         << ".section-heading{font-family:var(--font-bricolage),system-ui,sans-serif;font-size:clamp(2rem,5vw,3.2rem);font-weight:800;color:var(--tinta);letter-spacing:-0.02em;line-height:1.02}"
-         << ".eyebrow{font-family:var(--font-space-mono),monospace;font-size:0.7rem;letter-spacing:0.18em;text-transform:uppercase;color:var(--lunas)}"
-         << ".scroll-animate{opacity:0;transform:translateY(18px);transition:opacity .7s ease,transform .7s ease}.scroll-animate.scroll-animated{opacity:1;transform:none}@keyframes nusaFadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}.nusa-hidden{opacity:0}[data-orbs]{position:relative}[data-orbs]::before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(640px 520px at 12% 8%,rgba(47,107,255,.20),transparent 62%),radial-gradient(720px 540px at 88% 92%,rgba(91,141,255,.16),transparent 62%)}@media(max-width:640px){[data-orbs]::before{background:radial-gradient(420px 380px at 20% 6%,rgba(47,107,255,.22),transparent 60%),radial-gradient(460px 380px at 85% 94%,rgba(91,141,255,.18),transparent 60%)}}img,svg{max-width:100%}input,button,textarea{font-family:inherit}"
-         << "</style>"
-         << "</head><body class=\"scanlines\"><div id=\"app\"></div>"
-         << "<script src=\"/.next/static/nusantara.js\"></script>";
-    for (const auto& c : chunks) {
-        html << "<script src=\"" << c << "\"></script>";
-    }
-    html << "<script>" << NUSA_RUNNER_JS << "</script>";
-    if (devReload) {
-        html << "<script>try{const es=new EventSource('/dev-sse');es.onmessage=function(e){try{if(JSON.parse(e.data).op==='reload')location.reload()}catch(_){{}}}catch(_){}</script>";
-    }
-    html << "</body></html>";
-    return html.str();
-}
-
-// Pemetaan rute -> file HTML di .next/server/pages
-static std::string routeSlugForPath(const std::string& reqPath) {
-    std::string seg = reqPath;
-    if (!seg.empty() && seg[0] == '/') seg = seg.substr(1);
-    auto slash = seg.find('/');
-    if (slash != std::string::npos) seg = seg.substr(0, slash);
-    return seg; // "" = home
-}
-
-static std::string servePageRoute(const std::string& reqPath) {
-    std::string slug = routeSlugForPath(reqPath);
-    std::string pageName = slug.empty() ? "index" : slug;
-    std::ifstream f("dist/.next/server/pages/" + pageName + ".html", std::ios::binary);
-    if (!f) {
-        std::ifstream idx("dist/.next/server/pages/index.html", std::ios::binary);
-        if (!idx) return "";
-        std::ostringstream b;
-        b << idx.rdbuf();
-        return b.str();
-    }
-    std::ostringstream b;
-    b << f.rdbuf();
-    return b.str();
-}
-
-int runBuild(int argc, char** argv) {
-    std::string entryPath = "main.ns";
-    if (argc >= 3) {
-        std::string arg2 = argv[2];
-        if (arg2 != "build" && arg2 != "dev" && arg2 != "deploy") {
-            entryPath = arg2;
-        }
-    }
-
-    auto ensureDir = [](const std::string& dir) -> bool {
-        // buat rekursif ringkas
-        std::string cur;
-        std::istringstream ss(dir);
-        std::string seg;
-        while (std::getline(ss, seg, '/')) {
-            if (seg.empty()) { cur += "/"; continue; }
-            if (!cur.empty() && cur.back() != '/') cur += "/";
-            cur += seg;
-            mkdir(cur.c_str(), 0755);
-        }
-        struct stat st2 {};
-        return stat(dir.c_str(), &st2) == 0 && S_ISDIR(st2.st_mode);
-    };
-    auto copyIfExist = [](const std::string& s, const std::string& d) {
-        std::ifstream in(s, std::ios::binary);
-        if (!in) return false;
-        std::ofstream out(d, std::ios::binary);
-        out << in.rdbuf();
-        return true;
-    };
-
-    std::string source;
-    bool isNextNsApp = false;
-
-    struct stat st {};
-    if (stat("app", &st) == 0 && S_ISDIR(st.st_mode)) {
-        isNextNsApp = true;
-        ensureDir("dist/.next/static/chunks");
-        ensureDir("dist/.next/server/pages");
-
-        // ── rute: root + app/<slug>/page.ns ──
-        std::vector<std::pair<std::string, std::string>> routes;
-        routes.push_back({"", "app/page.ns"});
-        if (DIR* dp = opendir("app")) {
-            while (struct dirent* ent = readdir(dp)) {
-                std::string name = ent->d_name;
-                if (name == "." || name == ".." || name.empty()) continue;
-                std::string pp = "app/" + name + "/page.ns";
-                struct stat pst {};
-                if (stat(pp.c_str(), &pst) == 0 && S_ISREG(pst.st_mode)) routes.push_back({name, pp});
-            }
-            closedir(dp);
-        }
-
-        // ── SHARED chunk ──
-        std::ostringstream sharedBuf;
-        sharedBuf << "buat Tautan = fungsi(props) { buat c = props[\"children\"]; jika (c == kosong) { c = \"\"; } hasil ( <a href={props[\"href\"]} kelas={props[\"kelas\"]}>{c}</a> ); };\n"
-               << "buat Kepala = fungsi(props) { hasil props[\"children\"]; };\n"
-               << "buat Gambar = fungsi(props) { hasil ( <img src={props[\"src\"]} alt={props[\"alt\"]} kelas={props[\"kelas\"]} /> ); };\n"
-               << "buat Form = fungsi(props) { hasil ( <form action={props[\"action\"]} kelas={props[\"kelas\"]}>{props[\"children\"]}</form> ); };\n"
-               << "buat useState = fungsi(v) { buat s = [v]; s[1] = fungsi(nv) { s[0] = nv; }; hasil s; };\n"
-               << "buat useEffect = fungsi(fn, deps) { coba { fn(); } tangkap(e){} };\n\n";
-        for (const char* f : {"app/layout.ns", "app/loading.ns", "app/error.ns", "app/not-found.ns"}) {
-            std::ifstream lf(f);
-            if (lf) sharedBuf << lf.rdbuf() << "\n";
-        }
-        // helper opsional app/_lib/*.ns
-        if (DIR* ldp = opendir("app/_lib")) {
-            std::vector<std::string> libs;
-            while (struct dirent* le = readdir(ldp)) {
-                std::string ln = le->d_name;
-                if (ln.size() > 3 && ln.substr(ln.size()-3) == ".ns") libs.push_back(ln);
-            }
-            closedir(ldp);
-            for (const auto& ln : libs) {
-                std::ifstream lf("app/_lib/" + ln);
-                if (lf) sharedBuf << lf.rdbuf() << "\n";
-            }
-        }
-
-        static const char* NUSA_GLUE =
-            "\ncoba {\n"
-            "    buat _content = kosong;\n"
-            "    jika (tipe(Page) == \"fungsi\") {\n"
-            "        _content = Page();\n"
-            "    } lain jika (tipe(NotFound) == \"fungsi\") {\n"
-            "        _content = NotFound();\n"
-            "    }\n"
-            "    jika (tipe(Layout) == \"fungsi\") {\n"
-            "        buat _props = peta_baru();\n"
-            "        _props[\"children\"] = [_content];\n"
-            "        cetak(Layout(_props));\n"
-            "    } lain {\n"
-            "        cetak(_content);\n"
-            "    }\n"
-            "} tangkap (_err) {\n"
-            "    jika (tipe(Error) == \"fungsi\") {\n"
-            "        buat _errProps = peta_baru();\n"
-            "        _errProps[\"error\"] = _err;\n"
-            "        cetak(Error(_errProps));\n"
-            "    } lain {\n"
-            "        cetak(_err);\n"
-            "    }\n"
-            "}\n";
-
-        // ── route chunks ──
-        std::map<std::string, std::string> routeSources;
-        for (const auto& route : routes) {
-            const std::string& slug = route.first;
-            std::ostringstream pb;
-            std::ifstream pf(route.second);
-            if (pf) pb << pf.rdbuf() << "\n";
-            else if (slug.empty()) {
-                std::ifstream ix("app/index.ns");
-                if (ix) pb << ix.rdbuf() << "\n";
-            }
-            pb << NUSA_GLUE;
-            routeSources[slug.empty() ? "index" : slug] = pb.str();
-        }
-
-        // ── tulis .next ──
-        copyIfExist("nusantara.js",   "dist/.next/static/nusantara.js");
-        copyIfExist("nusantara.wasm", "dist/.next/static/nusantara.wasm");
-        {
-            std::ofstream sh("dist/.next/static/chunks/_shared.js");
-            sh << emitChunkScript(sharedBuf.str());
-        }
-        for (const auto& [slug, code] : routeSources) {
-            std::ofstream pc("dist/.next/static/chunks/page-" + slug + ".js");
-            pc << emitChunkScript(code);
-        }
-        for (const auto& [slug, _code] : routeSources) {
-            std::vector<std::string> chunks = { "/.next/static/chunks/_shared.js",
-                                                "/.next/static/chunks/page-" + slug + ".js" };
-            std::ofstream ph("dist/.next/server/pages/" + slug + ".html");
-            ph << nextPageHtml("next-ns App",
-                               "Aplikasi Next-NS bertenaga WebAssembly & TailwindCSS",
-                               chunks, true);
-        }
-        // kompatibilitas: dist/index.html = home
-        {
-            std::vector<std::string> hc = { "/.next/static/chunks/_shared.js",
-                                            "/.next/static/chunks/page-index.js" };
-            std::ofstream io("dist/index.html");
-            io << nextPageHtml("next-ns App",
-                               "Aplikasi Next-NS bertenaga WebAssembly & TailwindCSS",
-                               hc, false);
-        }
-        std::cout << "next-ns build: app/ -> dist/.next (" << routeSources.size()
-                  << " rute, modular Next.js-style)\n";
-        return 0;
-    }
-
-    // ── mode single-file biasa ──
-    std::ifstream file(entryPath);
-    if (!file) {
-        std::cerr << "nusa build: error: " << i18n::tr("gagal buka file '", "could not open file '") << entryPath << "'\n";
-        return 1;
-    }
-    std::ostringstream buf;
-    buf << file.rdbuf();
-    source = buf.str();
-
-    ensureDir("dist");
-    copyIfExist("nusantara.js",   "dist/nusantara.js");
-    copyIfExist("nusantara.wasm", "dist/nusantara.wasm");
-    {
-        std::ofstream htmlOut("dist/index.html");
-        std::vector<std::string> single = { "/.next/static/chunks/app.js" };
-        htmlOut << nextPageHtml("Nusantara App", "", single, false);
-    }
-    {
-        std::ofstream js("dist/.next/static/chunks/app.js");
-        js << emitChunkScript(source);
-    }
-    return 0;
-}
-int runDeploy(int argc, char** argv) {
-    std::cout << "=== next-ns Production Deploy ===\n";
-    int rc = runBuild(argc, argv);
-    if (rc != 0) {
-        std::cerr << "nusa deploy: error: gagal merakit bundel produksi\n";
-        return rc;
-    }
-
-    int port = 3000;
-    const char* envPort = std::getenv("PORT");
-    if (envPort) port = std::atoi(envPort);
-
-    std::cout << "next-ns deploy: mempublikasikan server produksi di http://localhost:" << port << "\n";
-    std::cout.flush();
-
-    auto serveHandler = [](const net::HttpRequestIn& req) -> net::HttpResponseOut {
-        net::HttpResponseOut resp;
-        std::string fileRel;
-        if (req.path.rfind("/.next/", 0) == 0) fileRel = req.path;
-        else if (req.path == "/") fileRel = "/index.html";
-        else fileRel = req.path;
-        std::string filePath = "dist" + fileRel;
-
-        std::ifstream file(filePath, std::ios::binary);
-        if (!file) {
-            std::string shell = servePageRoute(req.path);
-            if (!shell.empty()) {
-                resp.status = 200;
-                resp.contentType = "text/html";
-                resp.body = shell;
-                return resp;
-            }
-            resp.status = 404;
-            resp.contentType = "text/plain";
-            resp.body = "404 Not Found";
-            return resp;
-        }
-        std::ostringstream buf;
-        buf << file.rdbuf();
-        resp.status = 200;
-        resp.body = buf.str();
-
-        if (filePath.find(".html") != std::string::npos) resp.contentType = "text/html";
-        else if (filePath.find(".js") != std::string::npos) resp.contentType = "application/javascript";
-        else if (filePath.find(".wasm") != std::string::npos) resp.contentType = "application/wasm";
-        else if (filePath.find(".css") != std::string::npos) resp.contentType = "text/css";
-        else resp.contentType = "text/plain";
-
-        return resp;
-    };
-
-    try {
-        net::httpServe(port, serveHandler);
-    } catch (const std::exception& e) {
-        std::cerr << "nusa deploy error: " << e.what() << "\n";
-        return 1;
-    }
-    return 0;
-}
-
-int runDev(int argc, char** argv) {
-    std::string entryPath = "main.ns";
-    if (argc >= 3) {
-        std::string arg2 = argv[2];
-        if (arg2 != "dev") entryPath = arg2;
-    }
-    int initialPort = 3000;
-    const char* envPort = std::getenv("PORT");
-    if (envPort) initialPort = std::atoi(envPort);
-
-    int rc = runBuild(argc, argv);
-    if (rc != 0) return rc;
-
-    std::thread([argc, argv, entryPath]() {
-        long long lastMtime = fileMtime(entryPath);
-        while (true) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            long long now = fileMtime(entryPath);
-            if (now != -1 && now != lastMtime) {
-                lastMtime = now;
-                std::cout << "\n=== [nusa dev] File " << entryPath << " berubah, merakit ulang... ===\n";
-                runBuild(argc, argv);
-                std::cout.flush();
-            }
-        }
-    }).detach();
-
-    auto serveHandler = [](const net::HttpRequestIn& req) -> net::HttpResponseOut {
-        net::HttpResponseOut resp;
-        if (req.path == "/dev-sse") {
-            resp.status = 200;
-            resp.contentType = "text/event-stream";
-            resp.body = "data: {\"op\":\"connected\"}\n\n";
-            return resp;
-        }
-
-        std::string fileRel;
-        if (req.path.rfind("/.next/", 0) == 0) fileRel = req.path;
-        else if (req.path == "/") fileRel = "/index.html";
-        else fileRel = req.path;
-        std::string filePath = "dist" + fileRel;
-
-        bool isStaticAsset = req.path.rfind("/.next/", 0) == 0;
-        std::ifstream file(filePath, std::ios::binary);
-        if (!file && !isStaticAsset) {
-            std::string shell = servePageRoute(req.path);
-            if (!shell.empty()) {
-                resp.status = 200;
-                resp.contentType = "text/html";
-                resp.body = shell;
-                return resp;
-            }
-            resp.status = 404;
-            resp.contentType = "text/plain";
-            resp.body = "404 Not Found";
-            return resp;
-        }
-        std::ostringstream buf;
-        buf << file.rdbuf();
-        resp.status = 200;
-        resp.body = buf.str();
-
-        if (filePath.find(".html") != std::string::npos) resp.contentType = "text/html";
-        else if (filePath.find(".js") != std::string::npos) resp.contentType = "application/javascript";
-        else if (filePath.find(".wasm") != std::string::npos) resp.contentType = "application/wasm";
-        else if (filePath.find(".css") != std::string::npos) resp.contentType = "text/css";
-        else resp.contentType = "text/plain";
-
-        return resp;
-    };
-
-    int ports[] = {initialPort, 8080, 8081, 3001, 3002, 8888};
-    for (int p : ports) {
-        try {
-            std::cout << i18n::tr("Nusantara -- mode 'dev': server berjalan di http://localhost:", "Nusantara -- 'dev' mode: server running at http://localhost:") << p << "\n";
-            std::cout << i18n::tr("Mengawasi '", "Watching '") << entryPath << i18n::tr("' untuk live reload (Ctrl+C untuk keluar)...\n", "' for live reload (Ctrl+C to quit)...\n");
-            std::cout.flush();
-            net::httpServe(p, serveHandler);
-            return 0;
-        } catch (const std::exception& e) {
-            std::cerr << "Port " << p << " tidak tersedia, mencoba port berikutnya...\n";
-        }
-    }
-    std::cerr << "nusa dev error: Tidak dapat menemukan port yang terbuka.\n";
-    return 1;
-}
-
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1564,9 +1108,16 @@ int main(int argc, char** argv) {
         std::cout << "nusa " NUSA_VERSION "\n";
         return 0;
     }
-    if (command == "-h" || command == "--help") {
-        printUsage();
+    if (command == "-h" || command == "--help" || command == "help") {
+        printUsage(std::cout);
         return 0;
+    }
+    if (command == "version") {
+        std::cout << "nusa " NUSA_VERSION "\n";
+        return 0;
+    }
+    if (command == "update") {
+        return runUpdate("nusa " NUSA_VERSION);
     }
     if (command == "-e" || command == "--eval") {
         if (argc < 3) {
@@ -1600,6 +1151,7 @@ int main(int argc, char** argv) {
             printUsage();
             return 1;
         }
+        pystd::setArgv(std::vector<std::string>(argv + 2, argv + argc));
         return runFile(argv[2]);
     }
     if (command == "watch" || command == "--watch") {
@@ -1609,14 +1161,8 @@ int main(int argc, char** argv) {
         }
         return runWatch(argv[2]);
     }
-    if (command == "build") {
-        return runBuild(argc, argv);
-    }
-    if (command == "dev") {
-        return runDev(argc, argv);
-    }
-    if (command == "deploy") {
-        return runDeploy(argc, argv);
+    if (command == "go") {
+        return gobridge::runCommand(argc - 2, argv + 2);
     }
     if (command == "x" || command == "exec") {
         return runExec(argc, argv);
@@ -1640,7 +1186,9 @@ int main(int argc, char** argv) {
         return runSetLang(argc, argv);
     }
     // Shorthand: `nusa main.ns` runs a file directly, no `run` needed.
-    if (argc == 2) {
+    struct stat scriptStat;
+    if (argc == 2 || (stat(command.c_str(), &scriptStat) == 0 && S_ISREG(scriptStat.st_mode))) {
+        pystd::setArgv(std::vector<std::string>(argv + 1, argv + argc));
         return runFile(command);
     }
     std::cerr << i18n::tr("nusantara: perintah nggak dikenal '", "nusantara: unknown command '") << command << "'\n";

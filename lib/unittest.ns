@@ -1,0 +1,124 @@
+import sys
+
+class AssertionFailed(Exception):
+    pass
+
+class TestCase:
+    def assertEqual(self, a, b, msg=None):
+        if not (a == b):
+            raise AssertionError(msg or (repr(a) + " != " + repr(b)))
+    def assertNotEqual(self, a, b, msg=None):
+        if a == b:
+            raise AssertionError(msg or (repr(a) + " == " + repr(b)))
+    def assertTrue(self, x, msg=None):
+        if not x:
+            raise AssertionError(msg or (repr(x) + " is not true"))
+    def assertFalse(self, x, msg=None):
+        if x:
+            raise AssertionError(msg or (repr(x) + " is not false"))
+    def assertIs(self, a, b, msg=None):
+        if a is not b:
+            raise AssertionError(msg or (repr(a) + " is not " + repr(b)))
+    def assertIsNone(self, x, msg=None):
+        if x is not None:
+            raise AssertionError(msg or (repr(x) + " is not None"))
+    def assertIsNotNone(self, x, msg=None):
+        if x is None:
+            raise AssertionError(msg or "unexpectedly None")
+    def assertIn(self, a, b, msg=None):
+        if a not in b:
+            raise AssertionError(msg or (repr(a) + " not found in " + repr(b)))
+    def assertNotIn(self, a, b, msg=None):
+        if a in b:
+            raise AssertionError(msg or (repr(a) + " unexpectedly found in " + repr(b)))
+    def assertGreater(self, a, b, msg=None):
+        if not (a > b):
+            raise AssertionError(msg or (repr(a) + " not greater than " + repr(b)))
+    def assertGreaterEqual(self, a, b, msg=None):
+        if not (a >= b):
+            raise AssertionError(msg or (repr(a) + " not greater than or equal to " + repr(b)))
+    def assertLess(self, a, b, msg=None):
+        if not (a < b):
+            raise AssertionError(msg or (repr(a) + " not less than " + repr(b)))
+    def assertLessEqual(self, a, b, msg=None):
+        if not (a <= b):
+            raise AssertionError(msg or (repr(a) + " not less than or equal to " + repr(b)))
+    def assertAlmostEqual(self, a, b, places=7, msg=None):
+        if round(abs(a - b), places) != 0:
+            raise AssertionError(msg or (repr(a) + " != " + repr(b) + " within " + str(places) + " places"))
+    def assertIsInstance(self, obj, cls, msg=None):
+        if not isinstance(obj, cls):
+            raise AssertionError(msg or (repr(obj) + " is not an instance"))
+    def assertListEqual(self, a, b, msg=None):
+        self.assertEqual(a, b, msg)
+    def assertDictEqual(self, a, b, msg=None):
+        self.assertEqual(a, b, msg)
+    def assertRaises(self, exc, fn=None, *args, **kw):
+        if fn is None:
+            return _RaisesCtx(exc)
+        try:
+            fn(*args, **kw)
+        except Exception as e:
+            if isinstance(e, exc):
+                return None
+            raise
+        raise AssertionError(getattr(exc, "__name__", "exception") + " not raised")
+    def fail(self, msg=None):
+        raise AssertionError(msg or "failed")
+    def setUp(self):
+        pass
+    def tearDown(self):
+        pass
+
+class _RaisesCtx:
+    def __init__(self, exc):
+        self.exc = exc
+        self.exception = None
+    def __enter__(self):
+        return self
+    def __exit__(self, t, value, tb):
+        if value is None:
+            raise AssertionError(getattr(self.exc, "__name__", "exception") + " not raised")
+        if isinstance(value, self.exc):
+            self.exception = value
+            return True
+        return False
+
+def _run_class(cls):
+    ok = 0
+    failed = []
+    names = [n for n in dir(cls()) if n.startswith("test")]
+    for n in sorted(names):
+        t = cls()
+        try:
+            t.setUp()
+            getattr(t, n)()
+            t.tearDown()
+            ok += 1
+            sys.stdout.write(".")
+        except Exception as e:
+            failed.append((cls.__name__ + "." + n, e))
+            sys.stdout.write("F")
+    return (ok, failed)
+
+_classes = []
+
+def register(cls):
+    _classes.append(cls)
+    return cls
+
+def main(classes=None, **kw):
+    total = 0
+    failures = []
+    for cls in (classes if classes is not None else _classes):
+        ok, failed = _run_class(cls)
+        total += ok + len(failed)
+        failures.extend(failed)
+    sys.stdout.write("\n")
+    for name, e in failures:
+        sys.stdout.write("FAIL: " + name + "\n  " + str(e) + "\n")
+    sys.stdout.write("Ran " + str(total) + " tests\n")
+    if len(failures) > 0:
+        sys.stdout.write("FAILED (failures=" + str(len(failures)) + ")\n")
+        sys.exit(1)
+    sys.stdout.write("OK\n")

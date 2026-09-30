@@ -8,7 +8,7 @@ fungsi kali(a, b, c) {
     hasil a * b * c;
 }
 fungsi bagi(a, b) {
-    hasil a / b;
+    hasil a / (b + 0.5);
 }
 fungsi negasi(a) {
     hasil -a;

@@ -1,4 +1,8 @@
 #include "interpreter.hpp"
+#include "pynum.hpp"
+#include "utf8str.hpp"
+#include "methods.hpp"
+#include "value_eq.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -36,7 +40,12 @@ static const size_t kUkuranStackGoroutine = 512 * 1024;
 #include "net.hpp"
 #include "parser.hpp"
 #include "plugin.hpp"
-#include "qr.hpp"
+#include "plugin_abi.h"
+#include "sysmod.hpp"
+#include "pylib.hpp"
+#include "varargs.hpp"
+#include "pystd.hpp"
+#include "repeat.hpp"
 #include "sysplugin.hpp"
 #include "vm.hpp"
 
@@ -44,26 +53,11 @@ namespace {
 
 // Used internally to unwind out of a function body on `hasil`/
 // `berhenti`/`lanjut`.
-struct ReturnSignal { Value value; };
-struct BreakSignal {};
-struct ContinueSignal {};
-
-std::string thrownValueMessage(const Value& v) {
-    if (v.type == ValueType::Map) {
-        auto it = v.map()->find("pesan");
-        if (it != v.map()->end() && it->second.type == ValueType::String) return it->second.str();
-    }
-    if (v.type == ValueType::String) return v.str();
-    return i18n::tr("Error dilempar: ", "Thrown error: ") + v.stringify();
-}
-
-class ThrownValue : public RuntimeError {
-public:
-    explicit ThrownValue(Value v) : RuntimeError(thrownValueMessage(v)), value_(std::move(v)) {}
-    const Value& value() const { return value_; }
-private:
-    Value value_;
-};
+// return/break/continue unwind via a pending flag checked by execBlock and
+// the loops, not C++ exceptions (a throw costs microseconds per `hasil`).
+enum : int { kPendNone = 0, kPendReturn, kPendBreak, kPendContinue };
+static thread_local int g_pending = kPendNone;
+static thread_local Value g_retVal;
 
 // RAII tracker for Interpreter::exprDepth_ -- see interpreter.hpp and
 // gc.hpp for why the GC needs to know whether we're mid-expression.
@@ -85,27 +79,7 @@ struct DepthResetGuard {
     DepthResetGuard(const DepthResetGuard&) = delete;
 };
 
-bool valuesEqual(const Value& a, const Value& b) {
-    if (a.type != b.type) return false;
-    switch (a.type) {
-        case ValueType::Null: return true;
-        case ValueType::Bool: return a.boolean() == b.boolean();
-        case ValueType::Number: return a.number == b.number;
-        case ValueType::String: return a.str() == b.str();
-        case ValueType::Fn: return a.fn() == b.fn();
-        case ValueType::Builtin: return a.builtinName() == b.builtinName();
-        case ValueType::Array: return a.array() == b.array();
-        case ValueType::Map: return a.map() == b.map();
-        case ValueType::Channel: return a.channel() == b.channel();
-        case ValueType::WaitGroup: return a.waitgroup() == b.waitgroup();
-        case ValueType::Native: return a.native() == b.native();
-        case ValueType::Class: return a.klass() == b.klass();
-        case ValueType::Instance: return a.instance() == b.instance();
-        case ValueType::VmFn: return a.vmClosure() == b.vmClosure();
-        case ValueType::VmArray: return a.vmArray() == b.vmArray();
-    }
-    return false;
-}
+bool valuesEqual(const Value& a, const Value& b) { return valuesDeepEqual(a, b); }
 
 std::shared_ptr<Function> lookupMethod(const std::shared_ptr<ClassInfo>& start, const std::string& name,
                                         std::shared_ptr<ClassInfo>* ownerOut = nullptr) {
@@ -119,12 +93,15 @@ std::shared_ptr<Function> lookupMethod(const std::shared_ptr<ClassInfo>& start, 
     return nullptr;
 }
 
-Value indexGet(const Value& target, const Value& idx) {
+Interpreter* g_propInterpreter = nullptr;  // set by the constructor: property getters/setters run through it
+
+Value indexGet(const Value& target, const Value& idx, bool strict = false) {
     if (target.type == ValueType::VmArray) {
         if (idx.type != ValueType::Number) throw RuntimeError(i18n::tr("Index larik harus angka", "Array index must be a number"));
         long long i = static_cast<long long>(idx.number);
         VmArrayState& st = *target.vmArray();
         size_t size = st.numeric ? st.nums.size() : st.boxed->size();
+        if (i < 0) i += static_cast<long long>(size);  // Python: -1 is the last element
         if (i < 0 || static_cast<size_t>(i) >= size) {
             throw RuntimeError(i18n::tr("Index larik di luar batas: ", "Array index out of bounds: ") + std::to_string(i));
         }
@@ -134,30 +111,66 @@ Value indexGet(const Value& target, const Value& idx) {
     if (target.type == ValueType::Array) {
         if (idx.type != ValueType::Number) throw RuntimeError(i18n::tr("Index larik harus angka", "Array index must be a number"));
         long long i = static_cast<long long>(idx.number);
+        if (i < 0) i += static_cast<long long>(target.array()->size());
         if (i < 0 || static_cast<size_t>(i) >= target.array()->size()) {
             throw RuntimeError(i18n::tr("Index larik di luar batas: ", "Array index out of bounds: ") + std::to_string(i));
         }
         return (*target.array())[static_cast<size_t>(i)];
     }
     if (target.type == ValueType::Map) {
-        if (idx.type != ValueType::String) throw RuntimeError(i18n::tr("Kunci peta harus teks", "Map key must be a string"));
-        auto it = target.map()->find(idx.str());
-        if (it == target.map()->end()) return Value::null();
+        std::string key = idx.type == ValueType::String ? idx.str() : idx.stringify();
+        auto it = target.map()->find(key);
+        if (it == target.map()->end()) {
+            if (target.map()->deflt && g_propInterpreter) {  // defaultdict / Counter: create the missing entry
+                std::vector<Value> none;
+                Value f = *target.map()->deflt;
+                Value made = vmIsActive() ? vmCallValue(f, none, g_propInterpreter) : g_propInterpreter->callValue(f, none, Span{});
+                (*target.map())[key] = made;
+                GC::instance().noteStore(target, made);
+                return made;
+            }
+            if (strict) throw RuntimeError("KeyError: " + (idx.type == ValueType::String ? "'" + key + "'" : key));
+            return Value::null();
+        }
         return it->second;
     }
     if (target.type == ValueType::String) {
         if (idx.type != ValueType::Number) throw RuntimeError(i18n::tr("Index teks harus angka", "String index must be a number"));
         long long i = static_cast<long long>(idx.number);
-        if (i < 0 || static_cast<size_t>(i) >= target.str().size()) {
+        long long n = static_cast<long long>(u8::length(target));
+        if (i < 0) i += n;
+        if (i < 0 || i >= n) {
             throw RuntimeError(i18n::tr("Index teks di luar batas: ", "String index out of bounds: ") + std::to_string(i));
         }
-        return Value::fromString(std::string(1, target.str()[static_cast<size_t>(i)]));
+        return Value::fromString(u8::slice(target, static_cast<size_t>(i), static_cast<size_t>(i) + 1));
     }
     if (target.type == ValueType::Instance) {
-        if (idx.type != ValueType::String) throw RuntimeError(i18n::tr("Kunci objek harus teks", "Object key must be a string"));
+        if (idx.type != ValueType::String) {
+            std::shared_ptr<ClassInfo> owner;
+            auto gi = lookupMethod(target.instance()->classInfo, "__getitem__", &owner);
+            if (!gi || !g_propInterpreter) throw RuntimeError(i18n::tr("Kunci objek harus teks", "Object key must be a string"));
+            std::vector<Value> a{idx};
+            Value self = target;
+            return g_propInterpreter->callFunction(gi, a, Span{}, &self, owner);
+        }
         auto fit = target.instance()->fields->find(idx.str());
         if (fit != target.instance()->fields->end()) return fit->second;
-        auto method = lookupMethod(target.instance()->classInfo, idx.str());
+        std::shared_ptr<ClassInfo> owner;
+        auto method = lookupMethod(target.instance()->classInfo, idx.str(), &owner);
+        if (method && target.instance()->classInfo->hasSpecial && methodKindOf(target.instance()->classInfo.get(), idx.str()) == 3 && g_propInterpreter) {
+            std::vector<Value> none;
+            Value self = target;
+            return g_propInterpreter->callFunction(method, none, Span{}, &self, owner);
+        }
+        if (method) return Value::fromFunction(method);
+        if (Value* attr = classAttrOf(target.instance()->classInfo.get(), idx.str())) return *attr;
+        if (idx.str() == "__class__") return Value::fromClass(target.instance()->classInfo);
+        return Value::null();
+    }
+    if (target.type == ValueType::Class && idx.type == ValueType::String) {
+        if (idx.str() == "__name__") return Value::fromString(target.klass()->name);
+        if (Value* attr = classAttrOf(target.klass(), idx.str())) return *attr;
+        auto method = lookupMethod(target.klassShared(), idx.str());
         if (method) return Value::fromFunction(method);
         return Value::null();
     }
@@ -169,9 +182,10 @@ void indexSet(Value& target, const Value& idx, const Value& value) {
     if (target.type == ValueType::VmArray) {
         if (idx.type != ValueType::Number) throw RuntimeError(i18n::tr("Index larik harus angka", "Array index must be a number"));
         long long i = static_cast<long long>(idx.number);
-        if (i < 0) throw RuntimeError(i18n::tr("Index larik negatif nggak valid: ", "Negative array index is invalid: ") + std::to_string(i));
         VmArrayState& st = *target.vmArray();
         size_t size = st.numeric ? st.nums.size() : st.boxed->size();
+        if (i < 0) i += static_cast<long long>(size);  // Python: -1 is the last element
+        if (i < 0) throw RuntimeError(i18n::tr("Index larik negatif nggak valid: ", "Negative array index is invalid: ") + std::to_string(i));
         bool needsGrow = static_cast<size_t>(i) >= size;
         if (st.numeric && value.type == ValueType::Number && !needsGrow) {
             st.nums[static_cast<size_t>(i)] = value.number;
@@ -194,6 +208,7 @@ void indexSet(Value& target, const Value& idx, const Value& value) {
     if (target.type == ValueType::Array) {
         if (idx.type != ValueType::Number) throw RuntimeError(i18n::tr("Index larik harus angka", "Array index must be a number"));
         long long i = static_cast<long long>(idx.number);
+        if (i < 0) i += static_cast<long long>(target.array()->size());
         if (i < 0) throw RuntimeError(i18n::tr("Index larik negatif nggak valid: ", "Negative array index is invalid: ") + std::to_string(i));
         auto& vec = *target.array();
         if (static_cast<size_t>(i) >= vec.size()) vec.resize(static_cast<size_t>(i) + 1);
@@ -201,12 +216,26 @@ void indexSet(Value& target, const Value& idx, const Value& value) {
         return;
     }
     if (target.type == ValueType::Map) {
-        if (idx.type != ValueType::String) throw RuntimeError(i18n::tr("Kunci peta harus teks", "Map key must be a string"));
-        (*target.map())[idx.str()] = value;
+        (*target.map())[idx.type == ValueType::String ? idx.str() : idx.stringify()] = value;
+        return;
+    }
+    if (target.type == ValueType::Class) {
+        if (idx.type != ValueType::String) throw RuntimeError(i18n::tr("Nama atribut kelas harus teks", "Class attribute name must be a string"));
+        target.klass()->classAttrs[idx.str()] = value;
         return;
     }
     if (target.type == ValueType::Instance) {
         if (idx.type != ValueType::String) throw RuntimeError(i18n::tr("Kunci objek harus teks", "Object key must be a string"));
+        if (target.instance()->classInfo->hasSpecial && g_propInterpreter &&
+            methodKindOf(target.instance()->classInfo.get(), "__set_" + idx.str()) == 4) {
+            std::shared_ptr<ClassInfo> owner;
+            auto setter = lookupMethod(target.instance()->classInfo, "__set_" + idx.str(), &owner);
+            if (setter) {
+                std::vector<Value> a{value};
+                g_propInterpreter->callFunction(setter, a, Span{}, &target, owner);
+                return;
+            }
+        }
         (*target.instance()->fields)[idx.str()] = value;
         return;
     }
@@ -278,7 +307,7 @@ bool isRegularFile(const std::string& path) {
 const std::vector<std::string>& builtinNames() {
     static const std::vector<std::string> names = {
         "cetak", "panjang", "tambah", "hapus_akhir", "potong", "gabung", "pisah",
-        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur",
+        "huruf_besar", "huruf_kecil", "ke_teks", "ke_angka", "tipe", "waktu", "tidur", "latar", "iter", "next", "_gid", "_bytelen", "_enum_init", "_pkg", "_pkgsub", "_dcv", "_callmeth", "_with_enter", "_with_exit", "getattr", "setattr", "hasattr", "delattr", "vars", "dir", "id", "hash", "issubclass", "__get", "_exc_match", "_exc_wrap", "_defaultdict", "_namedtuple", "_gennew", "_genresume", "_genclose", "_isvmgen", "pegang", "_peta", "_in", "_callkw", "_callkwm", "_close", "_go",
         "base64_encode", "base64_decode",
         "baca_file", "tulis_file", "file_ada",
         "tcp_konek", "tcp_kirim", "tcp_terima", "tcp_tutup",
@@ -293,6 +322,7 @@ const std::vector<std::string>& builtinNames() {
         "gc_info", "gc_paksa", "impor",
         "byte_di", "teks_dari",
         "elemen", "teks", "baca_input", "input",
+        "rentang", "__iter", "__iris",
     };
     return names;
 }
@@ -320,6 +350,8 @@ const std::vector<std::pair<std::string, std::string>>& builtinAliases() {
         {"jwt_create", "jwt_buat"}, {"jwt_verify", "jwt_verifikasi"},
         {"select", "pilih_kanal"},
         {"load_plugin", "muat_plugin"},
+        {"len", "panjang"}, {"str", "ke_teks"}, {"float", "ke_angka"}, {"type", "tipe"},
+        {"append", "tambah"}, {"range", "rentang"},
     };
     return aliases;
 }
@@ -332,12 +364,85 @@ alignas(64) thread_local int Interpreter::callDepth_ = 0;
 void Interpreter::registerCurrentThread() { GC::instance().registerThread(&exprDepth_); }
 void Interpreter::unregisterCurrentThread() { GC::instance().unregisterThread(&exprDepth_); }
 
+// inst.name(args) when the class has that method (VM or tree-walker); false otherwise.
+static bool callInstMethod(Interpreter* in, const Value& inst, const char* name, std::vector<Value>& args, Value* out) {
+    if (inst.type != ValueType::Instance) return false;
+    auto ci = inst.instance()->classInfo;
+    std::shared_ptr<ClassInfo> owner;
+    auto m = lookupMethod(ci, name, &owner);
+    if (vmIsActive()) {
+        std::vector<std::string> names;
+        if (!m && !vmMethodParamNames(ci.get(), name, names)) return false;
+        Value o = inst;
+        *out = vmCallMethod(o, name, args, in);
+        return true;
+    }
+    if (!m) return false;
+    Value self = inst;
+    *out = in->callFunction(m, args, Span{}, &self, owner);
+    return true;
+}
+
 Interpreter::Interpreter(std::string entryDir) {
+    g_propInterpreter = this;
+    instanceStrHook() = [this](const Value& inst, std::string& out) {
+        for (const char* m : {"__str__", "__repr__"}) {
+            std::vector<Value> none;
+            Value r;
+            if (callInstMethod(this, inst, m, none, &r)) {
+                out = r.type == ValueType::String ? r.str() : r.stringify();
+                return true;
+            }
+        }
+        return false;
+    };
+    instanceOpHook() = [this](const char* dunder, const Value& a, const Value& b, Value& out) {
+        std::vector<Value> args;
+        if (std::string(dunder) != "__neg__") args.push_back(b);
+        if (a.type == ValueType::Instance && callInstMethod(this, a, dunder, args, &out)) return true;
+        // 1 + obj: try obj.__radd__(1) and friends
+        static const std::pair<const char*, const char*> rops[] = {
+            {"__add__", "__radd__"}, {"__sub__", "__rsub__"}, {"__mul__", "__rmul__"},
+            {"__truediv__", "__rtruediv__"}, {"__mod__", "__rmod__"}};
+        for (const auto& [from, to] : rops) {
+            if (std::string(dunder) == from && b.type == ValueType::Instance) {
+                std::vector<Value> rargs{a};
+                if (callInstMethod(this, b, to, rargs, &out)) return true;
+            }
+        }
+        // comparisons fall back to the reflected operation on the right operand: a > b == b < a
+        static const std::pair<const char*, const char*> reflected[] = {
+            {"__gt__", "__lt__"}, {"__lt__", "__gt__"}, {"__ge__", "__le__"}, {"__le__", "__ge__"}};
+        for (const auto& [from, to] : reflected) {
+            if (std::string(dunder) == from && b.type == ValueType::Instance) {
+                std::vector<Value> rargs{a};
+                return callInstMethod(this, b, to, rargs, &out);
+            }
+        }
+        return false;
+    };
+    instanceBoolHook() = [this](const Value& inst) {
+        std::vector<Value> none;
+        Value r;
+        if (callInstMethod(this, inst, "__bool__", none, &r)) return r.truthy();
+        if (callInstMethod(this, inst, "__len__", none, &r)) return r.type == ValueType::Number ? r.number != 0.0 : r.truthy();
+        return true;
+    };
+    pylib::setMethodHook([this](const Value& inst, const char* name, std::vector<Value>& args, Value* out) {
+        return callInstMethod(this, inst, name, args, out);
+    });
     globals_ = GC::instance().alloc(nullptr);
     GC::instance().setGlobals(globals_);
     for (const std::string& name : builtinNames()) {
         globals_->define(name, Value::builtin(name));
     }
+    for (const std::string& name : pylib::builtinNames()) {
+        globals_->define(name, Value::builtin(name));
+    }
+    for (const std::string& name : pystd::builtinNames()) {
+        globals_->define(name, Value::builtin(name));
+    }
+    globals_->define("open", Value::builtin("open"));
     for (const auto& [aliasName, canonical] : builtinAliases()) {
         globals_->define(aliasName, Value::builtin(canonical));
     }
@@ -348,6 +453,7 @@ void Interpreter::run(const Program& program) {
     for (const auto& stmt : program.statements) {
         if (exprDepth_ == 0) GC::instance().collectIfNeeded();
         exec(stmt.get(), globals_);
+        if (g_pending != kPendNone) { g_pending = kPendNone; break; }  // top-level `hasil` ends the program
     }
     if (exprDepth_ == 0) GC::instance().collectIfNeeded();
 }
@@ -400,7 +506,12 @@ void Interpreter::execInner(const Stmt* stmt, Environment* env) {
                 fn->decl = m.get();
                 fn->closure = env;
                 info->methods[m->name] = fn;
+                if (m->kind) {
+                    info->methodKind[m->name] = static_cast<uint8_t>(m->kind);
+                    info->hasSpecial = true;
+                }
             }
+            if (info->parent && info->parent->hasSpecial) info->hasSpecial = true;
             env->define(node->name, Value::fromClass(info));
             return;
         }
@@ -418,11 +529,11 @@ void Interpreter::execInner(const Stmt* stmt, Environment* env) {
             auto info = std::make_shared<ClassInfo>();
             info->name = node->name;
             info->isEnum = true;
-            auto ns = std::make_shared<std::unordered_map<std::string, Value>>();
+            auto ns = std::make_shared<ValueMap>();
             for (const auto& variant : node->variants) {
                 auto state = std::make_shared<InstanceState>();
                 state->classInfo = info;
-                state->fields = std::make_shared<std::unordered_map<std::string, Value>>();
+                state->fields = std::make_shared<ValueMap>();
                 (*state->fields)["nama"] = Value::fromString(variant);
                 (*ns)[variant] = Value::fromInstance(state);
             }
@@ -441,7 +552,7 @@ void Interpreter::execInner(const Stmt* stmt, Environment* env) {
                     if (auto* tv = dynamic_cast<ThrownValue*>(&e)) {
                         caught = tv->value();
                     } else {
-                        auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+                        auto m = std::make_shared<ValueMap>();
                         (*m)["pesan"] = Value::fromString(e.what());
                         caught = Value::fromMap(m);
                     }
@@ -459,15 +570,29 @@ void Interpreter::execInner(const Stmt* stmt, Environment* env) {
                 throw;
             }
             if (node->finallyBlock) {
+                // A return/break/continue in flight must survive the finally
+                // block, unless the finally block itself diverts control.
+                int savedPending = g_pending;
+                Value savedRet = std::move(g_retVal);
+                g_pending = kPendNone;
                 Environment* child = GC::instance().alloc(env);
                 GcRootGuard guard(child);
                 execBlock(node->finallyBlock.get(), child);
+                if (g_pending == kPendNone) {
+                    g_pending = savedPending;
+                    g_retVal = std::move(savedRet);
+                }
             }
             return;
         }
         case StmtKind::Throw: {
             auto* node = static_cast<const ThrowStmt*>(stmt);
-            throw ThrownValue(eval(node->value.get(), env));
+            Value thrown = eval(node->value.get(), env);
+            if (thrown.type == ValueType::Class) {  // raise ValueError  ==  raise ValueError()
+                std::vector<Value> none;
+                thrown = callValue(thrown, none, node->span);
+            }
+            throw ThrownValue(std::move(thrown));
         }
         case StmtKind::Block: {
             auto* node = static_cast<const BlockStmt*>(stmt);
@@ -494,12 +619,11 @@ void Interpreter::execInner(const Stmt* stmt, Environment* env) {
             while (eval(node->condition.get(), env).truthy()) {
                 Environment* child = GC::instance().alloc(env);
                 GcRootGuard guard(child);
-                try {
-                    execBlock(node->body.get(), child);
-                } catch (BreakSignal&) {
-                    break;
-                } catch (ContinueSignal&) {
-                    continue;
+                execBlock(node->body.get(), child);
+                if (g_pending != kPendNone) {
+                    if (g_pending == kPendBreak) { g_pending = kPendNone; break; }
+                    if (g_pending == kPendContinue) { g_pending = kPendNone; continue; }
+                    return;  // kPendReturn keeps unwinding
                 }
             }
             return;
@@ -512,15 +636,12 @@ void Interpreter::execInner(const Stmt* stmt, Environment* env) {
             while (!node->condition || eval(node->condition.get(), loopEnv).truthy()) {
                 Environment* iterEnv = GC::instance().alloc(loopEnv);
                 GcRootGuard iterGuard(iterEnv);
-                bool doBreak = false;
-                try {
-                    execBlock(node->body.get(), iterEnv);
-                } catch (BreakSignal&) {
-                    doBreak = true;
-                } catch (ContinueSignal&) {
-                    // fall through to the post-expression, like C's `for`
+                execBlock(node->body.get(), iterEnv);
+                if (g_pending != kPendNone) {
+                    if (g_pending == kPendBreak) { g_pending = kPendNone; break; }
+                    if (g_pending == kPendContinue) g_pending = kPendNone;  // still run post, like C's `for`
+                    else return;  // kPendReturn keeps unwinding
                 }
-                if (doBreak) break;
                 if (node->post) eval(node->post.get(), loopEnv);
             }
             return;
@@ -528,12 +649,16 @@ void Interpreter::execInner(const Stmt* stmt, Environment* env) {
         case StmtKind::Return: {
             auto* node = static_cast<const ReturnStmt*>(stmt);
             Value value = node->value ? eval(node->value.get(), env) : Value::null();
-            throw ReturnSignal{value};
+            g_retVal = std::move(value);
+            g_pending = kPendReturn;
+            return;
         }
         case StmtKind::Break:
-            throw BreakSignal{};
+            g_pending = kPendBreak;
+            return;
         case StmtKind::Continue:
-            throw ContinueSignal{};
+            g_pending = kPendContinue;
+            return;
         case StmtKind::ExprStmt: {
             auto* node = static_cast<const ExprStmtNode*>(stmt);
             eval(node->expr.get(), env);
@@ -546,6 +671,7 @@ void Interpreter::execBlock(const BlockStmt* block, Environment* env) {
     for (const auto& stmt : block->statements) {
         if (exprDepth_ == 0) GC::instance().collectIfNeeded();
         exec(stmt.get(), env);
+        if (g_pending != kPendNone) return;  // g_retVal is unrooted: no GC while unwinding
     }
     if (exprDepth_ == 0) GC::instance().collectIfNeeded();
 }
@@ -588,6 +714,10 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
             auto* node = static_cast<const UnaryExpr*>(expr);
             Value val = eval(node->operand.get(), env);
             if (node->op == "-") {
+                if (val.type == ValueType::Instance) {
+                    Value r;
+                    if (instanceOpHook()("__neg__", val, Value::null(), r)) return r;
+                }
                 if (val.type != ValueType::Number) {
                     throw RuntimeError(i18n::tr("Operand '-' harus angka", "Operand of '-' must be a number"));
                 }
@@ -602,6 +732,11 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
             auto* node = static_cast<const BinaryExpr*>(expr);
             const std::string& op = node->op;
 
+            if (op == "?") {  // cond ? (then : else)
+                Value cond = eval(node->left.get(), env);
+                auto* branches = static_cast<const BinaryExpr*>(node->right.get());
+                return eval(cond.truthy() ? branches->left.get() : branches->right.get(), env);
+            }
             if (op == "&&") {
                 Value left = eval(node->left.get(), env);
                 if (!left.truthy()) return left;
@@ -627,6 +762,14 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
                 if (left.type == ValueType::String && right.type == ValueType::String) {
                     return Value::fromString(left.str() + right.str());
                 }
+                if (left.type == ValueType::Instance || right.type == ValueType::Instance) {
+                    Value r;
+                    if (instanceOpHook()("__add__", left, right, r)) return r;
+                }
+                if ((left.type == ValueType::Array || left.type == ValueType::VmArray) && (right.type == ValueType::Array || right.type == ValueType::VmArray)) {
+                    std::vector<Value> pa{left, right};
+                    return pylib::call("_concat", pa, nullptr, nullptr);
+                }
                 throw RuntimeError(i18n::tr("Operand '+' harus dua angka atau dua teks", "Operands of '+' must be two numbers or two strings"));
             }
 
@@ -643,17 +786,54 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
                     if (op == ">") return Value::fromBool(left.str() > right.str());
                     return Value::fromBool(left.str() >= right.str());
                 }
+                if ((left.type == ValueType::Array || left.type == ValueType::VmArray) &&
+                    (right.type == ValueType::Array || right.type == ValueType::VmArray)) {
+                    int c;
+                    try { c = pylib::compareValues(left, right); } catch (const pylib::PyError& e) { throw RuntimeError(e.what()); }
+                    return Value::fromBool(op == "<" ? c < 0 : op == "<=" ? c <= 0 : op == ">" ? c > 0 : c >= 0);
+                }
+                if (left.type == ValueType::Instance) {
+                    Value r;
+                    const char* dn = op == "<" ? "__lt__" : op == "<=" ? "__le__" : op == ">" ? "__gt__" : "__ge__";
+                    if (instanceOpHook()(dn, left, right, r)) return Value::fromBool(r.truthy());
+                }
                 throw RuntimeError(i18n::tr("Operand '", "Operands of '") + op +
                         i18n::tr("' harus dua angka atau dua teks", "' must be two numbers or two strings"));
             }
 
             if (left.type != ValueType::Number || right.type != ValueType::Number) {
+                Value rep;
+                if (op == "*" && repeatValue(left, right, rep)) return rep;
+                if (op == "-" && (left.type == ValueType::Array || left.type == ValueType::VmArray) &&
+                    (right.type == ValueType::Array || right.type == ValueType::VmArray)) {
+                    std::vector<Value> pa{left, right};
+                    return pylib::call("_setdiff", pa, nullptr, nullptr);
+                }
+                if (op == "%" && left.type == ValueType::String) {
+                    std::vector<Value> pa{left, right};
+                    try {
+                        return pylib::call("_percent", pa, nullptr, nullptr);
+                    } catch (const pylib::PyError& e) {
+                        throw RuntimeError(e.what());
+                    }
+                }
+                if (left.type == ValueType::Instance || right.type == ValueType::Instance) {
+                    Value r;
+                    const char* dn = op == "-" ? "__sub__" : op == "*" ? "__mul__" : op == "/" ? "__truediv__" : "__mod__";
+                    if (instanceOpHook()(dn, left, right, r)) return r;
+                }
                 throw RuntimeError(i18n::tr("Operand '", "Operands of '") + op + i18n::tr("' harus angka", "' must be numbers"));
             }
             if (op == "-") return Value::fromNumber(left.number - right.number);
             if (op == "*") return Value::fromNumber(left.number * right.number);
-            if (op == "/") return Value::fromNumber(left.number / right.number);
-            if (op == "%") return Value::fromNumber(std::fmod(left.number, right.number));
+            if (op == "/") {
+                if (right.number == 0) throw RuntimeError("ZeroDivisionError: division by zero");
+                return Value::fromNumber(left.number / right.number);
+            }
+            if (op == "%") {
+                if (right.number == 0) throw RuntimeError("ZeroDivisionError: modulo by zero");
+                return Value::fromNumber(pyModulo(left.number, right.number));
+            }
 
             throw RuntimeError(i18n::tr("Operator binary nggak dikenal ", "Unknown binary operator ") + op);
         }
@@ -675,12 +855,46 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
                     for (const auto& a : node->args) args.push_back(eval(a.get(), env));
                     std::shared_ptr<ClassInfo> owner;
                     auto method = lookupMethod(target.instance()->classInfo, keyVal.str(), &owner);
+                    if (method && target.instance()->classInfo->hasSpecial) {
+                        uint8_t kind = methodKindOf(target.instance()->classInfo.get(), keyVal.str());
+                        if (kind == 1) return callFunction(method, args, node->span, nullptr, owner);
+                        if (kind == 2) {
+                            args.insert(args.begin(), Value::fromClass(target.instance()->classInfo));
+                            return callFunction(method, args, node->span, nullptr, owner);
+                        }
+                    }
                     if (method) return callFunction(method, args, node->span, &target, owner);
                     auto fit = target.instance()->fields->find(keyVal.str());
                     Value fieldVal = fit != target.instance()->fields->end() ? fit->second : Value::null();
                     return callValue(fieldVal, args, node->span);
                 }
-                Value callee = indexGet(target, eval(idxNode->index.get(), env));
+                Value keyVal = eval(idxNode->index.get(), env);
+                ValueRootGuard keyGuard(keyVal);
+                if (target.type == ValueType::Class && keyVal.type == ValueType::String) {
+                    std::vector<Value> args;
+                    ValueVectorRootGuard argsGuard(args);
+                    for (const auto& a : node->args) args.push_back(eval(a.get(), env));
+                    std::shared_ptr<ClassInfo> owner;
+                    auto method = lookupMethod(target.klassShared(), keyVal.str(), &owner);
+                    if (method) {
+                        if (methodKindOf(target.klass(), keyVal.str()) == 2) args.insert(args.begin(), target);
+                        return callFunction(method, args, node->span, nullptr, owner);
+                    }
+                    throw RuntimeError(i18n::tr("kelas tidak punya metode statis '", "class has no static method '") + keyVal.str() + "'");
+                }
+                if (keyVal.type == ValueType::String) {
+                    bool receiverLast = false;
+                    if (const char* builtin = builtinMethodName(target, keyVal.str(), &receiverLast)) {
+                        std::vector<Value> args;
+                        args.reserve(node->args.size() + 1);
+                        ValueVectorRootGuard argsGuard(args);
+                        if (!receiverLast) args.push_back(target);
+                        for (const auto& a : node->args) args.push_back(eval(a.get(), env));
+                        if (receiverLast) args.push_back(target);  // sep.join(list) == gabung(list, sep)
+                        return callBuiltin(builtin, args);
+                    }
+                }
+                Value callee = indexGet(target, keyVal);
                 ValueRootGuard calleeGuard(callee);
                 std::vector<Value> args;
                 args.reserve(node->args.size());
@@ -709,7 +923,7 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
             Value target = eval(node->target.get(), env);
             ValueRootGuard targetGuard(target);
             Value idx = eval(node->index.get(), env);
-            return indexGet(target, idx);
+            return indexGet(target, idx, node->strict);
         }
         case ExprKind::IndexAssign: {
             auto* node = static_cast<const IndexAssignExpr*>(expr);
@@ -719,6 +933,7 @@ Value Interpreter::evalInner(const Expr* expr, Environment* env) {
             ValueRootGuard idxGuard(idx);
             Value value = eval(node->value.get(), env);
             indexSet(target, idx, value);
+            GC::instance().noteStore(target, value);
             return value;
         }
         case ExprKind::FnExpr: {
@@ -750,9 +965,19 @@ Value Interpreter::callValue(const Value& callee, std::vector<Value>& args, Span
         }
     }
     if (callee.type == ValueType::Class) {
+        if (args.size() == 1) {  // Color(1): an Enum looks its member up by value
+            auto mem = callee.klass()->classAttrs.find("_members_");
+            if (mem != callee.klass()->classAttrs.end() && mem->second.type == ValueType::Array) {
+                for (const Value& m : *mem->second.array()) {
+                    if (m.type == ValueType::Instance && valuesDeepEqual((*m.instance()->fields)["value"], args[0])) return m;
+                }
+                throw RuntimeError("ValueError: " + args[0].stringify() + " is not a valid " + callee.klass()->name);
+            }
+        }
         auto state = std::make_shared<InstanceState>();
         state->classInfo = callee.klassShared();
-        state->fields = std::make_shared<std::unordered_map<std::string, Value>>();
+        state->fields = std::make_shared<ValueMap>();
+        GC::instance().trackInstance(state->fields);
         Value instanceVal = Value::fromInstance(state);
         if (callee.klass()->isStruct) {
             const auto& fields = callee.klass()->structFields;
@@ -772,17 +997,27 @@ Value Interpreter::callValue(const Value& callee, std::vector<Value>& args, Span
         if (ctor) callFunction(ctor, args, callSite, &instanceVal, owner);
         return instanceVal;
     }
+    if (callee.type == ValueType::Instance) {
+        Value r;
+        if (callInstMethod(this, callee, "__call__", args, &r)) return r;
+    }
     throw RuntimeError(i18n::tr("Coba manggil nilai yang bukan fungsi", "Attempted to call a non-function value"));
 }
 
 Value Interpreter::callFunction(const std::shared_ptr<Function>& fn, std::vector<Value>& args, Span callSite,
                                  const Value* boundThis, const std::shared_ptr<ClassInfo>& methodOwner) {
     const FnDeclStmt* decl = fn->decl;
-    if (args.size() != decl->params.size()) {
+    if (decl->variadic()) {
+        std::string err = packVarargs(args, decl->restIndex, decl->kwIndex, decl->requiredArgs());
+        if (!err.empty()) throw RuntimeError(i18n::tr("Fungsi '", "Function '") + decl->name + "': " + err);
+    }
+    if (static_cast<int>(args.size()) < decl->requiredArgs() || args.size() > decl->params.size()) {
         throw RuntimeError(i18n::tr("Fungsi '", "Function '") + decl->name +
-                            i18n::tr("' butuh ", "' expects ") + std::to_string(decl->params.size()) +
+                            i18n::tr("' butuh ", "' expects ") + std::to_string(decl->requiredArgs()) +
+                            (decl->minArgs >= 0 ? ".." + std::to_string(decl->params.size()) : std::string()) +
                             i18n::tr(" argumen, dapat ", " arg(s), got ") + std::to_string(args.size()));
     }
+    while (args.size() < decl->params.size()) args.push_back(Value::null());
     if (callDepth_ >= kMaxCallDepth) {
         throw RuntimeError(i18n::tr("Rekursi kelewat dalam (lebih dari ", "Recursion too deep (over ") +
                             std::to_string(kMaxCallDepth) + i18n::tr(" panggilan bersarang)", " nested calls)"));
@@ -805,8 +1040,11 @@ Value Interpreter::callFunction(const std::shared_ptr<Function>& fn, std::vector
     try {
         DepthResetGuard depthReset(exprDepth_);
         execBlock(decl->body.get(), env);
-    } catch (ReturnSignal& r) {
-        return r.value;
+        if (g_pending != kPendNone) {
+            bool returned = g_pending == kPendReturn;
+            g_pending = kPendNone;  // stray break/continue don't leak into the caller's loop
+            if (returned) return std::move(g_retVal);
+        }
     } catch (RuntimeError& e) {
         // Builds the call-chain trace one frame per unwind, innermost first.
         e.addFrame(decl->name, callSite);
@@ -834,13 +1072,92 @@ void Interpreter::jalankanBadanGoroutine(Value fn, std::vector<Value> args, std:
     }
     Interpreter::unregisterCurrentThread();
     GIL::instance().unlock();
-    GC::liveGoroutines--;
+    GC::goroutineDone();
 #else
     (void)fn; (void)args;
 #endif
 }
 
 Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args) {
+    // Keyword arguments arrive as one trailing map tagged "__kw__" (see _callkw).
+    const ValueMap* kw = nullptr;
+    std::shared_ptr<ValueMap> kwHold;
+    if (!args.empty() && args.back().type == ValueType::Map && args.back().map()->count("__kw__")) {
+        kwHold = args.back().mapShared();
+        kw = kwHold.get();
+        args.pop_back();
+    }
+    if (pylib::handles(name)) {
+        try {
+            return pylib::call(name, args, kw, [this](const Value& fn, std::vector<Value>& a) { return callValue(fn, a, Span{}); });
+        } catch (const pylib::PyError& e) {
+            throw RuntimeError(e.what());
+        }
+    }
+    if (pystd::handles(name)) {
+        try {
+            return pystd::call(name, args, kw, [this](const Value& fn, std::vector<Value>& a) { return callValue(fn, a, Span{}); });
+        } catch (const pylib::PyError& e) {
+            throw RuntimeError(e.what());
+        }
+    }
+    if (name == "open") {
+        // open(path, mode="r"): a File object from the embedded __io module.
+        std::string mode = "r";
+        if (args.size() > 1 && args[1].type == ValueType::String) mode = args[1].str();
+        if (kw) { auto it = kw->find("mode"); if (it != kw->end() && it->second.type == ValueType::String) mode = it->second.str(); }
+        if (args.empty()) throw RuntimeError("open() butuh path");
+        Value mod = doImport("__io");
+        Value cls = (*mod.map())["File"];
+        std::vector<Value> ctorArgs{args[0], Value::fromString(mode)};
+        if (vmIsActive()) return vmCallValue(cls, ctorArgs, this);
+        return callValue(cls, ctorArgs, Span{});
+    }
+    if (name == "_with_enter") {
+        Value r;
+        std::vector<Value> none;
+        if (!args.empty() && args[0].type == ValueType::Instance && callInstMethod(this, args[0], "__enter__", none, &r)) return r;
+        return args.empty() ? Value::null() : args[0];
+    }
+    if (name == "_with_exit") {  // (manager, error-or-None) -> true when the error is swallowed
+        if (args.size() != 2) throw RuntimeError("_with_exit() butuh 2 argumen");
+        const Value& m = args[0];
+        if (m.type != ValueType::Instance) return Value::fromBool(false);
+        std::vector<Value> ea;
+        if (args[1].type == ValueType::Null) {
+            ea = {Value::null(), Value::null(), Value::null()};
+        } else {
+            std::vector<Value> wa{args[1]};
+            Value err = callBuiltin("_exc_wrap", wa);  // __exit__ gets an exception object, as in Python
+            Value t = err.type == ValueType::Instance ? Value::fromClass(err.instance()->classInfo) : Value::fromString(err.typeName());
+            ea = {t, err, Value::null()};
+        }
+        Value r;
+        if (callInstMethod(this, m, "__exit__", ea, &r)) return Value::fromBool(args[1].type != ValueType::Null && r.truthy());
+        std::vector<Value> none;
+        callInstMethod(this, m, "close", none, &r);
+        return Value::fromBool(false);
+    }
+    if (name == "_close") {
+        if (!args.empty() && args[0].type == ValueType::Instance) {
+            std::vector<std::string> names;
+            std::shared_ptr<ClassInfo> owner;
+            bool has = (vmIsActive() && vmMethodParamNames(args[0].instance()->classInfo.get(), "close", names)) ||
+                       lookupMethod(args[0].instance()->classInfo, "close", &owner) != nullptr;
+            if (has) {
+                Value obj = args[0];
+                std::vector<Value> none;
+                if (vmIsActive()) return vmCallMethod(obj, "close", none, this);
+                return callFunction(lookupMethod(obj.instance()->classInfo, "close", &owner), none, Span{}, &obj, owner);
+            }
+        }
+        return Value::null();
+    }
+    if (kw && name != "cetak" && name != "_callkw" && name != "_callkwm") {
+        for (const auto& e : *kw) {
+            if (e.first != "__kw__") throw RuntimeError(name + "(): argumen bernama '" + e.first + "' tidak didukung");
+        }
+    }
     auto need = [&](size_t n) {
         if (args.size() != n) {
             throw RuntimeError(name + i18n::tr("() butuh ", "() expects ") + std::to_string(n) +
@@ -875,11 +1192,16 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
 
     if (name == "cetak") {
         std::ostream& os = outStream_ ? *outStream_ : std::cout;
+        std::string sep = " ", end = "\n";
+        if (kw) {
+            if (auto it = kw->find("sep"); it != kw->end() && it->second.type != ValueType::Null) sep = it->second.stringify();
+            if (auto it = kw->find("end"); it != kw->end() && it->second.type != ValueType::Null) end = it->second.stringify();
+        }
         for (size_t i = 0; i < args.size(); i++) {
-            if (i > 0) os << ' ';
+            if (i > 0) os << sep;
             os << args[i].stringify();
         }
-        os << '\n';
+        os << end;
         os.flush();
         return Value::null();
     }
@@ -908,10 +1230,23 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
     if (name == "panjang") {
         need(1);
         const Value& v = args[0];
-        if (v.type == ValueType::String) return Value::fromNumber(static_cast<double>(v.str().size()));
+        if (v.type == ValueType::String) return Value::fromNumber(static_cast<double>(u8::length(v)));
         if (v.type == ValueType::Array) return Value::fromNumber(static_cast<double>(v.array()->size()));
         if (v.type == ValueType::VmArray) return Value::fromNumber(static_cast<double>(v.vmArray()->numeric ? v.vmArray()->nums.size() : v.vmArray()->boxed->size()));
         if (v.type == ValueType::Map) return Value::fromNumber(static_cast<double>(v.map()->size()));
+        if (v.type == ValueType::Class) {
+            auto mem = v.klass()->classAttrs.find("_members_");
+            if (mem != v.klass()->classAttrs.end() && mem->second.type == ValueType::Array) return Value::fromNumber(static_cast<double>(mem->second.array()->size()));
+        }
+        if (v.type == ValueType::Instance) {
+            if (vmIsActive()) { std::vector<Value> none; Value o = v; return vmCallMethod(o, "__len__", none, this); }
+            std::shared_ptr<ClassInfo> owner;
+            if (auto m = lookupMethod(v.instance()->classInfo, "__len__", &owner)) {
+                std::vector<Value> none;
+                Value self = v;
+                return callFunction(m, none, Span{}, &self, owner);
+            }
+        }
         throw RuntimeError(i18n::tr("panjang(): butuh teks, larik, atau peta", "panjang(): needs a string, array, or map"));
     }
 
@@ -929,17 +1264,20 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
                     st->boxed->reserve(st->nums.size() + 1);
                     for (double d : st->nums) st->boxed->push_back(Value::fromNumber(d));
                     st->boxed->push_back(args[1]);
+                    GC::instance().noteStore(args[0], args[1]);
                     st->nums.clear();
                     st->nums.shrink_to_fit();
                     return Value::fromNumber(static_cast<double>(st->boxed->size()));
                 }
             } else {
                 st->boxed->push_back(args[1]);
+                GC::instance().noteStore(args[0], args[1]);
                 return Value::fromNumber(static_cast<double>(st->boxed->size()));
             }
         }
         expectType(args[0], ValueType::Array);
         args[0].array()->push_back(args[1]);
+        GC::instance().noteStore(args[0], args[1]);
         return Value::fromNumber(static_cast<double>(args[0].array()->size()));
     }
 
@@ -975,11 +1313,10 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         long long start = static_cast<long long>(args[1].number);
         long long end = static_cast<long long>(args[2].number);
         if (args[0].type == ValueType::String) {
-            long long len = static_cast<long long>(args[0].str().size());
+            long long len = static_cast<long long>(u8::length(args[0]));
             start = std::max<long long>(0, std::min(start, len));
             end = std::max<long long>(start, std::min(end, len));
-            return Value::fromString(args[0].str().substr(static_cast<size_t>(start),
-                                                          static_cast<size_t>(end - start)));
+            return Value::fromString(u8::slice(args[0], static_cast<size_t>(start), static_cast<size_t>(end)));
         }
         if (args[0].type == ValueType::Array) {
             long long len = static_cast<long long>(args[0].array()->size());
@@ -1064,13 +1401,7 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
     if (name == "huruf_besar" || name == "huruf_kecil") {
         need(1);
         expectType(args[0], ValueType::String);
-        std::string out = args[0].str();
-        bool upper = name == "huruf_besar";
-        for (char& c : out) {
-            c = static_cast<char>(upper ? std::toupper(static_cast<unsigned char>(c))
-                                         : std::tolower(static_cast<unsigned char>(c)));
-        }
-        return Value::fromString(out);
+        return Value::fromString(u8::mapCase(args[0].str(), name == "huruf_besar"));
     }
 
     if (name == "ke_angka") {
@@ -1092,6 +1423,7 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
 
     if (name == "tipe") {
         need(1);
+        if (args[0].type == ValueType::Instance) return Value::fromClass(args[0].instance()->classInfo);  // type(obj).__name__
         return Value::fromString(args[0].typeName());
     }
 
@@ -1100,6 +1432,600 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         auto now = std::chrono::system_clock::now();
         double secs = std::chrono::duration<double>(now.time_since_epoch()).count();
         return Value::fromNumber(secs);
+    }
+
+    if (name == "_go") {
+        // _go(cfg, target, name, args...): calls a wrapped Go function. Scalar arguments and results
+        // cross the plugin ABI directly (no JSON); anything else goes through cfg["panggil"].
+        if (args.size() < 3 || args[0].type != ValueType::Map) throw RuntimeError("_go(): argumen tidak valid");
+        ValueMap& cfg = *args[0].map();
+        auto slow = [&]() -> Value {
+            std::vector<Value> rest(args.begin() + 3, args.end());
+            std::vector<Value> pa{args[1], args[2], Value::fromArray(std::make_shared<std::vector<Value>>(std::move(rest)))};
+            return callValue(cfg.at("panggil"), pa, Span{});
+        };
+        bool scalar = true;
+        for (size_t i = 1; i < args.size(); i++) {
+            ValueType t = args[i].type;
+            if (t != ValueType::Number && t != ValueType::String && t != ValueType::Bool && t != ValueType::Null) { scalar = false; break; }
+        }
+        auto pit = cfg.find("cepat");
+        if (!scalar || pit == cfg.end() || !pit->second.native()) return slow();
+        NsValue stackBuf[10];
+        std::vector<NsValue> heapBuf;
+        NsValue* argv = stackBuf;
+        size_t n = args.size() - 1;
+        if (n > 10) { heapBuf.resize(n); argv = heapBuf.data(); }
+        for (size_t i = 0; i < n; i++) {
+            const Value& v = args[i + 1];
+            NsValue& a = argv[i];
+            a = NsValue{};
+            switch (v.type) {
+                case ValueType::String:
+                    a.type = NS_STRING;
+                    a.str = const_cast<char*>(v.str().data());  // borrowed for the call
+                    a.str_len = static_cast<int>(v.str().size());
+                    break;
+                case ValueType::Number: a.type = NS_NUMBER; a.number = v.number; break;
+                case ValueType::Bool: a.type = NS_BOOL; a.boolean = v.boolean() ? 1 : 0; break;
+                default: a.type = NS_NULL; break;
+            }
+        }
+        NsValue result{};
+        {
+            ValueVectorRootGuard argsRoot(args);
+            DepthResetGuard depthReset(exprDepth_);
+            GilRelease release;
+            result = reinterpret_cast<NsFn>(pit->second.native()->fnPtr)(static_cast<int>(n), argv);
+        }
+        Value out;
+        switch (result.type) {
+            case NS_NUMBER: return Value::fromNumber(result.number);
+            case NS_BOOL: return Value::fromBool(result.boolean != 0);
+            case NS_NULL: return Value::null();
+            default: break;
+        }
+        std::string payload = result.str ? std::string(result.str, result.str_len >= 0 ? static_cast<size_t>(result.str_len) : std::strlen(result.str)) : std::string();
+        if (result.str) free(result.str);
+        if (payload.size() >= 2 && payload[0] == '\x01') {
+            char kind = payload[1];
+            if (kind == 'S') return slow();
+            if (kind == 'E') throw ThrownValue(Value::fromString(payload.substr(2)));
+            Value data = json::decode(payload.substr(2));
+            if (kind == 'H') {
+                std::vector<Value> ba{data};
+                return callValue(cfg.at("bungkus"), ba, Span{});
+            }
+            return data;
+        }
+        return Value::fromString(std::move(payload));
+    }
+
+    if (name == "pegang") {
+        // pegang(fungsi_bebas, kunci): a value that calls fungsi_bebas(kunci) when it is
+        // collected. Keep it inside the object that owns the resource.
+        need(2);
+        if (args[0].type != ValueType::Native || !args[0].native()) {
+            throw RuntimeError("pegang(): argumen pertama harus fungsi native");
+        }
+        expectType(args[1], ValueType::String);
+        const NativeFunction* src = args[0].native();
+        auto nf = std::make_shared<NativeFunction>();
+        nf->plugin = src->plugin;
+        nf->fnPtr = src->fnPtr;
+        nf->name = src->name;
+        nf->abiVer = src->abiVer;
+        std::shared_ptr<NativePlugin> keep = src->plugin;
+        void* fp = src->fnPtr;
+        std::string key = args[1].str();
+        nf->onRelease = [keep, fp, key]() {
+            NsValue a{};
+            a.type = NS_STRING;
+            a.str = const_cast<char*>(key.c_str());
+            a.str_len = static_cast<int>(key.size());
+            NsValue r = reinterpret_cast<NsFn>(fp)(1, &a);
+            if (r.type == NS_STRING && r.str) free(r.str);
+        };
+        return Value::fromNative(nf);
+    }
+
+    if (name == "_in") {
+        // `a in b`: substring, array element, or map key.
+        need(2);
+        const Value& needle = args[0];
+        const Value& hay = args[1];
+        if (hay.type == ValueType::String) {
+            if (needle.type != ValueType::String) throw RuntimeError(i18n::tr("'in' pada teks butuh teks di kiri", "'in' on a string needs a string on the left"));
+            return Value::fromBool(hay.str().find(needle.str()) != std::string::npos);
+        }
+        if (hay.type == ValueType::Map) {
+            std::string key = needle.type == ValueType::String ? needle.str() : needle.stringify();
+            return Value::fromBool(hay.map()->find(key) != hay.map()->end());
+        }
+        if (hay.type == ValueType::Array) {
+            for (const Value& el : *hay.array()) if (valuesEqual(el, needle)) return Value::fromBool(true);
+            return Value::fromBool(false);
+        }
+        if (hay.type == ValueType::VmArray) {
+            auto* st = hay.vmArray();
+            if (st->numeric) {
+                if (needle.type != ValueType::Number) return Value::fromBool(false);
+                for (double d : st->nums) if (d == needle.number) return Value::fromBool(true);
+                return Value::fromBool(false);
+            }
+            for (const Value& el : *st->boxed) if (valuesEqual(el, needle)) return Value::fromBool(true);
+            return Value::fromBool(false);
+        }
+        if (hay.type == ValueType::Instance) {
+            std::vector<Value> a{needle};
+            Value r;
+            if (callInstMethod(this, hay, "__contains__", a, &r)) return Value::fromBool(r.truthy());
+            std::vector<Value> lst{hay};
+            Value arr = pylib::call("list", lst, nullptr, [this](const Value& fn, std::vector<Value>& aa) { return callValue(fn, aa, Span{}); });
+            for (const Value& el : arrayElements(arr)) if (valuesEqual(el, needle)) return Value::fromBool(true);
+            return Value::fromBool(false);
+        }
+        throw RuntimeError(i18n::tr("'in' butuh teks, larik, atau peta di kanan", "'in' needs a string, array, or map on the right"));
+    }
+
+    if (name == "_callkw" || name == "_callkwm") {
+        // Keyword arguments. _callkw(fn, [pos...], {k: v}) / _callkwm(obj, "name", [pos...], {k: v})
+        const bool method = name == "_callkwm";
+        need(method ? 4 : 3);
+        Value obj = method ? args[0] : Value::null();
+        Value fn = method ? Value::null() : args[0];
+        std::string mname = method ? args[1].str() : std::string();
+        std::vector<Value> pos = arrayElements(args[method ? 2 : 1]);
+        ValueMap kwMap = *args[method ? 3 : 2].map();
+
+        auto tagged = [&](std::vector<Value> p) {  // positional + "__kw__"-tagged map, for builtins
+            auto m = std::make_shared<ValueMap>();
+            (*m)["__kw__"] = Value::fromBool(true);
+            for (const auto& e : kwMap) (*m)[e.first] = e.second;
+            p.push_back(Value::fromMap(m));
+            return p;
+        };
+        int bindRest = -1, bindKw = -1;  // *args / **kw positions of the target, when it has them
+        auto bind = [&](const std::vector<std::string>& names, std::vector<Value> p, const std::string& who) {
+            size_t maxIdx = p.size();
+            std::vector<Value> out = p;
+            auto extraKw = std::make_shared<ValueMap>();
+            size_t ordinary = names.size();
+            if (bindRest >= 0) ordinary = std::min<size_t>(ordinary, static_cast<size_t>(bindRest));
+            if (bindKw >= 0) ordinary = std::min<size_t>(ordinary, static_cast<size_t>(bindKw));
+            for (const auto& e : kwMap) {
+                size_t idx = names.size();
+                for (size_t k = 0; k < ordinary; k++) if (names[k] == e.first) { idx = k; break; }
+                if (idx == names.size()) {
+                    if (bindKw >= 0) { (*extraKw)[e.first] = e.second; continue; }
+                    throw RuntimeError(who + "(): argumen bernama '" + e.first + "' tidak dikenal");
+                }
+                if (idx < p.size()) throw RuntimeError(who + "(): argumen '" + e.first + "' diberikan dua kali");
+                if (out.size() <= idx) out.resize(idx + 1, Value::null());
+                out[idx] = e.second;
+                maxIdx = std::max(maxIdx, idx + 1);
+            }
+            out.resize(maxIdx, Value::null());
+            if (!extraKw->empty()) {
+                (*extraKw)["__kw__"] = Value::fromBool(true);
+                out.push_back(Value::fromMap(extraKw));  // packed into **kw by the callee
+            }
+            return out;
+        };
+        auto astParams = [](const std::shared_ptr<Function>& f) { return f->decl->params; };
+
+        if (method) {
+            if (obj.type == ValueType::Instance) {
+                std::vector<std::string> names;
+                bool astShadow = false;
+                (void)astShadow;
+                bool haveVm = vmIsActive() && vmMethodParamNames(obj.instance()->classInfo.get(), mname, names, &bindRest, &bindKw);
+                std::shared_ptr<ClassInfo> owner;
+                auto astMethod = haveVm ? nullptr : lookupMethod(obj.instance()->classInfo, mname, &owner);
+                if (!haveVm && astMethod) names = astParams(astMethod);
+                if (haveVm || astMethod) {
+                    if (astMethod) { bindRest = astMethod->decl->restIndex; bindKw = astMethod->decl->kwIndex; }
+                    std::vector<Value> bound = bind(names, pos, mname);
+                    if (haveVm) return vmCallMethod(obj, mname, bound, this);
+                    return callFunction(astMethod, bound, Span{}, &obj, owner);
+                }
+                auto fit = obj.instance()->fields->find(mname);
+                if (fit == obj.instance()->fields->end()) throw RuntimeError("objek tidak punya metode '" + mname + "'");
+                fn = fit->second;
+            } else {
+                bool receiverLast = false;
+                if (const char* b = builtinMethodName(obj, mname, &receiverLast)) {
+                    std::vector<Value> full;
+                    full.push_back(obj);
+                    for (auto& p : pos) full.push_back(p);
+                    std::vector<Value> t = tagged(full);
+                    return callBuiltin(b, t);
+                }
+                fn = indexGet(obj, Value::fromString(mname));
+            }
+        }
+        if (fn.type == ValueType::Builtin) {
+            std::vector<Value> t = tagged(pos);
+            return callBuiltin(fn.builtinName(), t);
+        }
+        std::vector<std::string> names;
+        if (fn.type == ValueType::Fn) { names = astParams(fn.fnShared()); bindRest = fn.fn()->decl->restIndex; bindKw = fn.fn()->decl->kwIndex; }
+        else if (fn.type == ValueType::VmFn) { vmParamNames(fn, names); vmVarargInfo(fn, bindRest, bindKw); }
+        else if (fn.type == ValueType::Class) {
+            std::shared_ptr<ClassInfo> owner;
+            bool found = false;
+            for (const char* ctorName : {"konstruktor", "constructor"}) {
+                if (vmIsActive() && vmMethodParamNames(fn.klass(), ctorName, names, &bindRest, &bindKw)) { found = true; break; }
+                auto ctor = lookupMethod(fn.klassShared(), ctorName, &owner);
+                if (ctor) { names = astParams(ctor); found = true; break; }
+            }
+            if (!found && fn.klass()->isStruct) names = fn.klass()->structFields;
+            else if (!found) throw RuntimeError("kelas tidak punya konstruktor yang menerima argumen bernama");
+        } else {
+            throw RuntimeError("argumen bernama tidak didukung untuk tipe ini");
+        }
+        std::vector<Value> bound = bind(names, pos, "fungsi");
+        if (fn.type == ValueType::Class && vmIsActive()) return vmCallValue(fn, bound, this);
+        return callValue(fn, bound, Span{});
+    }
+
+    if (name == "_peta") {
+        // Dict literal {k: v, ...}: alternating key/value arguments.
+        Value m = Value::newMap();
+        for (size_t i = 0; i + 1 < args.size(); i += 2) {
+            (*m.map())[args[i].type == ValueType::String ? args[i].str() : args[i].stringify()] = args[i + 1];
+            GC::instance().noteStore(m, args[i + 1]);
+        }
+        return m;
+    }
+
+    if (name == "getattr" || name == "hasattr") {
+        if (args.size() < 2 || args.size() > 3) throw RuntimeError(name + "() butuh 2 atau 3 argumen");
+        expectType(args[1], ValueType::String);
+        const Value& o = args[0];
+        bool found = false;
+        Value got;
+        if (o.type == ValueType::Instance) {
+            const std::string& k = args[1].str();
+            std::vector<std::string> pn;
+            found = o.instance()->fields->count(k) != 0 || vmMethodParamNames(o.instance()->classInfo.get(), k, pn) || k == "__class__" ||
+                    lookupMethod(o.instance()->classInfo, k) != nullptr || classAttrOf(o.instance()->classInfo.get(), k) != nullptr ||
+                    methodKindOf(o.instance()->classInfo.get(), k) != 0;
+            if (found) got = vmIsActive() ? vmIndexGet(o, args[1]) : indexGet(o, args[1]);
+            if (found && name == "getattr" && (got.type == ValueType::Fn || got.type == ValueType::VmFn) &&
+                !o.instance()->fields->count(k) && methodKindOf(o.instance()->classInfo.get(), k) == 0) {
+                Value mod = doImport("__gen");  // a method fetched by name stays bound to its object
+                std::vector<Value> ba{o, args[1]};
+                got = vmIsActive() ? vmCallValue((*mod.map())["bound"], ba, this) : callValue((*mod.map())["bound"], ba, Span{});
+            }
+        } else if (o.type == ValueType::Map) {
+            auto it = o.map()->find(args[1].str());
+            found = it != o.map()->end();
+            if (found) got = it->second;
+        } else if (o.type == ValueType::Class) {
+            const std::string& k = args[1].str();
+            found = classAttrOf(o.klass(), k) != nullptr || lookupMethod(o.klassShared(), k) != nullptr || k == "__name__";
+            if (found) got = vmIsActive() ? vmIndexGet(o, args[1]) : indexGet(o, args[1]);
+        }
+        if (name == "hasattr") return Value::fromBool(found);
+        if (found) return got;
+        if (args.size() == 3) return args[2];
+        throw RuntimeError("AttributeError: '" + std::string(o.typeName()) + "' object has no attribute '" + args[1].str() + "'");
+    }
+    if (name == "_enum_init") {  // members of `class C(Enum)` become objects with .name / .value
+        need(1);
+        if (args[0].type != ValueType::Class) return Value::null();
+        ClassInfo* ci = args[0].klass();
+        auto members = std::make_shared<std::vector<Value>>();
+        double last = 0;
+        std::vector<std::string> names;
+        for (const auto& kv : ci->classAttrs) names.push_back(kv.first);
+        for (const std::string& n : names) {
+            if (n.empty() || n[0] == '_') continue;
+            Value v = ci->classAttrs[n];
+            if (v.type == ValueType::Fn || v.type == ValueType::VmFn || v.type == ValueType::Builtin || v.type == ValueType::Class ||
+                v.type == ValueType::Native) continue;
+            if (v.type == ValueType::Map && v.map()->count("__auto__")) v = Value::fromNumber(last + 1);
+            if (v.type == ValueType::Number) last = v.number;
+            auto st = std::make_shared<InstanceState>();
+            st->classInfo = args[0].klassShared();
+            st->fields = std::make_shared<ValueMap>();
+            GC::instance().trackInstance(st->fields);
+            (*st->fields)["name"] = Value::fromString(n);
+            (*st->fields)["value"] = v;
+            Value inst = Value::fromInstance(st);
+            ci->classAttrs[n] = inst;
+            members->push_back(inst);
+        }
+        ci->classAttrs["_members_"] = Value::fromArray(members);
+        for (const Value& m : *members) GC::instance().noteStore(args[0], m);
+        return Value::null();
+    }
+    if (name == "_pkg") {  // `import a.b` binds a: the module if it exists, else an empty namespace
+        need(1);
+        try {
+            return doImport(args[0].str());
+        } catch (const RuntimeError&) {
+            return Value::newMap();
+        }
+    }
+    if (name == "_pkgsub") {  // (root, "a/b/c"): attach module a/b/c at root.b.c when it can be imported
+        need(2);
+        Value holder = args[0];
+        const std::string& full = args[1].str();
+        std::vector<std::string> segs;
+        std::string cur;
+        for (char c : full + "/") { if (c == '/') { segs.push_back(cur); cur.clear(); } else cur += c; }
+        for (size_t i = 1; i + 1 < segs.size() && holder.type == ValueType::Map; i++) {
+            auto it = holder.map()->find(segs[i]);
+            if (it == holder.map()->end()) return Value::null();
+            holder = it->second;
+        }
+        if (holder.type != ValueType::Map || segs.size() < 2) return Value::null();
+        try {
+            Value mod = doImport(full);
+            if (!holder.map()->count(segs.back())) { (*holder.map())[segs.back()] = mod; GC::instance().noteStore(holder, mod); }
+        } catch (const RuntimeError&) {
+        }
+        return Value::null();
+    }
+    if (name == "_gid") {  // id of the running goroutine (asyncio uses it to find the current task)
+        return Value::fromNumber(static_cast<double>(std::hash<std::thread::id>{}(std::this_thread::get_id()) % 1000000007ULL));
+    }
+    if (name == "_bytelen") {  // size in UTF-8 bytes (len() counts characters)
+        need(1);
+        expectType(args[0], ValueType::String);
+        return Value::fromNumber(static_cast<double>(args[0].str().size()));
+    }
+    if (name == "_dcv") {  // dataclass field value: field(default_factory=f) markers are expanded here
+        need(1);
+        const Value& v = args[0];
+        if (v.type == ValueType::Map && v.map()->count("__dcfield__")) {
+            auto fit = v.map()->find("default_factory");
+            if (fit != v.map()->end() && fit->second.type != ValueType::Null) {
+                std::vector<Value> none;
+                return vmIsActive() ? vmCallValue(fit->second, none, this) : callValue(fit->second, none, Span{});
+            }
+            return (*v.map())["default"];
+        }
+        return v;
+    }
+    if (name == "_callmeth") {  // (object, name, [args]) -> object.name(*args)
+        need(3);
+        std::vector<Value> a = arrayElements(args[2]);
+        Value r;
+        if (!callInstMethod(this, args[0], args[1].str().c_str(), a, &r)) throw RuntimeError("AttributeError: objek tidak punya metode '" + args[1].str() + "'");
+        return r;
+    }
+    if (name == "setattr") {
+        need(3);
+        expectType(args[1], ValueType::String);
+        Value o = args[0];
+        if (o.type == ValueType::Instance || o.type == ValueType::Map || o.type == ValueType::Class) {
+            indexSet(o, args[1], args[2]);
+            return Value::null();
+        }
+        throw RuntimeError("setattr(): objek tidak bisa diberi atribut");
+    }
+    if (name == "delattr") {
+        need(2);
+        expectType(args[1], ValueType::String);
+        if (args[0].type == ValueType::Instance) args[0].instance()->fields->erase(args[1].str());
+        else if (args[0].type == ValueType::Map) args[0].map()->erase(args[1].str());
+        return Value::null();
+    }
+    if (name == "vars" || name == "dir") {
+        need(1);
+        auto out = std::make_shared<std::vector<Value>>();
+        auto m = std::make_shared<ValueMap>();
+        if (args[0].type == ValueType::Instance) {
+            for (const auto& [k, v] : *args[0].instance()->fields) { (*m)[k] = v; out->push_back(Value::fromString(k)); }
+            if (name == "dir") {
+                std::vector<std::string> seen;
+                for (ClassInfo* c = args[0].instance()->classInfo.get(); c; c = c->parent.get()) {
+                    for (const auto& [k, f] : c->methods) out->push_back(Value::fromString(k));
+                    for (const auto& [k, f] : c->vmMethods) out->push_back(Value::fromString(k));
+                }
+            }
+        } else if (args[0].type == ValueType::Map) {
+            for (const auto& [k, v] : *args[0].map()) { (*m)[k] = v; out->push_back(Value::fromString(k)); }
+        }
+        if (name == "vars") return Value::fromMap(m);
+        return Value::fromArray(out);
+    }
+    if (name == "id") {
+        need(1);
+        return Value::fromNumber(static_cast<double>(reinterpret_cast<uintptr_t>(args[0].ref.get())));
+    }
+    if (name == "hash") {
+        need(1);
+        const Value& v = args[0];
+        if (v.type == ValueType::Number) return Value::fromNumber(v.number == std::floor(v.number) ? v.number : static_cast<double>(std::hash<double>{}(v.number) % 1000000007ULL));
+        return Value::fromNumber(static_cast<double>(std::hash<std::string>{}(v.stringify()) % 2305843009213693951ULL));
+    }
+    if (name == "issubclass") {
+        need(2);
+        if (args[0].type != ValueType::Class) return Value::fromBool(false);
+        std::vector<Value> targets = (args[1].type == ValueType::Array || args[1].type == ValueType::VmArray) ? arrayElements(args[1]) : std::vector<Value>{args[1]};
+        for (const Value& t : targets) {
+            if (t.type != ValueType::Class) continue;
+            for (ClassInfo* c = args[0].klass(); c; c = c->parent.get()) if (c == t.klass() || c->name == t.klass()->name) return Value::fromBool(true);
+        }
+        return Value::fromBool(false);
+    }
+    if (name == "_exc_match" || name == "_exc_wrap") {
+        need(name == "_exc_match" ? 2 : 1);
+        const Value& e = args[0];
+        // Parent of each builtin exception class (the tree the __exc module defines).
+        static const std::unordered_map<std::string, std::string> parents = {
+            {"Exception", "BaseException"}, {"ArithmeticError", "Exception"}, {"ZeroDivisionError", "ArithmeticError"},
+            {"OverflowError", "ArithmeticError"}, {"LookupError", "Exception"}, {"IndexError", "LookupError"},
+            {"KeyError", "LookupError"}, {"ValueError", "Exception"}, {"UnicodeError", "ValueError"},
+            {"TypeError", "Exception"}, {"NameError", "Exception"}, {"AttributeError", "Exception"},
+            {"RuntimeError", "Exception"}, {"NotImplementedError", "RuntimeError"}, {"RecursionError", "RuntimeError"},
+            {"OSError", "Exception"}, {"IOError", "OSError"}, {"FileNotFoundError", "OSError"},
+            {"PermissionError", "OSError"}, {"TimeoutError", "OSError"}, {"ConnectionError", "OSError"},
+            {"StopIteration", "Exception"}, {"StopAsyncIteration", "Exception"}, {"AssertionError", "Exception"},
+            {"ImportError", "Exception"}, {"ModuleNotFoundError", "ImportError"}, {"EOFError", "Exception"},
+            {"Warning", "Exception"}, {"UserWarning", "Warning"}, {"DeprecationWarning", "Warning"},
+            {"FileExistsError", "OSError"}, {"IsADirectoryError", "OSError"}, {"NotADirectoryError", "OSError"},
+            {"BrokenPipeError", "OSError"}, {"UnicodeDecodeError", "UnicodeError"}, {"UnicodeEncodeError", "UnicodeError"},
+            {"KeyboardInterrupt", "BaseException"}, {"SystemExit", "BaseException"}, {"GeneratorExit", "BaseException"}};
+        // What kind of error a thrown non-object is: a plain string counts as Exception; the interpreter's
+        // own errors ({pesan: "..."}) are told apart by their message.
+        auto classify = [](const Value& v) -> std::string {
+            if (v.type == ValueType::String) {  // "StopIteration" / "ValueError: msg" raised as plain text
+                const std::string& t = v.str();
+                size_t colon = t.find(':');
+                std::string head = colon == std::string::npos ? t : t.substr(0, colon);
+                if (head == "BaseException" || parents.count(head)) return head;
+                return "Exception";
+            }
+            if (v.type != ValueType::Map) return "Exception";
+            auto it = v.map()->find("pesan");
+            if (it == v.map()->end() || it->second.type != ValueType::String) return "Exception";
+            const std::string& m = it->second.str();
+            auto has = [&](const char* sub) { return m.find(sub) != std::string::npos; };
+            if (has("ZeroDivisionError") || has("bagi dengan nol") || has("division by zero") || has("modulo by zero")) return "ZeroDivisionError";
+            if (has("StopIteration")) return "StopIteration";
+            if (has("di luar batas") || has("out of bounds") || has("out of range") || has("IndexError")) return "IndexError";
+            if (has("KeyError") || has("kunci") ) return "KeyError";
+            if (has("Undefined variable") || has("belum didefinisikan") || has("NameError")) return "NameError";
+            if (has("FileNotFoundError") || has("nggak bisa buka") || has("tidak bisa membuka") || has("file tidak ada")) return "FileNotFoundError";
+            if (has("rekursi") || has("Rekursi") || has("recursion")) return "RecursionError";
+            if (has("AssertionError")) return "AssertionError";
+            if (has("nggak bisa dikonversi") || has("invalid literal") || has("ValueError")) return "ValueError";
+            if (has("harus ") || has("bukan fungsi") || has("nggak bisa di-") || has("butuh ") || has("TypeError")) return "TypeError";
+            return "RuntimeError";
+        };
+        if (name == "_exc_match") {
+            std::vector<Value> classes;
+            if (args[1].type == ValueType::Array || args[1].type == ValueType::VmArray) classes = arrayElements(args[1]);
+            else classes.push_back(args[1]);
+            for (const Value& c : classes) {
+                if (c.type != ValueType::Class) continue;
+                const std::string& want = c.klass()->name;
+                if (e.type == ValueType::Instance) {
+                    for (ClassInfo* k = e.instance()->classInfo.get(); k; k = k->parent.get()) {
+                        if (k == c.klass() || k->name == want) return Value::fromBool(true);
+                    }
+                } else {
+                    for (std::string k = classify(e); !k.empty();) {
+                        if (k == want) return Value::fromBool(true);
+                        auto p = parents.find(k);
+                        k = p == parents.end() ? "" : p->second;
+                    }
+                }
+            }
+            return Value::fromBool(false);
+        }
+        // _exc_wrap: hand `except X as e` an exception object
+        if (e.type == ValueType::Instance) return e;
+        bool ours = e.type == ValueType::String ||
+                    (e.type == ValueType::Map && e.map()->count("pesan") && e.map()->size() == 1);
+        if (!ours) return e;
+        Value mod = doImport("__exc");
+        Value cls = (*mod.map())[classify(e)];
+        std::string msg = e.type == ValueType::String ? e.str() : (*e.map())["pesan"].stringify();
+        {  // "ZeroDivisionError: division by zero (line 3, col 5)" -> "division by zero"
+            std::string prefix = classify(e) + ": ";
+            if (msg.compare(0, prefix.size(), prefix) == 0) msg = msg.substr(prefix.size());
+            size_t at = msg.rfind(" (line ");
+            if (at != std::string::npos && msg.back() == ')') msg = msg.substr(0, at);
+        }
+        std::vector<Value> ctorArgs{Value::fromString(msg)};
+        if (vmIsActive()) return vmCallValue(cls, ctorArgs, this);
+        return callValue(cls, ctorArgs, Span{});
+    }
+    if (name == "_defaultdict") {  // (factory) -> dict that fills in missing keys by calling factory()
+        Value m = Value::newMap();
+        if (!args.empty() && args[0].type != ValueType::Null) m.map()->deflt = std::make_shared<Value>(args[0]);
+        return m;
+    }
+    if (name == "_namedtuple") {  // (name, [fields]) -> a struct class: P(1, 2).x
+        need(2);
+        expectType(args[0], ValueType::String);
+        auto info = std::make_shared<ClassInfo>();
+        info->name = args[0].str();
+        info->isStruct = true;
+        std::vector<Value> fs = args[1].type == ValueType::String ? std::vector<Value>{} : arrayElements(args[1]);
+        if (args[1].type == ValueType::String) {  // "x y" / "x, y"
+            std::string cur;
+            for (char c : args[1].str() + " ") {
+                if (c == ' ' || c == ',') { if (!cur.empty()) fs.push_back(Value::fromString(cur)); cur.clear(); }
+                else cur += c;
+            }
+        }
+        for (const Value& f : fs) info->structFields.push_back(f.str());
+        return Value::fromClass(info);
+    }
+    if (name == "_isvmgen") {
+        need(1);
+        return Value::fromBool(vmIsGenFn(args[0]));
+    }
+    if (name == "_gennew") {
+        need(1);
+        return vmGenNew(args[0]);
+    }
+    if (name == "_genclose") {
+        need(1);
+        vmGenClose(args[0]);
+        return Value::null();
+    }
+    if (name == "_genresume") {  // (handle, kind, sent) -> [ok, value]
+        need(3);
+        bool ok = false;
+        Value v = vmGenResume(args[0], static_cast<int>(args[1].number), args[2], &ok);
+        auto pair = std::make_shared<std::vector<Value>>();
+        pair->push_back(Value::fromBool(ok));
+        if (ok) pair->push_back(std::move(v));
+        return Value::fromArray(pair);
+    }
+    if (name == "iter") {
+        need(1);
+        Value r;
+        std::vector<Value> none;
+        if (args.size() == 2) {  // iter(callable, sentinel)
+            Value mod = doImport("__gen");
+            std::vector<Value> a{args[0], args[1]};
+            return callValue((*mod.map())["calliter"], a, Span{});
+        }
+        if (args[0].type == ValueType::Instance) {
+            if (callInstMethod(this, args[0], "__iter__", none, &r)) return r;
+            return args[0];
+        }
+        std::vector<Value> lst{args[0]};
+        Value items = pylib::call("list", lst, nullptr, [this](const Value& fn, std::vector<Value>& a) { return callValue(fn, a, Span{}); });
+        Value mod = doImport("__gen");
+        std::vector<Value> a{items};
+        return callValue((*mod.map())["listiter"], a, Span{});
+    }
+    if (name == "next") {
+        if (args.empty() || args.size() > 2) throw RuntimeError("next() butuh 1 atau 2 argumen");
+        std::vector<Value> none;
+        Value r;
+        if (args[0].type == ValueType::Instance) {
+            if (callInstMethod(this, args[0], "_nx", none, &r)) {
+                std::vector<Value> pair = arrayElements(r);
+                if (pair.size() == 2 && pair[0].truthy()) return pair[1];
+            } else {
+                try {
+                    if (!callInstMethod(this, args[0], "__next__", none, &r)) throw RuntimeError("objek bukan iterator");
+                    return r;
+                } catch (const std::exception& e) {
+                    if (std::string(e.what()).find("StopIteration") == std::string::npos) throw;
+                }
+            }
+        } else {
+            throw RuntimeError("next(): argumen harus iterator (pakai iter(...) dulu)");
+        }
+        if (args.size() == 2) return args[1];
+        throw RuntimeError("StopIteration");
+    }
+
+    if (name == "latar") {
+        GC::markDaemonThread();
+        return Value::null();
     }
 
     if (name == "tidur") {
@@ -1234,7 +2160,7 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         } catch (const std::exception& e) {
             throw RuntimeError(std::string("http_get(): ") + e.what());
         }
-        auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+        auto m = std::make_shared<ValueMap>();
         (*m)["status"] = Value::fromNumber(resp.status);
         (*m)["tubuh"] = Value::fromString(resp.body);
         return Value::fromMap(m);
@@ -1251,7 +2177,7 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         } catch (const std::exception& e) {
             throw RuntimeError(std::string("http_post(): ") + e.what());
         }
-        auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+        auto m = std::make_shared<ValueMap>();
         (*m)["status"] = Value::fromNumber(resp.status);
         (*m)["tubuh"] = Value::fromString(resp.body);
         return Value::fromMap(m);
@@ -1260,9 +2186,23 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
     if (name == "qr_baca") {
         need(1);
         expectType(args[0], ValueType::String);
-        std::vector<std::string> payloads = qr::decode(args[0].str());
+        Value packed;
+        try {
+            packed = sysmod::call("qr", "qr_baca", {args[0]});
+        } catch (const std::exception& e) {
+            throw RuntimeError(std::string("qr_baca(): ") + e.what());
+        }
+        // "<panjang>:<byte>" berurutan.
         auto arr = std::make_shared<std::vector<Value>>();
-        for (const auto& s : payloads) arr->push_back(Value::fromString(s));
+        const std::string& data = packed.str();
+        size_t pos = 0;
+        while (pos < data.size()) {
+            size_t colon = data.find(':', pos);
+            if (colon == std::string::npos) break;
+            size_t len = static_cast<size_t>(std::stoul(data.substr(pos, colon - pos)));
+            arr->push_back(Value::fromString(data.substr(colon + 1, len)));
+            pos = colon + 1 + len;
+        }
         return Value::fromArray(arr);
     }
 
@@ -1288,9 +2228,9 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
                 // already held by the time this runs (net.cpp).
                 Interpreter::registerCurrentThread();
 
-                auto headerMap = std::make_shared<std::unordered_map<std::string, Value>>();
+                auto headerMap = std::make_shared<ValueMap>();
                 for (const auto& [k, v] : req.headers) (*headerMap)[k] = Value::fromString(v);
-                auto reqMap = std::make_shared<std::unordered_map<std::string, Value>>();
+                auto reqMap = std::make_shared<ValueMap>();
                 (*reqMap)["metode"] = Value::fromString(req.method);
                 (*reqMap)["path"] = Value::fromString(req.path);
                 (*reqMap)["header"] = Value::fromMap(headerMap);
@@ -1402,7 +2342,7 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         } catch (const std::exception& e) {
             throw RuntimeError(e.what());
         }
-        auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+        auto m = std::make_shared<ValueMap>();
         (*m)["status"] = Value::fromNumber(result.exitCode);
         (*m)["keluaran"] = Value::fromString(result.out);
         (*m)["error"] = Value::fromString(result.err);
@@ -1425,7 +2365,7 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         }
         proc::StreamHandle h = proc::startStream(args[0].str(), cmdArgs);
         if (h.pid < 0) return Value::null();
-        auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+        auto m = std::make_shared<ValueMap>();
         (*m)["pid"] = Value::fromNumber(h.pid);
         (*m)["fd"] = Value::fromNumber(h.fd);
         return Value::fromMap(m);
@@ -1477,7 +2417,7 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
             expectType(args[2], ValueType::Number);
             // Copy-on-write: don't mutate the caller's own map, build a
             // fresh one with "exp" added.
-            auto withExp = std::make_shared<std::unordered_map<std::string, Value>>(*args[0].map());
+            auto withExp = std::make_shared<ValueMap>(*args[0].map());
             double now = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
             (*withExp)["exp"] = Value::fromNumber(now + args[2].number);
             payload = Value::fromMap(withExp);
@@ -1501,6 +2441,8 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         expectType(args[0], ValueType::String);
         std::string path;
         if (sysplugin::isBareName(args[0].str())) {
+            Value builtin;
+            if (plugin::loadBuiltin(args[0].str(), builtin)) return builtin;
             // Bare name (e.g. "http") -- a system module, resolved next to
             // the nusa binary itself.
             std::string dir = sysplugin::systemPluginDir();
@@ -1566,6 +2508,105 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
         if (b < 0 || b > 255)
             throw RuntimeError(i18n::tr("teks_dari(): byte harus 0-255", "teks_dari(): byte must be 0-255"));
         return Value::fromString(std::string(1, static_cast<char>(static_cast<unsigned char>(b))));
+    }
+
+    // range(stop) / range(start, stop[, step]) as an array of numbers. The
+    // parser turns `for i in range(...)` into a counting loop, so this is
+    // only for range() used as a plain value.
+    if (name == "rentang") {
+        if (args.empty() || args.size() > 3) {
+            throw RuntimeError(i18n::tr("rentang() butuh 1 sampai 3 argumen", "range() expects 1 to 3 arguments"));
+        }
+        for (const auto& a : args) expectType(a, ValueType::Number);
+        double start = args.size() >= 2 ? args[0].number : 0.0;
+        double stop = args.size() >= 2 ? args[1].number : args[0].number;
+        double step = args.size() == 3 ? args[2].number : 1.0;
+        if (step == 0) throw RuntimeError(i18n::tr("rentang(): langkah nggak boleh 0", "range(): step must not be 0"));
+        auto out = std::make_shared<std::vector<Value>>();
+        for (double v = start; step > 0 ? v < stop : v > stop; v += step) {
+            out->push_back(Value::fromNumber(v));
+            if (out->size() > 100000000) throw RuntimeError(i18n::tr("rentang(): kegedean", "range(): too large"));
+        }
+        return Value::fromArray(out);
+    }
+
+    // x[a:b] with Python rules: missing bound = start/end, negative bound counts from the end.
+    if (name == "__iris") {
+        if (args.size() != 3 && args.size() != 4) need(3);
+        const Value& v = args[0];
+        long long len;
+        bool isStr = v.type == ValueType::String;
+        if (isStr) len = static_cast<long long>(u8::length(v));
+        else if (v.type == ValueType::Array) len = static_cast<long long>(v.array()->size());
+        else if (v.type == ValueType::VmArray) len = static_cast<long long>(v.vmArray()->numeric ? v.vmArray()->nums.size() : v.vmArray()->boxed->size());
+        else throw RuntimeError(std::string(i18n::tr("Tipe '", "Type '")) + v.typeName() + i18n::tr("' nggak bisa di-slice", "' can't be sliced"));
+        long long step = 1;
+        if (args.size() == 4 && args[3].type != ValueType::Null) {
+            if (args[3].type != ValueType::Number) throw RuntimeError(i18n::tr("Langkah slice harus angka", "Slice step must be a number"));
+            step = static_cast<long long>(args[3].number);
+            if (step == 0) throw RuntimeError(i18n::tr("Langkah slice nggak boleh 0", "Slice step cannot be zero"));
+        }
+        auto bound = [&](const Value& b, long long dflt, long long lo, long long hi) {
+            if (b.type == ValueType::Null) return dflt;
+            if (b.type != ValueType::Number) throw RuntimeError(i18n::tr("Batas slice harus angka", "Slice bounds must be numbers"));
+            long long i = static_cast<long long>(b.number);
+            if (i < 0) i += len;
+            return std::max<long long>(lo, std::min(i, hi));
+        };
+        if (step == 1) {
+            std::vector<Value> sliceArgs = {v, Value::fromNumber(static_cast<double>(bound(args[1], 0, 0, len))),
+                                            Value::fromNumber(static_cast<double>(bound(args[2], len, 0, len)))};
+            return callBuiltin("potong", sliceArgs);
+        }
+        long long lo, hi;
+        if (step > 0) { lo = bound(args[1], 0, 0, len); hi = bound(args[2], len, 0, len); }
+        else { lo = bound(args[1], len - 1, -1, len - 1); hi = bound(args[2], -1, -1, len - 1); }
+        if (isStr) {
+            std::string out;
+            for (long long k = lo; step > 0 ? k < hi : k > hi; k += step) out += u8::slice(v, static_cast<size_t>(k), static_cast<size_t>(k) + 1);
+            return Value::fromString(out);
+        }
+        std::vector<Value> src = arrayElements(v);
+        auto out = std::make_shared<std::vector<Value>>();
+        for (long long k = lo; step > 0 ? k < hi : k > hi; k += step) out->push_back(src[static_cast<size_t>(k)]);
+        return Value::fromArray(out);
+    }
+
+    // What `for x in <expr>` walks: arrays and strings as they are, maps as
+    // their key list.
+    if (name == "__iter") {
+        need(1);
+        const Value& v = args[0];
+        if (v.type == ValueType::Array || v.type == ValueType::VmArray || v.type == ValueType::String) return v;
+        if (v.type == ValueType::Class) {  // for c in Color
+            auto mem = v.klass()->classAttrs.find("_members_");
+            if (mem != v.klass()->classAttrs.end()) return mem->second;
+        }
+        if (v.type == ValueType::Instance) {
+            // Lazy iteration: a generator (or anything with __len__/__getitem__ semantics) is walked in place.
+            std::vector<Value> none;
+            Value r = v;
+            if (callInstMethod(this, v, "__iter__", none, &r) && r.type != ValueType::Instance) {
+                std::vector<Value> a{r};
+                return callBuiltin("__iter", a);
+            }
+            if (r.type == ValueType::Instance) {
+                std::shared_ptr<ClassInfo> owner;
+                if (!lookupMethod(r.instance()->classInfo, "__len__", &owner)) {
+                    Value mod = doImport("__gen");
+                    std::vector<Value> a{r};
+                    return callValue((*mod.map())["adapt"], a, Span{});
+                }
+            }
+            return r;
+        }
+        if (v.type == ValueType::Map) {
+            auto keys = std::make_shared<std::vector<Value>>();
+            for (const auto& [k, val] : *v.map()) keys->push_back(Value::fromString(k));
+            return Value::fromArray(keys);
+        }
+        throw RuntimeError(i18n::tr("Nilai bertipe '", "A value of type '") + std::string(v.typeName()) +
+                            i18n::tr("' nggak bisa diiterasi", "' can't be iterated"));
     }
 
     if (name == "peta_kunci") {
@@ -1776,13 +2817,13 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
                     chan->queue.pop_front();
                     lock.unlock();
                     chan->notFull.notify_one();
-                    auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+                    auto m = std::make_shared<ValueMap>();
                     (*m)["indeks"] = Value::fromNumber(static_cast<double>(i));
                     (*m)["nilai"] = v;
                     return Value::fromMap(m);
                 }
                 if (chan->closed) {
-                    auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+                    auto m = std::make_shared<ValueMap>();
                     (*m)["indeks"] = Value::fromNumber(static_cast<double>(i));
                     (*m)["nilai"] = Value::null();
                     return Value::fromMap(m);
@@ -1878,13 +2919,19 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
 // ---- module system ----
 
 namespace {
-std::string tryModulesDirAt(const std::string& dir, const std::string& rawPath) {
-    std::string base = dir.empty() ? ("nusantara_modules/" + rawPath)
-                                    : (dir + "/nusantara_modules/" + rawPath);
+// `base` as a module: the file itself, base.ns, or a package directory with
+// __init__.ns (Python) / index.ns (older nusantara_modules layout).
+std::string resolveModuleAt(const std::string& base) {
     if (isRegularFile(base)) return base;
     if (std::ifstream(base + ".ns").good()) return base + ".ns";
+    if (std::ifstream(base + "/__init__.ns").good()) return base + "/__init__.ns";
     if (std::ifstream(base + "/index.ns").good()) return base + "/index.ns";
     return "";
+}
+
+std::string tryModulesDirAt(const std::string& dir, const std::string& rawPath) {
+    return resolveModuleAt(dir.empty() ? ("nusantara_modules/" + rawPath)
+                                        : (dir + "/nusantara_modules/" + rawPath));
 }
 
 std::string toAbsoluteDir(const std::string& dir) {
@@ -1904,7 +2951,9 @@ Value Interpreter::doImport(const std::string& rawPath) {
 
     if (!isExplicitRelativeOrAbs) {
         std::string dir = toAbsoluteDir(importDirStack_.empty() ? "." : importDirStack_.back());
-        while (true) {
+        // Python-style: a sibling module or package next to the importing file wins.
+        path = resolveModuleAt(dir + "/" + rawPath);
+        while (path.empty()) {
             std::string found = tryModulesDirAt(dir, rawPath);
             if (!found.empty()) { path = found; break; }
             if (dir.empty() || dir == "/") break;
@@ -1914,12 +2963,7 @@ Value Interpreter::doImport(const std::string& rawPath) {
         }
         if (path.empty()) {
             std::string globalDir = sysplugin::globalModulesDir();
-            if (!globalDir.empty()) {
-                std::string gPath = globalDir + "/" + rawPath;
-                if (isRegularFile(gPath)) path = gPath;
-                else if (std::ifstream(gPath + ".ns").good()) path = gPath + ".ns";
-                else if (std::ifstream(gPath + "/index.ns").good()) path = gPath + "/index.ns";
-            }
+            if (!globalDir.empty()) path = resolveModuleAt(globalDir + "/" + rawPath);
         }
     }
 
@@ -1933,6 +2977,12 @@ Value Interpreter::doImport(const std::string& rawPath) {
         }
     }
 
+    const char* embedded = nullptr;
+    if (path.empty() || (!isRegularFile(path) && !std::ifstream(path).good())) {
+        embedded = pystd::embeddedModule(rawPath);
+        if (embedded) path = "<std:" + rawPath + ">";
+    }
+
     auto cached = moduleCache_.find(path);
     if (cached != moduleCache_.end()) return cached->second;
 
@@ -1942,13 +2992,18 @@ Value Interpreter::doImport(const std::string& rawPath) {
                                           "circular import detected: '") + path + "'");
     }
 
-    std::ifstream file(path);
-    if (!file)
-        throw RuntimeError(i18n::tr("impor(): nggak bisa buka '", "impor(): can't open '") + path +
-                            i18n::tr("' (dari '", "' (from '") + rawPath + "')");
-    std::ostringstream buf;
-    buf << file.rdbuf();
-    std::string source = buf.str();
+    std::string source;
+    if (embedded) {
+        source = embedded;
+    } else {
+        std::ifstream file(path);
+        if (!file)
+            throw RuntimeError(i18n::tr("impor(): nggak bisa buka '", "impor(): can't open '") + path +
+                                i18n::tr("' (dari '", "' (from '") + rawPath + "')");
+        std::ostringstream buf;
+        buf << file.rdbuf();
+        source = buf.str();
+    }
 
     std::unique_ptr<Program> program;
     try {
@@ -1967,16 +3022,34 @@ Value Interpreter::doImport(const std::string& rawPath) {
     Environment* modEnv = GC::instance().alloc(globals_);
     GcRootGuard guard(modEnv);
 
+    // Prefer running the module on the bytecode VM (its functions then stay VM
+    // functions, not slow AST ones) whenever a VM program is driving the script.
+    std::unique_ptr<VmProgram> vmModule;
+    if (vmIsActive()) {
+        try {
+            vmModule = vmCompile(*program);
+        } catch (const VmCompileError&) {
+            vmModule.reset();  // something the VM can't compile yet: interpret this module
+        }
+    }
+
     importStack_.push_back(path);
     importDirStack_.push_back(dirName(path));
-    for (const auto& stmt : program->statements) {
-        if (exprDepth_ == 0) GC::instance().collectIfNeeded();
-        exec(stmt.get(), modEnv);
+    if (vmModule) {
+        GC::instance().addPermanentRoot(modEnv);  // VM closures reach it via a raw pointer
+        vmRunModule(*vmModule, modEnv, this);
+        importedVmPrograms_.push_back(std::move(vmModule));
+    } else {
+        for (const auto& stmt : program->statements) {
+            if (exprDepth_ == 0) GC::instance().collectIfNeeded();
+            exec(stmt.get(), modEnv);
+            if (g_pending != kPendNone) { g_pending = kPendNone; break; }
+        }
     }
     importDirStack_.pop_back();
     importStack_.pop_back();
 
-    auto exported = std::make_shared<std::unordered_map<std::string, Value>>(modEnv->vars());
+    auto exported = std::make_shared<ValueMap>(modEnv->vars());
     Value result = Value::fromMap(std::move(exported));
 
     // FnDeclStmt* pointers inside any exported closures point into

@@ -1,0 +1,1 @@
+-D_GNU_SOURCE -DCONFIG_BIGNUM -w -Iplugins/js/vendor

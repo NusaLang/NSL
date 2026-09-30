@@ -1,0 +1,36 @@
+class P:
+    def __init__(self, x):
+        self.x = x
+    def __str__(self):
+        return "P(" + str(self.x) + ")"
+class Q:
+    def __init__(self):
+        self.a = 1
+    def __repr__(self):
+        return "Q!"
+print(P(3), Q(), str(P(4)), f"{P(5)}", [P(1), P(2)])
+print(repr("it's"), repr(5), repr("a\nb"))
+class V:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def __add__(self, o):
+        return V(self.x + o.x, self.y + o.y)
+    def __sub__(self, o):
+        return V(self.x - o.x, self.y - o.y)
+    def __mul__(self, k):
+        return V(self.x * k, self.y * k)
+    def __eq__(self, o):
+        return self.x == o.x and self.y == o.y
+    def __lt__(self, o):
+        return self.x < o.x
+    def __str__(self):
+        return "V(" + str(self.x) + "," + str(self.y) + ")"
+    def __contains__(self, k):
+        return k == self.x or k == self.y
+    def __call__(self, z):
+        return self.x + self.y + z
+a = V(1, 2)
+b = V(3, 4)
+print(a + b, b - a, a * 3, a == V(1, 2), a != b, a < b, a > b, 1 in a, 5 in a, a(10))
+print(sorted([b, a, V(0, 0)]), max([a, b]), [1] + [2, 3])

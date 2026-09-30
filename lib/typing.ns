@@ -1,0 +1,52 @@
+# Type hints are accepted and ignored: every name is a placeholder that subscripts to itself.
+class _Any:
+    def __init__(self, name):
+        self._name = name
+    def __getitem__(self, item):
+        return self
+    def __call__(self, *args, **kw):
+        return self
+    def __str__(self):
+        return "typing." + self._name
+
+Any = _Any("Any")
+List = _Any("List")
+Dict = _Any("Dict")
+Set = _Any("Set")
+FrozenSet = _Any("FrozenSet")
+Tuple = _Any("Tuple")
+Optional = _Any("Optional")
+Union = _Any("Union")
+Callable = _Any("Callable")
+Iterable = _Any("Iterable")
+Iterator = _Any("Iterator")
+Generator = _Any("Generator")
+Sequence = _Any("Sequence")
+Mapping = _Any("Mapping")
+MutableMapping = _Any("MutableMapping")
+Type = _Any("Type")
+ClassVar = _Any("ClassVar")
+Final = _Any("Final")
+Literal = _Any("Literal")
+NoReturn = _Any("NoReturn")
+Awaitable = _Any("Awaitable")
+Protocol = _Any("Protocol")
+Generic = _Any("Generic")
+TypedDict = _Any("TypedDict")
+NamedTuple = _Any("NamedTuple")
+TYPE_CHECKING = False
+
+def TypeVar(name, *args, **kw):
+    return _Any(name)
+
+def cast(tp, value):
+    return value
+
+def overload(fn):
+    return fn
+
+def final(fn):
+    return fn
+
+def no_type_check(fn):
+    return fn

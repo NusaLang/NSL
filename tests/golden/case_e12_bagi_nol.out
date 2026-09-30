@@ -1,4 +1,2 @@
-inf
--nan
--nan
---- exit: 0
+nusantara: error: ZeroDivisionError: division by zero (line 1, col 7)
+--- exit: 1

@@ -1,0 +1,63 @@
+def dua_kali(f):
+    def w(*a, **k):
+        return f(*a, **k) * 2
+    return w
+
+@dua_kali
+def tambah(a, b):
+    return a + b
+
+def tag(nama):
+    def deco(f):
+        def w(x):
+            return nama + ":" + str(f(x))
+        return w
+    return deco
+
+@tag("A")
+@tag("B")
+def kuadrat(x):
+    return x * x
+
+print(tambah(1, 2), kuadrat(5))
+
+class Lingkaran:
+    def __init__(self, r):
+        self.r = r
+        self._label = "lingkaran"
+    @staticmethod
+    def pi():
+        return 3.14
+    @classmethod
+    def unit(cls):
+        return cls(1)
+    @property
+    def luas(self):
+        return Lingkaran.pi() * self.r * self.r
+    @property
+    def label(self):
+        return self._label
+    @label.setter
+    def label(self, v):
+        self._label = v.upper()
+
+l = Lingkaran(2)
+print(Lingkaran.pi(), l.pi(), Lingkaran.unit().r, l.luas)
+l.label = "besar"
+print(l.label, l.r)
+class Counter:
+    total = 0
+    name: str = "ctr"
+    def __init__(self):
+        Counter.total += 1
+        self.id = Counter.total
+    def label(self):
+        return self.name + str(self.id)
+class Sub(Counter):
+    pass
+a = Counter()
+b = Counter()
+c = Sub()
+print(Counter.total, a.id, b.id, c.id, a.label(), c.name, Sub.total)
+Counter.name = "X"
+print(a.label(), Sub.name)

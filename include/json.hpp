@@ -272,7 +272,7 @@ private:
 
     Value parseObject() {
         expect('{');
-        auto m = std::make_shared<std::unordered_map<std::string, Value>>();
+        auto m = std::make_shared<ValueMap>();
         skipWs();
         if (peek() == '}') {
             pos_++;

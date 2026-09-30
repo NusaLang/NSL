@@ -9,11 +9,13 @@ enum class TokenType {
     Let, Fn, If, Else, While, For, Return, Break, Continue, True_, False_, Null_,
     Class, This, Super, Extends,
     Struct, EnumKw, Try, Catch, Finally, Throw,
-    Plus, Minus, Star, Slash, Percent,
+    Plus, Minus, Star, Slash, Percent, StarStar, SlashSlash,
     Eq, EqEq, Neq, Lt, Lte, Gt, Gte,
-    PlusEq, MinusEq, StarEq, SlashEq,
+    PlusEq, MinusEq, StarEq, SlashEq, CompoundAssign,
+    Pipe, Amp, Caret, Tilde, Shl, Shr, At,
     And, Or, Not,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Semi, Dot, Colon,
+    LDict, RDict,  // `{k: v}` literal braces (told apart from block braces by markDictBraces)
     Eof
 };
 
@@ -40,6 +42,10 @@ public:
     int column;
 };
 
+// Set by Lexer::tokenize(): was the file just tokenized Python-style (indent blocks)? The parser built next
+// reads it: only Python-style files get KeyError on x[missing_key] (brace-style keeps null).
+inline bool& lexerLastWasPython() { static bool v = false; return v; }
+
 class Lexer {
 public:
     explicit Lexer(std::string source);
@@ -50,18 +56,20 @@ private:
     size_t pos_ = 0;
     int line_ = 1;
     int column_ = 1;
+    bool pyStyle_ = false;  // Python-layout file: `//` is floor division, not a comment
 
     char peek(int offset = 0) const;
+    bool atLineStart() const;
     char advance();
     void skipWhitespaceAndComments();
 
     Token readNumber(size_t start, int line, int col);
     Token readIdent(size_t start, int line, int col);
-    Token readString(size_t start, int line, int col);
+    Token readString(size_t start, int line, int col, bool raw = false);
     Token readSymbol(size_t start, int line, int col);
     // Unlike other read* methods, produces several tokens (a desugared
     // `+`/`ke_teks(...)` chain) -- see lexer.cpp.
-    std::vector<Token> readBacktickTemplate(size_t start, int line, int col);
+    std::vector<Token> readBacktickTemplate(size_t start, int line, int col, char close = '`', bool fstr = false);
     // One token, except for a template string. Shared by tokenize()'s
     // main loop and readBacktickTemplate()'s ${...} scan (nested
     // templates work via ordinary recursion).

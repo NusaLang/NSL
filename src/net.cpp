@@ -21,10 +21,8 @@
 #include "gil.hpp"
 
 #ifndef __EMSCRIPTEN__
-#include "bearssl.h"
+#include "tls.hpp"
 extern "C" {
-const br_x509_trust_anchor* nusaCaTrustAnchors(void);
-size_t nusaCaTrustAnchorsCount(void);
 }
 #endif
 
@@ -172,42 +170,6 @@ ParsedUrl parseUrl(const std::string& url) {
     return p;
 }
 
-// br_sslio_* callback pair -- same shape as BearSSL's own samples/client_basic.c,
-// just released the GIL around the blocking syscall like every other
-// socket read/write in this file.
-int tlsSockRead(void* ctx, unsigned char* buf, size_t len) {
-    int fd = *static_cast<int*>(ctx);
-    for (;;) {
-        ssize_t n;
-        {
-            GilRelease release;
-            n = recv(fd, buf, len, 0);
-        }
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            return -1;
-        }
-        if (n == 0) return -1;  // EOF
-        return static_cast<int>(n);
-    }
-}
-
-int tlsSockWrite(void* ctx, const unsigned char* buf, size_t len) {
-    int fd = *static_cast<int*>(ctx);
-    for (;;) {
-        ssize_t n;
-        {
-            GilRelease release;
-            n = send(fd, buf, len, 0);
-        }
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            return -1;
-        }
-        return static_cast<int>(n);
-    }
-}
-
 }  // namespace
 
 HttpResponse httpRequest(const std::string& method, const std::string& url,
@@ -236,33 +198,44 @@ HttpResponse httpRequest(const std::string& method, const std::string& url,
     std::string raw;
 
     if (u.tls) {
-        br_ssl_client_context sc;
-        br_x509_minimal_context xc;
-        std::vector<unsigned char> iobuf(BR_SSL_BUFSIZE_BIDI);
-        br_sslio_context ioc;
-
-        br_ssl_client_init_full(&sc, &xc, nusaCaTrustAnchors(), nusaCaTrustAnchorsCount());
-        br_ssl_engine_set_buffer(&sc.eng, iobuf.data(), iobuf.size(), 1);
-        br_ssl_client_reset(&sc, u.host.c_str(), 0);
-        br_sslio_init(&ioc, &sc.eng, tlsSockRead, &fd, tlsSockWrite, &fd);
-
-        bool sendOk = br_sslio_write_all(&ioc, reqStr.data(), reqStr.size()) == 0;
-        if (sendOk) br_sslio_flush(&ioc);
-
-        if (sendOk) {
-            char chunk[4096];
+        // The blocking socket calls release the GIL, like every other socket call in this file.
+        tls::Transport transport;
+        transport.recv = [fd](uint8_t* buf, size_t len) -> long {
             for (;;) {
-                int n = br_sslio_read(&ioc, reinterpret_cast<unsigned char*>(chunk), sizeof(chunk));
-                if (n < 0) break;
-                raw.append(chunk, static_cast<size_t>(n));
+                ssize_t n;
+                {
+                    GilRelease release;
+                    n = recv(fd, buf, len, 0);
+                }
+                if (n < 0 && errno == EINTR) continue;
+                return static_cast<long>(n);
             }
+        };
+        transport.send = [fd](const uint8_t* buf, size_t len) -> long {
+            for (;;) {
+                ssize_t n;
+                {
+                    GilRelease release;
+                    n = send(fd, buf, len, 0);
+                }
+                if (n < 0 && errno == EINTR) continue;
+                return static_cast<long>(n);
+            }
+        };
+        try {
+            tls::Options tlsOptions;
+            tlsOptions.alpn = {"http/1.1"};
+            tls::Connection conn(transport, u.host, tlsOptions);
+            conn.write(reqStr);
+            uint8_t chunk[16384];
+            size_t n;
+            while ((n = conn.read(chunk, sizeof chunk)) > 0) raw.append(reinterpret_cast<char*>(chunk), n);
+            conn.shutdown();
+        } catch (const std::exception& e) {
+            tcpClose(fd);
+            throw std::runtime_error("TLS/HTTPS gagal ke " + u.host + ": " + e.what());
         }
         tcpClose(fd);
-
-        if (raw.empty()) {
-            int err = br_ssl_engine_last_error(&sc.eng);
-            throw std::runtime_error("TLS/HTTPS gagal ke " + u.host + " (kode error BearSSL " + std::to_string(err) + ")");
-        }
     } else {
         if (tcpSend(fd, reqStr) < 0) {
             tcpClose(fd);
@@ -281,16 +254,32 @@ HttpResponse httpRequest(const std::string& method, const std::string& url,
         tcpClose(fd);
     }
 
-    // Just enough parsing to split status line / headers / body -- no
-    // chunked transfer-encoding support, that's future work.
+    // Status line, headers, then the body -- honouring Transfer-Encoding: chunked.
     HttpResponse resp;
     size_t headerEnd = raw.find("\r\n\r\n");
     std::string headerPart = headerEnd == std::string::npos ? raw : raw.substr(0, headerEnd);
-    resp.body = headerEnd == std::string::npos ? "" : raw.substr(headerEnd + 4);
+    std::string bodyRaw = headerEnd == std::string::npos ? "" : raw.substr(headerEnd + 4);
 
     size_t firstSpace = headerPart.find(' ');
     if (firstSpace != std::string::npos) {
         resp.status = std::atoi(headerPart.c_str() + firstSpace + 1);
+    }
+    std::string lowerHeaders = headerPart;
+    for (char& c : lowerHeaders) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (lowerHeaders.find("transfer-encoding: chunked") != std::string::npos) {
+        size_t pos = 0;
+        while (pos < bodyRaw.size()) {
+            size_t eol = bodyRaw.find("\r\n", pos);
+            if (eol == std::string::npos) break;
+            size_t size = std::strtoul(bodyRaw.substr(pos, eol - pos).c_str(), nullptr, 16);
+            pos = eol + 2;
+            if (size == 0) break;
+            if (pos + size > bodyRaw.size()) size = bodyRaw.size() - pos;
+            resp.body.append(bodyRaw, pos, size);
+            pos += size + 2;  // chunk data is followed by CRLF
+        }
+    } else {
+        resp.body = std::move(bodyRaw);
     }
     return resp;
 }
@@ -485,7 +474,7 @@ void httpServe(int port, const std::function<HttpResponseOut(const HttpRequestIn
                 out << "X-Content-Type-Options: nosniff\r\n";
                 out << "Referrer-Policy: strict-origin-when-cross-origin\r\n";
                 out << "X-XSS-Protection: 1; mode=block\r\n";
-                out << "X-Powered-By: next-ns (Nusantara WebAssembly)\r\n";
+                out << "X-Powered-By: Nusantara\r\n";
                 out << "Connection: close\r\n\r\n";
                 out << resp.body;
                 tcpSend(connFd, out.str());

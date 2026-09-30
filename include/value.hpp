@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ordered_map.hpp"
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <functional>
@@ -49,11 +51,22 @@ struct NativeFunction {
     void* fnPtr = nullptr;
     std::string name;
     int abiVer = 1; // ABI plugin: 2 = string length-aware
+    // Runs when the last reference goes away (pegang(): frees a Go handle once the
+    // NSL object wrapping it is garbage).
+    std::function<void()> onRelease;
+    // Values / boxed cells this handle keeps alive (a suspended generator's frame); the GC calls it.
+    std::function<void(const std::function<void(const Value&)>&, const std::function<void(void*)>&)> trace;
+    NativeFunction() = default;
+    NativeFunction(const NativeFunction&) = delete;
+    NativeFunction& operator=(const NativeFunction&) = delete;
+    ~NativeFunction() { if (onRelease) onRelease(); }
 };
 
 enum class ValueType { Null, Bool, Number, String, Fn, Builtin, Array, Map, Channel, WaitGroup, Native, Class, Instance, VmFn, VmArray };
 struct ClassInfo;
 struct InstanceState;
+struct Value;
+using ValueMap = OrderedMapT<Value>;
 struct VmClosure;
 struct VmArrayState;
 
@@ -98,8 +111,8 @@ struct Value {
     std::vector<Value>* array() const {
         return type == ValueType::Array ? as<std::vector<Value>>() : nullptr;
     }
-    std::unordered_map<std::string, Value>* map() const {
-        return type == ValueType::Map ? as<std::unordered_map<std::string, Value>>() : nullptr;
+    ValueMap* map() const {
+        return type == ValueType::Map ? as<ValueMap>() : nullptr;
     }
     ChannelState* channel() const {
         return type == ValueType::Channel ? as<ChannelState>() : nullptr;
@@ -142,9 +155,9 @@ struct Value {
         return type == ValueType::Array ? std::static_pointer_cast<std::vector<Value>>(ref)
                                         : nullptr;
     }
-    std::shared_ptr<std::unordered_map<std::string, Value>> mapShared() const {
+    std::shared_ptr<ValueMap> mapShared() const {
         return type == ValueType::Map
-                   ? std::static_pointer_cast<std::unordered_map<std::string, Value>>(ref)
+                   ? std::static_pointer_cast<ValueMap>(ref)
                    : nullptr;
     }
 
@@ -187,14 +200,14 @@ struct Value {
         return v;
     }
     static Value newArray() { return fromArray(std::make_shared<std::vector<Value>>()); }
-    static Value fromMap(std::shared_ptr<std::unordered_map<std::string, Value>> m) {
+    static Value fromMap(std::shared_ptr<ValueMap> m) {
         Value v;
         v.type = ValueType::Map;
         v.ref = std::move(m);
         return v;
     }
     static Value newMap() {
-        return fromMap(std::make_shared<std::unordered_map<std::string, Value>>());
+        return fromMap(std::make_shared<ValueMap>());
     }
     static Value fromChannel(std::shared_ptr<ChannelState> c) {
         Value v;
@@ -239,11 +252,8 @@ struct Value {
         return v;
     }
 
-    bool truthy() const {
-        if (type == ValueType::Null) return false;
-        if (type == ValueType::Bool) return boolean();
-        return true;
-    }
+    // Python truthiness: None, False, 0, "", and empty lists/dicts are false.
+    bool truthy() const;
 
     bool callable() const {
         return type == ValueType::Fn || type == ValueType::Builtin || type == ValueType::Native ||
@@ -272,6 +282,59 @@ struct Value {
     std::string stringify() const;
 };
 
+// A run of Values living in the VM's per-thread arena (vm.cpp): one frame's
+// locals, or its operand stack. Stack semantics with no capacity growth --
+// the VM arena is preallocated and push_back() checks against `limit`.
+// Slots at or above `len` always hold a null-ref Value.
+struct ValueWindow {
+    Value* data = nullptr;
+    size_t len = 0;
+    Value* limit = nullptr;
+
+    const Value* begin() const { return data; }
+    const Value* end() const { return data + len; }
+    size_t size() const { return len; }
+    __attribute__((always_inline)) Value& operator[](size_t i) { return data[i]; }
+    __attribute__((always_inline)) Value& back() { return data[len - 1]; }
+    // Slots at or above `len` keep a null `ref` (pop_back and the callers'
+    // moves preserve that), so a push only has to write type/number and,
+    // when there is one, the handle.
+    __attribute__((always_inline)) inline void push_back(Value&& v) {
+        if (data + len >= limit) overflow();
+        Value& d = data[len++];
+        d.type = v.type;
+        d.number = v.number;
+        if (v.ref) d.ref = std::move(v.ref);
+    }
+    __attribute__((always_inline)) inline void push_back(const Value& v) {
+        if (data + len >= limit) overflow();
+        Value& d = data[len++];
+        d.type = v.type;
+        d.number = v.number;
+        if (v.ref) d.ref = v.ref;
+    }
+    __attribute__((always_inline)) inline void push_number(double x) {
+        if (data + len >= limit) overflow();
+        Value& d = data[len++];
+        d.type = ValueType::Number;
+        d.number = x;
+    }
+    __attribute__((always_inline)) inline void push_bool(bool b) {
+        if (data + len >= limit) overflow();
+        Value& d = data[len++];
+        d.type = ValueType::Bool;
+        d.number = b ? 1.0 : 0.0;
+    }
+    __attribute__((always_inline)) inline void pop_back() {
+        Value& v = data[--len];
+        if (v.ref) v.ref.reset();
+    }
+    // Shrink only.
+    __attribute__((always_inline)) inline void resize(size_t n) { while (len > n) pop_back(); }
+    void clear() { resize(0); }
+    [[noreturn]] static void overflow();
+};
+
 // Backing store for a `kanal` (channel) value. capacity == 0 means
 // unbounded; a positive capacity blocks like a buffered Go channel.
 struct ChannelState {
@@ -283,18 +346,52 @@ struct ChannelState {
     bool closed = false;
 };
 
+inline uint64_t nextClassId() {
+    static std::atomic<uint64_t> counter{0};
+    return ++counter;
+}
+
 struct ClassInfo {
+    // Unique for the process lifetime and never reused (unlike the address),
+    // so it is safe as a cache key even after a class is freed.
+    uint64_t id = nextClassId();
     std::string name;
     std::shared_ptr<ClassInfo> parent;
     std::unordered_map<std::string, std::shared_ptr<Function>> methods;
+    // Methods compiled by the bytecode VM (VmFn closures taking `ini` as the
+    // first parameter). A class built by the VM only has these; one built by
+    // the tree-walker only has `methods`.
+    std::unordered_map<std::string, Value> vmMethods;
     std::vector<std::string> structFields;
+    // @staticmethod (1), @classmethod (2), @property (3); a setter is stored as "__set_<name>" (4).
+    std::unordered_map<std::string, uint8_t> methodKind;
+    ValueMap classAttrs;  // `Class.count = 0` style attributes, shared by instances
+    bool hasSpecial = false;  // this class or an ancestor has a non-plain method: skip the fast call paths
     bool isStruct = false;
     bool isEnum = false;
 };
 
+// Kind of member `name` along the class chain (0 = ordinary method).
+inline uint8_t methodKindOf(const ClassInfo* c, const std::string& name) {
+    for (; c; c = c->parent.get()) {
+        auto it = c->methodKind.find(name);
+        if (it != c->methodKind.end()) return it->second;
+    }
+    return 0;
+}
+
+// Class attribute `name` along the class chain, or nullptr.
+inline Value* classAttrOf(ClassInfo* c, const std::string& name) {
+    for (; c; c = c->parent.get()) {
+        auto it = c->classAttrs.find(name);
+        if (it != c->classAttrs.end()) return &it->second;
+    }
+    return nullptr;
+}
+
 struct InstanceState {
     std::shared_ptr<ClassInfo> classInfo;
-    std::shared_ptr<std::unordered_map<std::string, Value>> fields;
+    std::shared_ptr<ValueMap> fields;
 };
 
 struct VmArrayState {
@@ -302,6 +399,29 @@ struct VmArrayState {
     std::vector<double> nums;
     std::shared_ptr<std::vector<Value>> boxed;
 };
+
+// `if obj:` on an instance: __bool__ / __len__ decide (installed by the interpreter); plain objects are true.
+inline std::function<bool(const Value&)>& instanceBoolHook() {
+    static std::function<bool(const Value&)> hook;
+    return hook;
+}
+
+inline bool Value::truthy() const {
+    switch (type) {
+        case ValueType::Null: return false;
+        case ValueType::Bool: return boolean();
+        case ValueType::Number: return number != 0.0;
+        case ValueType::String: return !str().empty();
+        case ValueType::Array: return !array()->empty();
+        case ValueType::Map: return !map()->empty();
+        case ValueType::VmArray: {
+            const VmArrayState* st = vmArray();
+            return st->numeric ? !st->nums.empty() : !st->boxed->empty();
+        }
+        case ValueType::Instance: return instanceBoolHook() ? instanceBoolHook()(*this) : true;
+        default: return true;
+    }
+}
 
 inline const char* Value::typeName() const {
     switch (type) {
@@ -324,6 +444,48 @@ inline const char* Value::typeName() const {
     return "?";
 }
 
+// Operator overloading: `a <op> b` with an instance on the left calls its `__add__` / `__lt__` / ...
+// Returns false when the class has no such method. Installed by the interpreter.
+inline std::function<bool(const char*, const Value&, const Value&, Value&)>& instanceOpHook() {
+    static std::function<bool(const char*, const Value&, const Value&, Value&)> hook;
+    return hook;
+}
+
+inline std::function<bool(const Value&, std::string&)>& instanceStrHook() {
+    static std::function<bool(const Value&, std::string&)> hook;
+    return hook;
+}
+
+// Sets are lists without duplicates; this registry remembers which lists were made by set(...) so they
+// print as {1, 2} (and `set()` when empty) like Python. Entries expire with their lists.
+struct SetRegistry {
+    std::mutex mu;
+    std::unordered_map<const void*, std::weak_ptr<std::vector<Value>>> items;
+    size_t purgeAt = 4096;
+};
+inline SetRegistry& setRegistry() {
+    static SetRegistry r;
+    return r;
+}
+inline void markSet(const Value& arr) {
+    if (arr.type != ValueType::Array || !arr.array()) return;
+    SetRegistry& r = setRegistry();
+    std::lock_guard<std::mutex> lock(r.mu);
+    if (r.items.size() >= r.purgeAt) {
+        for (auto it = r.items.begin(); it != r.items.end();) it = it->second.expired() ? r.items.erase(it) : std::next(it);
+        r.purgeAt = std::max<size_t>(4096, r.items.size() * 2);
+    }
+    r.items[arr.array()] = std::static_pointer_cast<std::vector<Value>>(arr.ref);
+}
+inline bool isSetValue(const Value& v) {
+    if (v.type != ValueType::Array) return false;
+    SetRegistry& r = setRegistry();
+    std::lock_guard<std::mutex> lock(r.mu);
+    if (r.items.empty()) return false;
+    auto it = r.items.find(v.array());
+    return it != r.items.end() && !it->second.expired();
+}
+
 inline std::string Value::stringify() const {
     switch (type) {
         case ValueType::Null: return "kosong";
@@ -333,13 +495,15 @@ inline std::string Value::stringify() const {
         case ValueType::Builtin: return "<builtin " + builtinName() + ">";
         case ValueType::Number: return formatNumber(number);
         case ValueType::Array: {
-            std::string out = "[";
+            bool isSet = isSetValue(*this);
+            if (isSet && array()->empty()) return "set()";
+            std::string out = isSet ? "{" : "[";
             for (size_t i = 0; i < array()->size(); i++) {
                 if (i > 0) out += ", ";
                 const Value& el = (*array())[i];
                 out += (el.type == ValueType::String) ? ("\"" + el.str() + "\"") : el.stringify();
             }
-            out += "]";
+            out += isSet ? "}" : "]";
             return out;
         }
         case ValueType::Map: {
@@ -487,9 +651,13 @@ inline std::string Value::stringify() const {
         case ValueType::Native:
             return "<plugin " + (native() ? native()->name : "") + ">";
         case ValueType::Class:
-            return "<kelas " + (klass() ? klass()->name : "") + ">";
-        case ValueType::Instance:
+            return klass() ? klass()->name : "";
+        case ValueType::Instance: {
+            // User classes with __str__ / __repr__ print through them (hook set by the interpreter).
+            std::string custom;
+            if (instanceStrHook() && instanceStrHook()(*this, custom)) return custom;
             return "<objek " + (instance() && instance()->classInfo ? instance()->classInfo->name : "") + ">";
+        }
         case ValueType::VmFn:
             return "<fn>";
         case ValueType::VmArray: {

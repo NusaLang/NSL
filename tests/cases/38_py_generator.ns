@@ -1,0 +1,58 @@
+def hitung(n):
+    i = 0
+    while i < n:
+        yield i
+        i += 1
+
+def fib():
+    a, b = 0, 1
+    while True:
+        yield a
+        a, b = b, a + b
+
+for x in hitung(4):
+    print(x)
+
+g = fib()
+print(next(g), next(g), next(g), next(g), next(g))
+for v in fib():
+    if v > 50:
+        break
+    print(v, end=" ")
+print()
+print(list(hitung(5)), sum(hitung(5)), max(hitung(5)))
+kuadrat = (x * x for x in range(5))
+print(list(kuadrat))
+def gabung():
+    yield from hitung(2)
+    yield from [10, 20]
+    yield "end"
+print(list(gabung()))
+it = iter([1, 2, 3])
+print(next(it), next(it), next(it), next(it, "habis"))
+def echo():
+    x = yield 1
+    print("got", x)
+    y = yield 2
+    print("got", y)
+e = echo()
+print(next(e))
+print(e.send("a"))
+try:
+    e.send("b")
+except err:
+    print("stop", err)
+def pairs():
+    yield 1, "a"
+    yield 2, "b"
+for n, c in pairs():
+    print(n, c)
+class Koleksi:
+    def __init__(self):
+        self.d = [3, 4]
+    def __iter__(self):
+        for v in self.d:
+            yield v * 10
+for v in Koleksi():
+    print(v)
+print(sorted(Koleksi()), [a for a in Koleksi()])

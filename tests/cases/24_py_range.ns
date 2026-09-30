@@ -1,0 +1,9 @@
+for i in range(10, 0, -3):
+    print(i)
+k = 2
+for j in range(0, 7, k):
+    print(j)
+for j in range(6, 0, -k):
+    print(j)
+for j in range(0):
+    print("nope")

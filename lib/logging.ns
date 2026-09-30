@@ -1,0 +1,145 @@
+import sys
+import time
+
+CRITICAL = 50
+FATAL = 50
+ERROR = 40
+WARNING = 30
+WARN = 30
+INFO = 20
+DEBUG = 10
+NOTSET = 0
+
+_names = {50: "CRITICAL", 40: "ERROR", 30: "WARNING", 20: "INFO", 10: "DEBUG", 0: "NOTSET"}
+_root = {"level": 30, "format": "%(levelname)s:%(name)s:%(message)s", "datefmt": None, "file": None, "stream": None}
+_loggers = {}
+
+def getLevelName(level):
+    return _names.get(level, "Level " + str(level))
+
+def _render(fmt, name, level, msg, datefmt):
+    ts = time.strftime(datefmt or "%Y-%m-%d %H:%M:%S")
+    out = fmt
+    out = out.replace("%(asctime)s", ts)
+    out = out.replace("%(levelname)s", getLevelName(level))
+    out = out.replace("%(name)s", name)
+    out = out.replace("%(message)s", msg)
+    out = out.replace("%(levelno)s", str(level))
+    return out
+
+class Handler:
+    def __init__(self, level=0):
+        self.level = level
+        self.formatter = None
+    def setLevel(self, level):
+        self.level = level
+    def setFormatter(self, fmt):
+        self.formatter = fmt
+    def emit(self, line):
+        pass
+
+class StreamHandler(Handler):
+    def __init__(self, stream=None):
+        Handler.__init__(self)
+        self.stream = stream
+    def emit(self, line):
+        if self.stream is None or self.stream is sys.stderr:
+            sys.stderr.write(line + "\n")
+        else:
+            self.stream.write(line + "\n")
+
+class FileHandler(Handler):
+    def __init__(self, filename, mode="a"):
+        Handler.__init__(self)
+        self.filename = filename
+    def emit(self, line):
+        with open(self.filename, "a") as f:
+            f.write(line + "\n")
+
+class Formatter:
+    def __init__(self, fmt=None, datefmt=None):
+        self.fmt = fmt
+        self.datefmt = datefmt
+
+class Logger:
+    def __init__(self, name):
+        self.name = name
+        self.level = 0
+        self.handlers = []
+        self.propagate = True
+    def setLevel(self, level):
+        self.level = level
+    def addHandler(self, h):
+        self.handlers.append(h)
+    def removeHandler(self, h):
+        self.handlers.remove(h)
+    def getEffectiveLevel(self):
+        return self.level if self.level != 0 else _root["level"]
+    def isEnabledFor(self, level):
+        return level >= self.getEffectiveLevel()
+    def log(self, level, msg, *args):
+        if not self.isEnabledFor(level):
+            return
+        text = str(msg)
+        if len(args) > 0:
+            text = text % args
+        if len(self.handlers) > 0:
+            for h in self.handlers:
+                if level >= h.level:
+                    f = h.formatter
+                    fmt = f.fmt if f is not None and f.fmt is not None else "%(message)s"
+                    h.emit(_render(fmt, self.name, level, text, f.datefmt if f is not None else None))
+            return
+        line = _render(_root["format"], self.name, level, text, _root["datefmt"])
+        if _root["file"] is not None:
+            with open(_root["file"], "a") as fh:
+                fh.write(line + "\n")
+        else:
+            sys.stderr.write(line + "\n")
+    def debug(self, msg, *args):
+        self.log(10, msg, *args)
+    def info(self, msg, *args):
+        self.log(20, msg, *args)
+    def warning(self, msg, *args):
+        self.log(30, msg, *args)
+    def warn(self, msg, *args):
+        self.log(30, msg, *args)
+    def error(self, msg, *args):
+        self.log(40, msg, *args)
+    def critical(self, msg, *args):
+        self.log(50, msg, *args)
+    def exception(self, msg, *args):
+        self.log(40, msg, *args)
+
+def getLogger(name="root"):
+    if name not in _loggers:
+        _loggers[name] = Logger(name)
+    return _loggers[name]
+
+def basicConfig(**kw):
+    if "level" in kw:
+        _root["level"] = kw["level"]
+    if "format" in kw:
+        _root["format"] = kw["format"]
+    if "datefmt" in kw:
+        _root["datefmt"] = kw["datefmt"]
+    if "filename" in kw:
+        _root["file"] = kw["filename"]
+
+def debug(msg, *args):
+    getLogger("root").log(10, msg, *args)
+def info(msg, *args):
+    getLogger("root").log(20, msg, *args)
+def warning(msg, *args):
+    getLogger("root").log(30, msg, *args)
+warn = warning
+def error(msg, *args):
+    getLogger("root").log(40, msg, *args)
+def critical(msg, *args):
+    getLogger("root").log(50, msg, *args)
+def exception(msg, *args):
+    getLogger("root").log(40, msg, *args)
+def log(level, msg, *args):
+    getLogger("root").log(level, msg, *args)
+def disable(level=50):
+    _root["level"] = level + 1

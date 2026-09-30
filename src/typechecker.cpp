@@ -18,6 +18,11 @@ const std::unordered_map<std::string, std::string>& typeAliasTable() {
         {"fungsi", "fungsi"}, {"func", "fungsi"},
         {"kosong", "kosong"}, {"null", "kosong"},
         {"any", ""}, {"apa", ""},
+        // Python spellings
+        {"int", "angka"}, {"float", "angka"},
+        {"list", "larik"}, {"List", "larik"}, {"tuple", "larik"}, {"Tuple", "larik"}, {"set", "larik"}, {"Set", "larik"},
+        {"dict", "peta"}, {"Dict", "peta"},
+        {"None", "kosong"},
     };
     return table;
 }
@@ -26,8 +31,8 @@ const std::unordered_map<std::string, std::string>& typeAliasTable() {
 bool TypeChecker::canonicalizeType(const std::string& raw, std::string& out) const {
     const auto& table = typeAliasTable();
     auto it = table.find(raw);
-    if (it == table.end()) return false;
-    out = it->second;
+    // A name we don't know (a user class, typing.Callable, ...) is a class/protocol type: not checked.
+    out = it == table.end() ? "" : it->second;
     return true;
 }
 
@@ -50,8 +55,12 @@ void TypeChecker::error(const std::string& msg, Span span) {
     errors_.push_back(msg + " (line " + std::to_string(span.line) + ", col " + std::to_string(span.column) + ")");
 }
 
+// Only these are checked strictly; anything else (arrays, maps, user classes with __add__/__lt__) is left alone.
+static bool primitiveType(const std::string& n) { return n == "angka" || n == "teks" || n == "boolean"; }
+
 void TypeChecker::checkComparable(const StaticType& l, const StaticType& r, const std::string& op, Span span) {
     if (l.name.empty() || r.name.empty()) return;  // one side unknown -- gradual, don't flag it
+    if (!primitiveType(l.name) || !primitiveType(r.name)) return;
     bool bothNum = l.name == "angka" && r.name == "angka";
     bool bothStr = l.name == "teks" && r.name == "teks";
     if (!bothNum && !bothStr) {
@@ -98,7 +107,7 @@ TypeChecker::StaticType TypeChecker::inferExpr(const Expr* expr) {
             StaticType r = inferExpr(n->right.get());
             const std::string& op = n->op;
 
-            if (op == "&&" || op == "||") return {};  // result mirrors whichever operand short-circuits to
+            if (op == "&&" || op == "||" || op == "?" || op == ":") return {};  // result mirrors whichever operand short-circuits to
             if (op == "==" || op == "!=") return {"boolean"};
             if (op == "<" || op == "<=" || op == ">" || op == ">=") {
                 checkComparable(l, r, op, n->span);
@@ -106,6 +115,8 @@ TypeChecker::StaticType TypeChecker::inferExpr(const Expr* expr) {
             }
             if (op == "+") {
                 if (l.name.empty() || r.name.empty()) return {};
+                if (l.name == "larik" && r.name == "larik") return {"larik"};
+                if (!primitiveType(l.name) || !primitiveType(r.name)) return {};
                 bool bothNum = l.name == "angka" && r.name == "angka";
                 bool bothStr = l.name == "teks" && r.name == "teks";
                 if (!bothNum && !bothStr) {
@@ -117,7 +128,15 @@ TypeChecker::StaticType TypeChecker::inferExpr(const Expr* expr) {
                 }
                 return {bothNum ? "angka" : "teks"};
             }
-            // - * / %
+            // - * / %   (`*` also repeats text and arrays: "ab" * 3)
+            if (op == "%" && l.name == "teks") return {"teks"};  // "fmt %d" % value
+            if (op == "-" && l.name == "larik" && r.name == "larik") return {"larik"};  // set difference
+            if (op == "*" && ((l.name == "teks" && (r.name == "angka" || r.name.empty())) ||
+                              (r.name == "teks" && (l.name == "angka" || l.name.empty())) ||
+                              l.name == "larik" || r.name == "larik")) {
+                return {l.name == "angka" || l.name.empty() ? r.name : l.name};
+            }
+            if (l.name.empty() || r.name.empty()) return {};  // one side unknown (maybe an object with __truediv__, ...)
             if (!l.name.empty() && l.name != "angka") {
                 error("operator '" + op + i18n::tr("' butuh angka, dapat ", "' needs a number, got ") + l.name +
                           i18n::tr(" di sisi kiri", " on the left side"),
@@ -148,9 +167,11 @@ TypeChecker::StaticType TypeChecker::inferExpr(const Expr* expr) {
                 const std::string& calleeName = static_cast<const IdentifierExpr*>(n->callee.get())->name;
                 const StaticType* t = lookup(calleeName);
                 if (t && t->isFunction) {
-                    if (n->args.size() != t->paramTypes.size()) {
+                    size_t minArgs = t->requiredArgs >= 0 ? static_cast<size_t>(t->requiredArgs) : t->paramTypes.size();
+                    if (n->args.size() < minArgs || (!t->variadic && n->args.size() > t->paramTypes.size())) {
                         error(i18n::tr("fungsi '", "function '") + calleeName +
-                                  i18n::tr("' butuh ", "' needs ") + std::to_string(t->paramTypes.size()) +
+                                  i18n::tr("' butuh ", "' needs ") + std::to_string(minArgs) +
+                                  (minArgs != t->paramTypes.size() ? ".." + std::to_string(t->paramTypes.size()) : std::string()) +
                                   i18n::tr(" argumen, dipanggil dengan ", " arg(s), called with ") +
                                   std::to_string(n->args.size()),
                               n->span);
@@ -203,6 +224,8 @@ TypeChecker::StaticType TypeChecker::inferExpr(const Expr* expr) {
             sig.isFunction = true;
             sig.name = "fungsi";
             sig.paramTypes.resize(decl->paramTypes.size());
+            sig.requiredArgs = decl->minArgs;
+            sig.variadic = decl->variadic();
             for (size_t i = 0; i < decl->paramTypes.size(); i++) {
                 if (decl->paramTypes[i].empty()) continue;
                 std::string canon;
@@ -264,6 +287,8 @@ void TypeChecker::checkStmt(const Stmt* stmt) {
             sig.isFunction = true;
             sig.name = "fungsi";
             sig.paramTypes.resize(n->paramTypes.size());
+            sig.requiredArgs = n->minArgs;
+            sig.variadic = n->variadic();
             for (size_t i = 0; i < n->paramTypes.size(); i++) {
                 if (n->paramTypes[i].empty()) continue;
                 std::string canon;

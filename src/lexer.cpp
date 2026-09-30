@@ -1,5 +1,9 @@
 #include "lexer.hpp"
+#include <algorithm>
+
+#include "layout.hpp"
 #include <cctype>
+#include <cstring>
 #include <cerrno>
 #include <cstdlib>
 #include <unordered_map>
@@ -39,6 +43,23 @@ const std::unordered_map<std::string, TokenType> kKeywords = {
     {"tangkap", TokenType::Catch},   {"catch", TokenType::Catch},
     {"akhirnya", TokenType::Finally},{"finally", TokenType::Finally},
     {"lempar", TokenType::Throw},    {"throw", TokenType::Throw},
+    // Python-style spellings, and short Indonesian ones. `elif`/`lj` are
+    // special-cased in readIdent's caller: they expand to `else if`.
+    {"def", TokenType::Fn},          {"fung", TokenType::Fn},
+    {"jk", TokenType::If},
+    {"slm", TokenType::While},
+    {"kem", TokenType::Return},
+    {"henti", TokenType::Break},
+    {"True", TokenType::True_},      {"Benar", TokenType::True_},
+    {"False", TokenType::False_},    {"Salah", TokenType::False_},
+    {"None", TokenType::Null_},      {"Kosong", TokenType::Null_},
+    {"self", TokenType::This},
+    {"except", TokenType::Catch},
+    {"akhir", TokenType::Finally},
+    {"raise", TokenType::Throw},
+    // `not` binds looser than comparison (unlike `!`); the parser tells the
+    // two apart by token text.
+    {"not", TokenType::Not},         {"bukan", TokenType::Not},
 };
 }  // namespace
 
@@ -48,7 +69,47 @@ LexError::LexError(const std::string& msg, int line, int column)
       line(line),
       column(column) {}
 
-Lexer::Lexer(std::string source) : source_(std::move(source)) {}
+// A file is Python-style when some line is a block header ending in ':' -- there `//` means floor
+// division (comments use `#`); in brace-style files `//` stays a comment.
+static bool looksBraceStyle(const std::string& src) {
+    size_t pos = 0;
+    while (pos < src.size()) {
+        size_t eol = src.find('\n', pos);
+        if (eol == std::string::npos) eol = src.size();
+        std::string line = src.substr(pos, eol - pos);
+        pos = eol + 1;
+        size_t hash = line.find('#');
+        if (hash != std::string::npos) line.resize(hash);
+        while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back()))) line.pop_back();
+        if (!line.empty() && (line.back() == ';' || line.back() == '{' || line.back() == '}')) return true;
+    }
+    return false;
+}
+
+static bool looksPythonStyle(const std::string& src) {
+    static const char* const heads[] = {"def ", "class ", "if ", "elif ", "else", "for ", "while ", "try", "except",
+                                        "finally", "with ", "fungsi ", "fung ", "jika ", "jk ", "lain", "untuk ", "selama ",
+                                        "slm ", "kelas ", "coba", "tangkap"};
+    size_t pos = 0;
+    while (pos < src.size()) {
+        size_t eol = src.find('\n', pos);
+        if (eol == std::string::npos) eol = src.size();
+        std::string line = src.substr(pos, eol - pos);
+        pos = eol + 1;
+        size_t b = line.find_first_not_of(" \t");
+        if (b == std::string::npos) continue;
+        size_t hash = line.find('#');
+        if (hash != std::string::npos) line.resize(hash);
+        while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back()))) line.pop_back();
+        if (line.empty() || line.back() != ':') continue;
+        for (const char* h : heads) {
+            if (line.compare(b, std::strlen(h), h) == 0) return true;
+        }
+    }
+    return false;
+}
+
+Lexer::Lexer(std::string source) : source_(std::move(source)) { pyStyle_ = looksPythonStyle(source_) || !looksBraceStyle(source_); }
 
 char Lexer::peek(int offset) const {
     size_t idx = pos_ + static_cast<size_t>(offset);
@@ -66,12 +127,21 @@ char Lexer::advance() {
     return ch;
 }
 
+bool Lexer::atLineStart() const {
+    for (size_t i = pos_; i > 0; i--) {
+        char c = source_[i - 1];
+        if (c == '\n') return true;
+        if (c != ' ' && c != '\t' && c != '\r') return false;
+    }
+    return true;
+}
+
 void Lexer::skipWhitespaceAndComments() {
     while (pos_ < source_.size()) {
         char ch = peek();
         if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n') {
             advance();
-        } else if (ch == '/' && peek(1) == '/') {
+        } else if ((ch == '/' && peek(1) == '/' && (!pyStyle_ || atLineStart())) || ch == '#') {
             while (pos_ < source_.size() && peek() != '\n') advance();
         } else {
             break;
@@ -91,16 +161,70 @@ std::vector<Token> Lexer::nextTokens() {
     int line = line_, col = column_;
     char ch = peek();
 
-    if (std::isdigit(static_cast<unsigned char>(ch))) {
+    if (std::isdigit(static_cast<unsigned char>(ch)) || (ch == '.' && std::isdigit(static_cast<unsigned char>(peek(1))))) {
         return {readNumber(start, line, col)};
+    } else if ((ch == 'r' || ch == 'R' || ch == 'b' || ch == 'B') && (peek(1) == '"' || peek(1) == '\'')) {
+        // r"..." keeps backslashes as written; b"..." is an ordinary string here
+        bool raw = ch == 'r' || ch == 'R';
+        advance();
+        Token t = readString(start, line, col, raw);
+        return {t};
+    } else if ((ch == 'f' || ch == 'F') && (peek(1) == '"' || peek(1) == '\'')) {
+        advance();  // the f prefix
+        return readBacktickTemplate(start, line, col, peek(), true);
     } else if (std::isalpha(static_cast<unsigned char>(ch)) || ch == '_') {
-        return {readIdent(start, line, col)};
-    } else if (ch == '"') {
+        Token id = readIdent(start, line, col);
+        if (id.text == "elif" || id.text == "lj") {
+            Token els = id, iff = id;
+            els.type = TokenType::Else;
+            iff.type = TokenType::If;
+            return {els, iff};
+        }
+        return {id};
+    } else if (ch == '"' || ch == '\'') {
         return {readString(start, line, col)};
     } else if (ch == '`') {
         return readBacktickTemplate(start, line, col);
     } else {
         return {readSymbol(start, line, col)};
+    }
+}
+
+// `{` in expression position (after = ( [ , : return) that holds `k: v` pairs (or nothing) is a dict
+// literal. Retag it and its `}` so the layout pass and the parser can't mistake them for a block.
+static void markDictBraces(std::vector<Token>& toks) {
+    for (size_t i = 1; i < toks.size(); i++) {
+        if (toks[i].type != TokenType::LBrace) continue;
+        TokenType prev = toks[i - 1].type;
+        bool inWord = prev == TokenType::Ident &&
+                      (toks[i - 1].text == "in" || toks[i - 1].text == "dalam" || toks[i - 1].text == "or" ||
+                       toks[i - 1].text == "atau" || toks[i - 1].text == "and" || toks[i - 1].text == "dan" ||
+                       toks[i - 1].text == "not" || toks[i - 1].text == "bukan" || toks[i - 1].text == "is");
+        if (prev != TokenType::Eq && prev != TokenType::LParen && prev != TokenType::LBracket &&
+            prev != TokenType::Comma && prev != TokenType::Colon && prev != TokenType::Return &&
+            prev != TokenType::LDict && prev != TokenType::Else && prev != TokenType::And &&
+            prev != TokenType::Or && prev != TokenType::StarStar && prev != TokenType::Pipe && prev != TokenType::Amp &&
+            prev != TokenType::Caret && prev != TokenType::Minus && !inWord) continue;
+        // Find the matching `}` and whether a top-level ':' sits before it.
+        int nest = 0;
+        bool colon = false;
+        size_t close = 0;
+        for (size_t k = i + 1; k < toks.size(); k++) {
+            TokenType t = toks[k].type;
+            if (t == TokenType::LParen || t == TokenType::LBracket || t == TokenType::LBrace || t == TokenType::LDict) nest++;
+            else if (t == TokenType::RParen || t == TokenType::RBracket) nest--;
+            else if (t == TokenType::RBrace || t == TokenType::RDict) {
+                if (nest == 0) { close = k; break; }
+                nest--;
+            } else if (t == TokenType::Colon && nest == 0) colon = true;
+            else if (t == TokenType::Eof) break;
+        }
+        if (close == 0) continue;
+        // `{}` and `{k: v}` are dicts; `{a, b}` / `{x for ...}` are sets (never after `else`: that is a block).
+        if (colon || close == i + 1 || prev != TokenType::Else) {
+            toks[i].type = TokenType::LDict;
+            toks[close].type = TokenType::RDict;
+        }
     }
 }
 
@@ -112,18 +236,81 @@ std::vector<Token> Lexer::tokenize() {
         for (auto& t : next) tokens.push_back(std::move(t));
         if (sawEof) break;
     }
-    return tokens;
+    // `async def` -> the def token remembers it (text "async"); `async with` / `async for` are just with / for
+    for (size_t i = 0; i + 1 < tokens.size(); i++) {
+        if (tokens[i].type == TokenType::Ident && tokens[i].text == "async") {
+            const Token& nx = tokens[i + 1];
+            bool def = nx.type == TokenType::Fn;
+            bool other = nx.type == TokenType::For || (nx.type == TokenType::Ident && nx.text == "with");
+            if (def || other) {
+                if (def) tokens[i + 1].text = "async";
+                tokens.erase(tokens.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+        }
+    }
+    lexerLastWasPython() = pyStyle_;
+    markDictBraces(tokens);
+    return applyLayout(std::move(tokens), source_);
 }
 
 Token Lexer::readNumber(size_t start, int line, int col) {
-    while (std::isdigit(static_cast<unsigned char>(peek()))) advance();
+    // 0x1F / 0b101 / 0o17
+    if (peek() == '0' && (peek(1) == 'x' || peek(1) == 'X' || peek(1) == 'b' || peek(1) == 'B' || peek(1) == 'o' || peek(1) == 'O')) {
+        char kind = static_cast<char>(std::tolower(static_cast<unsigned char>(peek(1))));
+        int base = kind == 'x' ? 16 : kind == 'b' ? 2 : 8;
+        auto okDigit = [&](char c) {
+            if (c == '_') return true;
+            if (base == 16) return std::isxdigit(static_cast<unsigned char>(c)) != 0;
+            return c >= '0' && c < '0' + base;
+        };
+        if (okDigit(peek(2)) && peek(2) != '_') {
+            advance();
+            advance();
+            std::string digits;
+            while (okDigit(peek())) {
+                char c = advance();
+                if (c != '_') digits += c;
+            }
+            errno = 0;
+            unsigned long long v = std::strtoull(digits.c_str(), nullptr, base);
+            if (errno == ERANGE || v > kMaxExactDoubleInt) {
+                throw LexError(i18n::tr("Angka kegedean", "Integer literal too large"), line, col);
+            }
+            Token tok;
+            tok.type = TokenType::Number;
+            tok.number = static_cast<double>(v);
+            tok.text = source_.substr(start, pos_ - start);
+            tok.span = {static_cast<int>(start), static_cast<int>(pos_), line, col};
+            return tok;
+        }
+    }
+    auto digitsWithUnderscores = [&]() {
+        while (std::isdigit(static_cast<unsigned char>(peek())) ||
+               (peek() == '_' && std::isdigit(static_cast<unsigned char>(peek(1))))) advance();
+    };
     bool isInteger = true;
-    if (peek() == '.' && std::isdigit(static_cast<unsigned char>(peek(1)))) {
+    if (peek() == '.') {  // .5
         isInteger = false;
         advance();
+        digitsWithUnderscores();
+    } else {
+        digitsWithUnderscores();
+        if (peek() == '.' && std::isdigit(static_cast<unsigned char>(peek(1)))) {
+            isInteger = false;
+            advance();
+            digitsWithUnderscores();
+        }
+    }
+    if ((peek() == 'e' || peek() == 'E') &&
+        (std::isdigit(static_cast<unsigned char>(peek(1))) ||
+         ((peek(1) == '+' || peek(1) == '-') && std::isdigit(static_cast<unsigned char>(peek(2)))))) {
+        isInteger = false;
+        advance();
+        if (peek() == '+' || peek() == '-') advance();
         while (std::isdigit(static_cast<unsigned char>(peek()))) advance();
     }
     std::string text = source_.substr(start, pos_ - start);
+    text.erase(std::remove(text.begin(), text.end(), '_'), text.end());
     if (isInteger && text.size() >= 16) {
         errno = 0;
         char* end = nullptr;
@@ -151,35 +338,49 @@ Token Lexer::readIdent(size_t start, int line, int col) {
     Token tok;
     auto it = kKeywords.find(text);
     tok.type = (it != kKeywords.end()) ? it->second : TokenType::Ident;
+    // In a Python-style file these English spellings are ordinary names (`func`, `struct`, `enum`, ...):
+    // they only mean a keyword in brace-style code.
+    if (pyStyle_ && tok.type != TokenType::Ident) {
+        static const char* const plain[] = {"func", "function", "let", "this", "extends", "struct", "enum", "catch", "throw"};
+        for (const char* w : plain) {
+            if (text == w) { tok.type = TokenType::Ident; break; }
+        }
+    }
     tok.text = text;
     tok.span = {static_cast<int>(start), static_cast<int>(pos_), line, col};
     return tok;
 }
 
-Token Lexer::readString(size_t start, int line, int col) {
-    advance();  // opening quote
+Token Lexer::readString(size_t start, int line, int col, bool raw) {
+    char quote = advance();  // opening quote: double or single
+    bool triple = peek() == quote && peek(1) == quote;  // triple-quoted strings may span lines
+    if (triple) { advance(); advance(); }
     std::string value;
-    while (peek() != '"') {
+    for (;;) {
         if (pos_ >= source_.size()) {
             throw LexError(i18n::tr("Teks nggak ditutup", "Unterminated string"), line, col);
         }
+        if (peek() == quote && (!triple || (peek(1) == quote && peek(2) == quote))) break;
         char ch = advance();
-        if (ch == '\\') {
+        if (ch == '\\' && raw) {
+            value += ch;
+            if (pos_ < source_.size()) value += advance();
+        } else if (ch == '\\') {
             char esc = advance();
             switch (esc) {
                 case 'n': value += '\n'; break;
                 case 't': value += '\t'; break;
                 case 'r': value += '\r'; break;
                 case '0': value += '\0'; break;
-                case '"': value += '"'; break;
                 case '\\': value += '\\'; break;
-                default: value += esc; break;
+                default: value += esc; break;  // includes escaped quotes
             }
         } else {
             value += ch;
         }
     }
     advance();  // closing quote
+    if (triple) { advance(); advance(); }
     Token tok;
     tok.type = TokenType::String;
     tok.str = value;
@@ -192,13 +393,14 @@ Token Lexer::readString(size_t start, int line, int col) {
 // `${...}` keep normal spans. Brace depth for `${...}` tracks
 // LBrace/RBrace TOKENS, not raw chars, so nested strings/templates
 // work correctly.
-std::vector<Token> Lexer::readBacktickTemplate(size_t start, int line, int col) {
-    advance();  // opening backtick
+std::vector<Token> Lexer::readBacktickTemplate(size_t start, int line, int col, char close, bool fstr) {
+    advance();  // opening backtick / quote
 
     struct Part {
         bool isLiteral;
         std::string literal;
         std::vector<Token> exprTokens;
+        std::string spec;  // f-string format spec after ':' (e.g. ".2f")
     };
     std::vector<Part> parts;
     std::string currentLiteral;
@@ -212,16 +414,20 @@ std::vector<Token> Lexer::readBacktickTemplate(size_t start, int line, int col) 
             throw LexError(i18n::tr("Template string nggak ditutup", "Unterminated template string"), line, col);
         }
         char ch = peek();
-        if (ch == '`') {
-            advance();  // closing backtick
+        if (ch == close) {
+            advance();  // closing backtick / quote
             break;
         }
-        if (ch == '$' && peek(1) == '{') {
+        if (fstr && ch == '{' && peek(1) == '{') { advance(); advance(); currentLiteral += '{'; continue; }
+        if (fstr && ch == '}' && peek(1) == '}') { advance(); advance(); currentLiteral += '}'; continue; }
+        if ((!fstr && ch == '$' && peek(1) == '{') || (fstr && ch == '{')) {
             flushLiteral();
             advance();
-            advance();  // consume "${"
+            if (!fstr) advance();  // consume "${" (f-strings: just "{")
             std::vector<Token> exprTokens;
-            int braceDepth = 1;
+            std::string spec;
+            int braceDepth = 1, nest = 0;
+            bool skipConv = false;
             while (true) {
                 std::vector<Token> got = nextTokens();
                 for (Token& t : got) {
@@ -233,12 +439,29 @@ std::vector<Token> Lexer::readBacktickTemplate(size_t start, int line, int col) 
                     } else if (t.type == TokenType::RBrace) {
                         braceDepth--;
                         if (braceDepth == 0) goto exprDone;  // the '}' closing this ${...}
+                    } else if (t.type == TokenType::LParen || t.type == TokenType::LBracket) {
+                        nest++;
+                    } else if (t.type == TokenType::RParen || t.type == TokenType::RBracket) {
+                        nest--;
+                    } else if (fstr && t.type == TokenType::Colon && braceDepth == 1 && nest == 0) {
+                        // {value:spec}: the spec is raw text up to the closing brace
+                        while (pos_ < source_.size() && peek() != '}') spec += advance();
+                        if (pos_ >= source_.size()) throw LexError(i18n::tr("{...} nggak ditutup di f-string", "Unterminated {...} in f-string"), line, col);
+                        advance();  // the closing '}'
+                        goto exprDone;
+                    } else if (fstr && t.type == TokenType::Not && t.text == "!" && braceDepth == 1 && nest == 0) {
+                        skipConv = true;  // !r / !s conversions: the value is shown as is
+                        continue;
+                    }
+                    if (skipConv && t.type == TokenType::Ident) {
+                        skipConv = false;
+                        continue;
                     }
                     exprTokens.push_back(std::move(t));
                 }
             }
         exprDone:
-            parts.push_back(Part{false, "", std::move(exprTokens)});
+            parts.push_back(Part{false, "", std::move(exprTokens), spec});
             continue;
         }
         char c = advance();
@@ -251,6 +474,7 @@ std::vector<Token> Lexer::readBacktickTemplate(size_t start, int line, int col) 
                 case 'r': currentLiteral += '\r'; break;
                 case '`': currentLiteral += '`'; break;
                 case '$': currentLiteral += '$'; break;
+                case '0': currentLiteral += '\0'; break;
                 case '\\': currentLiteral += '\\'; break;
                 default: currentLiteral += esc; break;
             }
@@ -287,9 +511,13 @@ std::vector<Token> Lexer::readBacktickTemplate(size_t start, int line, int col) 
         if (p.isLiteral) {
             out.push_back(mkString(p.literal));
         } else {
-            out.push_back(mkTok(TokenType::Ident, "ke_teks"));
+            out.push_back(mkTok(TokenType::Ident, p.spec.empty() ? "ke_teks" : "_fmt"));
             out.push_back(mkTok(TokenType::LParen));
             for (Token& t : p.exprTokens) out.push_back(std::move(t));
+            if (!p.spec.empty()) {
+                out.push_back(mkTok(TokenType::Comma, ","));
+                out.push_back(mkString(p.spec));
+            }
             out.push_back(mkTok(TokenType::RParen));
         }
     }
@@ -304,9 +532,46 @@ Token Lexer::readSymbol(size_t start, int line, int col) {
         {"==", TokenType::EqEq}, {"!=", TokenType::Neq},
         {"<=", TokenType::Lte},  {">=", TokenType::Gte},
         {"&&", TokenType::And},  {"||", TokenType::Or},
+        {"**", TokenType::StarStar},
         {"+=", TokenType::PlusEq}, {"-=", TokenType::MinusEq},
         {"*=", TokenType::StarEq}, {"/=", TokenType::SlashEq},
     };
+    std::string three = source_.substr(pos_, 3);
+    if (three == "//=" || three == "**=" || three == "<<=" || three == ">>=") {
+        if (three != "//=" || pyStyle_) {
+            advance(); advance(); advance();
+            Token tok;
+            tok.type = TokenType::CompoundAssign;
+            tok.text = three.substr(0, 2);
+            tok.span = {static_cast<int>(start), static_cast<int>(pos_), line, col};
+            return tok;
+        }
+    }
+    if (two == "%=" || two == "|=" || two == "&=" || two == "^=") {
+        advance(); advance();
+        Token tok;
+        tok.type = TokenType::CompoundAssign;
+        tok.text = two.substr(0, 1);
+        tok.span = {static_cast<int>(start), static_cast<int>(pos_), line, col};
+        return tok;
+    }
+    if (two == "<<" || two == ">>") {
+        advance(); advance();
+        Token tok;
+        tok.type = two == "<<" ? TokenType::Shl : TokenType::Shr;
+        tok.text = two;
+        tok.span = {static_cast<int>(start), static_cast<int>(pos_), line, col};
+        return tok;
+    }
+    if (two == "//" && pyStyle_) {
+        advance();
+        advance();
+        Token tok;
+        tok.type = TokenType::SlashSlash;
+        tok.text = two;
+        tok.span = {static_cast<int>(start), static_cast<int>(pos_), line, col};
+        return tok;
+    }
     auto itTwo = kTwo.find(two);
     if (itTwo != kTwo.end()) {
         advance();
@@ -325,7 +590,8 @@ Token Lexer::readSymbol(size_t start, int line, int col) {
         {'(', TokenType::LParen},{')', TokenType::RParen},{'{', TokenType::LBrace},
         {'}', TokenType::RBrace},{',', TokenType::Comma}, {';', TokenType::Semi},
         {'[', TokenType::LBracket},{']', TokenType::RBracket},{'.', TokenType::Dot},
-        {':', TokenType::Colon},  {'&', TokenType::And},   {'|', TokenType::Or},
+        {':', TokenType::Colon},  {'&', TokenType::Amp},   {'|', TokenType::Pipe},
+        {'^', TokenType::Caret}, {'~', TokenType::Tilde}, {'@', TokenType::At},
     };
     char one = peek();
     unsigned char uc = static_cast<unsigned char>(one);

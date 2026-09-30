@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <stdexcept>
+#include <unordered_map>
 #include <vector>
 
 #include "ast.hpp"
@@ -30,6 +31,8 @@ private:
     bool check(TokenType type) const;
     bool match(TokenType type);
     const Token& expect(TokenType type, const std::string& message);
+    // End of a statement: `;` is optional -- a line break, `}` or end of file also ends it.
+    void expectEnd(const std::string& message);
 
     StmtPtr statement();
     StmtPtr letStmt();
@@ -43,11 +46,56 @@ private:
     StmtPtr ifStmt();
     StmtPtr whileStmt();
     StmtPtr forStmt();
+    StmtPtr forInStmt(Span start);  // Python-style `for x in <iterable>`
+    // Loop over `iter` binding `vars` (several = unpacking each element); shared with comprehensions.
+    StmtPtr buildForIn(const std::vector<std::string>& vars, ExprPtr iter, std::unique_ptr<BlockStmt> body, Span sp);
+    std::vector<std::string> forTargets();
+    ExprPtr comprehension(ExprPtr element, ExprPtr valueOrNull, bool isDict, Span sp, bool lazy = false);
+    ExprPtr power();
+    ExprPtr bitOrExpr();
+    ExprPtr bitXorExpr();
+    ExprPtr bitAndExpr();
+    ExprPtr shiftExpr();
+    StmtPtr importStmt();           // `import a.b [as c]`
+    StmtPtr fromImportStmt();       // `from a.b import x [as y], ...`
+    bool isWord(const Token& t, const char* a, const char* b = nullptr) const;
+    bool matchWord(const char* a, const char* b = nullptr);
+    int hiddenCounter_ = 0;
+    std::vector<bool> yieldStack_;  // per enclosing function: did its body contain `yield`?
+    bool usesGen_ = false;          // any generator in this file -> import the __gen runtime
+    ExprPtr yieldExpr();
+    std::string typeAnnotation();
+    std::vector<std::string> catchVarStack_;      // innermost `except` handler's exception variable (bare `raise`)
+    std::vector<std::string> usedExc_;            // exception class names this file mentions
+    std::vector<std::string> declaredClasses_;    // classes this file defines itself
+    StmtPtr classPre_;
+    bool nextFnAsync_ = false;
+    bool usesAsync_ = false;
+    bool strictKeys_ = false;
+    std::vector<StmtPtr> preStmts_;
+    ExprPtr hoistDefault(ExprPtr e);
+    bool leadingStar_ = false;
+    StmtPtr loopElse(StmtPtr loop);
+    bool loopVarDeclared_ = false;
+    std::string lastParent_;
+    std::vector<std::pair<std::string, bool>> lastAnnotated_;  // `name: T [= v]` fields of the class just parsed
+    std::unordered_map<std::string, std::vector<std::pair<std::string, bool>>> dcFields_;
+    void makeDataclass(ClassDeclStmt& cls, bool order);
+    void noteName(const std::string& name);
+    void injectExceptionClasses(Program& program);
+    StmtPtr yieldFromStmt(Span start);
+    void injectGeneratorRuntime(Program& program);
+    // Extra statements a single source statement expands into (`from m import a, b`);
+    // parse() and block() splice them in right after the statement that made them.
+    std::vector<StmtPtr> pendingStmts_;
     StmtPtr returnStmt();
     StmtPtr breakStmt();
     StmtPtr continueStmt();
     std::unique_ptr<BlockStmt> block();
     StmtPtr exprStmt();
+    StmtPtr withStmt();
+    StmtPtr decoratedStmt();
+    StmtPtr tupleAssign(ExprPtr first, Span sp);
     // Shared by `untuk (init; ...` and plain statements: a let or bare
     // expression, without consuming the trailing ';' itself.
     StmtPtr forClauseInit();

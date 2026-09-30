@@ -1,0 +1,30 @@
+s = "héllo wörld ñ"
+print(len(s), s.upper(), s.lower(), s[1], s[-1], s[1:4], s[::-1])
+print(s.find("w"), s.index("ö"), "é".center(5, "*"), "é".ljust(3) + "|", f"{'é':>4}|")
+print(list(s)[:3], "ПРИВЕТ".lower(), "привет".upper(), len("日本語"), "日本語"[1])
+d = {"a": 1}
+try:
+    d["z"]
+except KeyError as e:
+    print("KeyError", e)
+print(d.get("z"), d["a"])
+def f(x, acc=[]):
+    acc.append(x)
+    return acc
+print(f(1), f(2))
+class C:
+    def m(self):
+        return "m"
+    alias = m
+print(C().alias())
+from enum import Enum, auto
+class Color(Enum):
+    RED = 1
+    GREEN = auto()
+    BLUE = auto()
+print(Color.RED, Color.GREEN.value, Color.BLUE.name, Color(1), Color["GREEN"], list(Color), len(Color))
+for c in Color:
+    print(c.name, c.value)
+import os.path
+import urllib.parse
+print(os.path.join("a", "b"), urllib.parse.quote("a b"))

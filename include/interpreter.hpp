@@ -9,6 +9,7 @@
 #include "ast.hpp"
 #include "environment.hpp"
 #include "value.hpp"
+#include "vm.hpp"
 
 // GC (gc.hpp) is a process-wide singleton; Interpreter registers
 // `globals_` as the GC root on construction -- only ever construct one
@@ -61,11 +62,12 @@ public:
 
     Value doImport(const std::string& path);
     Environment* getGlobalsEnv() const { return globals_; }
-    const std::unordered_map<std::string, Value>& getGlobals() const { return globals_->vars(); }
+    std::unordered_map<std::string, Value> getGlobals() const { return globals_->vars(); }
 
 private:
     std::ostream* outStream_ = nullptr;
     std::vector<std::unique_ptr<Program>> importedPrograms_;
+    std::vector<std::unique_ptr<VmProgram>> importedVmPrograms_;  // bytecode of VM-run modules
     std::unordered_map<std::string, Value> moduleCache_;
     std::vector<std::string> importStack_;   // cycle detection (resolved paths)
     std::vector<std::string> importDirStack_;  // directory each nested impor() resolves relative to

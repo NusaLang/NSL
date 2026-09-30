@@ -1,0 +1,15 @@
+def f(a, b=5, c=[1, 2]):
+    return a + b + panjang(c)
+print(f(1), f(1, 2), f(1, 2, [1]))
+class K:
+    def __init__(self, x=10):
+        self.x = x
+    def m(self, y=1):
+        return self.x + y
+print(K().x, K(3).m(), K(3).m(4))
+g = lambda a, b=2: a * b
+print(g(3), g(3, 4))
+def h(n, memo={}):
+    memo["n"] = n
+    return memo["n"]
+print(h(1), h(2))

@@ -1,0 +1,28 @@
+fungsi buat_penghitung() {
+    buat n = 0;
+    hasil fungsi() { n = n + 1; hasil n; };
+}
+buat c = buat_penghitung();
+c(); c();
+cetak(c());
+buat kali = fungsi(a, b) { hasil a * b; };
+cetak(kali(6, 7));
+fungsi terapkan(f, x) { hasil f(f(x)); }
+cetak(terapkan(fungsi(v) { hasil v + 3; }, 10));
+buat daftar = [];
+untuk (buat i = 0; i < 3; i = i + 1) { tambah(daftar, fungsi() { hasil i * 10; }); }
+cetak(daftar[0](), daftar[1](), daftar[2]());
+bentuk Titik { x, y }
+jenis Hari { Senin, Selasa }
+buat p = Titik(1, 2);
+cetak(p.x + p.y, Hari.Selasa.nama);
+kelas A { fungsi konstruktor(v) { ini.v = v; } fungsi info() { hasil "A:" + ke_teks(ini.v); } }
+kelas B turunan A { fungsi konstruktor(v) { induk.konstruktor(v * 2); ini.extra = 1; } fungsi info() { hasil "B>" + induk.info(); } }
+cetak(B(5).info());
+kelas C turunan B { fungsi info() { hasil "C>" + induk.info(); } }
+cetak(C(1).info());
+fungsi dalam_fungsi() {
+    bentuk Loc { a }
+    hasil Loc(9).a;
+}
+cetak(dalam_fungsi());

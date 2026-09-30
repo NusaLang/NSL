@@ -1,0 +1,29 @@
+class Box:
+    def __init__(self, v):
+        self.v = v
+        self.me = self
+def g():
+    b = Box("keep")
+    f = lambda: b.v
+    lst = [Box(1), Box(2)]
+    yield 1
+    print(b.v, f(), lst[1].v)
+    yield 2
+    print(b.v, f(), lst[0].v)
+it = g()
+next(it)
+junk = []
+for i in range(200000):
+    junk.append(Box(i))
+    if i % 1000 == 0:
+        junk = []
+gc_paksa()
+next(it)
+gc_paksa()
+for i in range(50000):
+    Box(i)
+try:
+    next(it)
+except e:
+    print("end", e)
+print("ok")

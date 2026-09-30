@@ -173,6 +173,12 @@ bool isCounterIndexedRead(const Expr* e, const std::string& counterVar, std::str
     return true;
 }
 
+static bool nonZeroLiteral(const Expr* e) {
+    if (!e || e->kind != ExprKind::Literal) return false;
+    auto* lit = static_cast<const LiteralExpr*>(e);
+    return lit->litKind == LiteralExpr::Kind::Number && lit->number != 0.0;
+}
+
 bool walkExprTree(const Expr* e, const std::string& counterVar, std::vector<std::string>& arrays) {
     if (!e) return false;
     std::string arrName;
@@ -190,6 +196,7 @@ bool walkExprTree(const Expr* e, const std::string& counterVar, std::vector<std:
     if (e->kind == ExprKind::Binary) {
         auto* be = static_cast<const BinaryExpr*>(e);
         if (be->op != "+" && be->op != "-" && be->op != "*" && be->op != "/") return false;
+        if (be->op == "/" && !nonZeroLiteral(be->right.get())) return false;  // native code can't raise ZeroDivisionError
         return walkExprTree(be->left.get(), counterVar, arrays) &&
                walkExprTree(be->right.get(), counterVar, arrays);
     }
@@ -254,6 +261,7 @@ int compileFuncExpr(Asm& a, const Expr* e, const std::unordered_map<std::string,
     if (e->kind != ExprKind::Binary) return -1;
     auto* be = static_cast<const BinaryExpr*>(e);
     if (be->op != "+" && be->op != "-" && be->op != "*" && be->op != "/") return -1;
+    if (be->op == "/" && !nonZeroLiteral(be->right.get())) return -1;  // native code can't raise ZeroDivisionError
     int lx = compileFuncExpr(a, be->left.get(), paramReg, literalPool, freeXmm, maxXmm);
     if (lx < 0) return -1;
     int rx = compileFuncExpr(a, be->right.get(), paramReg, literalPool, freeXmm + 1, maxXmm);

@@ -1,0 +1,83 @@
+import math
+
+class Fraction:
+    def __init__(self, numerator=0, denominator=1):
+        if isinstance(numerator, str):
+            if "/" in numerator:
+                a, _, b = numerator.partition("/")
+                numerator = int(a)
+                denominator = int(b)
+            elif "." in numerator:
+                whole, _, frac = numerator.partition(".")
+                denominator = 10 ** len(frac)
+                numerator = int(whole + frac)
+            else:
+                numerator = int(numerator)
+        elif isinstance(numerator, float) and numerator != int(numerator):
+            s = repr(numerator)
+            whole, _, frac = s.partition(".")
+            denominator = 10 ** len(frac)
+            numerator = int(whole + frac)
+        if denominator == 0:
+            raise ZeroDivisionError("Fraction(" + str(numerator) + ", 0)")
+        if denominator < 0:
+            numerator = -numerator
+            denominator = -denominator
+        g = math.gcd(abs(int(numerator)), int(denominator))
+        if g == 0:
+            g = 1
+        self.numerator = int(numerator) // g
+        self.denominator = int(denominator) // g
+    def _f(self, o):
+        return o if isinstance(o, Fraction) else Fraction(o)
+    def __add__(self, o):
+        o = self._f(o)
+        return Fraction(self.numerator * o.denominator + o.numerator * self.denominator, self.denominator * o.denominator)
+    def __radd__(self, o):
+        return self.__add__(o)
+    def __sub__(self, o):
+        o = self._f(o)
+        return Fraction(self.numerator * o.denominator - o.numerator * self.denominator, self.denominator * o.denominator)
+    def __rsub__(self, o):
+        return self._f(o).__sub__(self)
+    def __mul__(self, o):
+        o = self._f(o)
+        return Fraction(self.numerator * o.numerator, self.denominator * o.denominator)
+    def __rmul__(self, o):
+        return self.__mul__(o)
+    def __truediv__(self, o):
+        o = self._f(o)
+        return Fraction(self.numerator * o.denominator, self.denominator * o.numerator)
+    def __rtruediv__(self, o):
+        return self._f(o).__truediv__(self)
+    def __neg__(self):
+        return Fraction(-self.numerator, self.denominator)
+    def __eq__(self, o):
+        if isinstance(o, (int, float, Fraction)):
+            o = self._f(o)
+            return self.numerator == o.numerator and self.denominator == o.denominator
+        return False
+    def __lt__(self, o):
+        o = self._f(o)
+        return self.numerator * o.denominator < o.numerator * self.denominator
+    def __le__(self, o):
+        o = self._f(o)
+        return self.numerator * o.denominator <= o.numerator * self.denominator
+    def __gt__(self, o):
+        o = self._f(o)
+        return self.numerator * o.denominator > o.numerator * self.denominator
+    def __ge__(self, o):
+        o = self._f(o)
+        return self.numerator * o.denominator >= o.numerator * self.denominator
+    def __hash__(self):
+        return hash(self.numerator / self.denominator)
+    def __float__(self):
+        return self.numerator / self.denominator
+    def __str__(self):
+        if self.denominator == 1:
+            return str(self.numerator)
+        return str(self.numerator) + "/" + str(self.denominator)
+    def __repr__(self):
+        return "Fraction(" + str(self.numerator) + ", " + str(self.denominator) + ")"
+    def limit_denominator(self, max_denominator=1000000):
+        return self

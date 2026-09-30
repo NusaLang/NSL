@@ -1,0 +1,78 @@
+def f():
+    try:
+        try:
+            raise ValueError("a")
+        except TypeError:
+            print("wrong")
+        finally:
+            print("inner fin")
+    except ValueError as e:
+        print("outer", e)
+        return "r"
+    finally:
+        print("outer fin")
+print(f())
+for i in range(3):
+    try:
+        if i == 1:
+            continue
+        print("i", i)
+    finally:
+        print("fin", i)
+def g():
+    for i in range(3):
+        try:
+            if i == 1:
+                break
+        except Exception:
+            pass
+        else:
+            print("else", i)
+    return i
+print(g())
+try:
+    try:
+        raise KeyError("k")
+    except KeyError as e:
+        raise ValueError("converted")
+except ValueError as e2:
+    print(e2, e2.args)
+class E(Exception):
+    def __init__(self, code):
+        self.code = code
+        super().__init__("code " + str(code))
+try:
+    raise E(4)
+except E as e:
+    print(e, e.code)
+e = ValueError("x")
+print(isinstance(e, Exception), str(e), repr(e))
+try:
+    None.foo()
+except Exception as e:
+    print("caught none call")
+try:
+    undefined_name
+except NameError as e:
+    print("NameError")
+try:
+    [].pop()
+except Exception as e:
+    print("pop empty", type(e).__name__)
+try:
+    int("x")
+except (TypeError, ValueError) as e:
+    print("int", type(e).__name__)
+x = 5
+try:
+    assert x > 10, "too small"
+except AssertionError as e:
+    print("assert", e)
+def deep(n):
+    return deep(n + 1)
+try:
+    deep(0)
+except RecursionError:
+    print("recursion")
+except Exception as e:
+    print("other", e)

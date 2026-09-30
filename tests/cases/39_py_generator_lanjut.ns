@@ -1,0 +1,70 @@
+class Node:
+    def __init__(self, v, l=None, r=None):
+        self.v = v
+        self.l = l
+        self.r = r
+
+def inorder(n):
+    if n is not None:
+        yield from inorder(n.l)
+        yield n.v
+        yield from inorder(n.r)
+
+t = Node(4, Node(2, Node(1), Node(3)), Node(6, Node(5), Node(7)))
+print(list(inorder(t)))
+
+def withclosure(n):
+    fs = []
+    for i in range(n):
+        fs.append(lambda: i * 10)
+        yield fs[-1]()
+print(list(withclosure(3)))
+
+def tf():
+    try:
+        yield 1
+        yield 2
+    finally:
+        print("cleanup")
+for x in tf():
+    print(x)
+
+def thrower():
+    try:
+        yield 1
+    except e:
+        print("in gen:", e)
+        yield 99
+g = thrower()
+print(next(g))
+print(g.throw_("bad"))
+
+def acc():
+    total = 0
+    while True:
+        x = yield total
+        if x is None:
+            break
+        total += x
+a = acc()
+next(a)
+print(a.send(5), a.send(10))
+
+# many objects + gc
+def objs(n):
+    for i in range(n):
+        yield Node(i)
+c = 0
+for o in objs(50000):
+    c += o.v
+print(c)
+gens = [objs(3) for _ in range(1000)]
+print(sum(next(g).v for g in gens))
+def chain(*its):
+    for it in its:
+        yield from it
+print(list(chain([1, 2], (x * 2 for x in range(3)), "ab")))
+print(dict(zip("abc", (i * i for i in range(3)))))
+print(any(x > 3 for x in range(10)), all(x < 3 for x in range(10)))
+print(",".join(str(x) for x in range(4)))
+print(sorted((x for x in [3, 1, 2]), reverse=True))
