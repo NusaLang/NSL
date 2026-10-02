@@ -1,2 +1,2 @@
-nusa --vm: error: Coba manggil nilai yang bukan fungsi
+nusantara: error: Coba manggil nilai yang bukan fungsi (line 2, col 1)
 --- exit: 1

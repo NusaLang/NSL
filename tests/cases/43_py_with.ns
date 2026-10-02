@@ -1,0 +1,27 @@
+class Ctx:
+    def __init__(self, name, swallow=False):
+        self.name = name
+        self.swallow = swallow
+    def __enter__(self):
+        print("enter", self.name)
+        return self
+    def __exit__(self, t, v, tb):
+        print("exit", self.name, v)
+        return self.swallow
+with Ctx("a") as c:
+    print("body", c.name)
+with Ctx("b", True):
+    raise ValueError("oops")
+print("after b")
+try:
+    with Ctx("c"):
+        raise KeyError("k")
+except KeyError as e:
+    print("outer got", e)
+def f():
+    with Ctx("d"):
+        return 5
+print(f())
+with open("/tmp/nusa_with_test.txt", "w") as fh:
+    fh.write("hi")
+print(open("/tmp/nusa_with_test.txt").read())

@@ -1,0 +1,19 @@
+s = "Halo Dunia"
+print(s[0:4], s[5:], s[:4], s[-5:], s[:-6], s[2:-2])
+xs = [10, 20, 30, 40, 50]
+print(xs[1:3], xs[:2], xs[3:], xs[-2:], xs[:], len(xs[1:-1]))
+print(xs[-1], xs[-5], s[-1])
+xs[-1] = 99
+print(xs[4])
+def ujung(a):
+    return a[-1] + a[0]
+print(ujung([1, 2, 3]))
+print(s[100:200] == "", xs[10:] == [])
+print([1, 2, 3] == [1, 2, 3], [1, [2, 3]] == [1, [2, 3]], [1, 2] == [1, 3], [1] == [1, 2])
+m1 = new_map()
+m1["a"] = 1
+m2 = new_map()
+m2["a"] = 1
+print(m1 == m2, m1 != m2)
+m2["a"] = 2
+print(m1 == m2)

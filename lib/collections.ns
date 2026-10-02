@@ -1,0 +1,93 @@
+def defaultdict(factory=None, init=None):
+    d = _defaultdict(factory)
+    if init is not None:
+        d.update(init)
+    return d
+
+def Counter(items=None, **kw):
+    c = _defaultdict(int)
+    if items is not None:
+        if isinstance(items, dict):
+            for k in items:
+                c[k] = items[k]
+        else:
+            for x in items:
+                c[x] = c[x] + 1
+    for k in kw:
+        c[k] = kw[k]
+    return c
+
+def OrderedDict(items=None):
+    d = {}
+    if items is not None:
+        d.update(items)
+    return d
+
+def namedtuple(typename, field_names, defaults=None):
+    return _namedtuple(typename, field_names)
+
+class deque:
+    def __init__(self, iterable=None, maxlen=None):
+        self._d = list(iterable) if iterable is not None else []
+        self.maxlen = maxlen
+        self._trim(True)
+    def _trim(self, left):
+        if self.maxlen is not None:
+            while len(self._d) > self.maxlen:
+                if left:
+                    self._d.pop(0)
+                else:
+                    self._d.pop()
+    def append(self, x):
+        self._d.append(x)
+        self._trim(True)
+    def appendleft(self, x):
+        self._d.insert(0, x)
+        self._trim(False)
+    def pop(self):
+        if len(self._d) == 0:
+            raise IndexError("pop from an empty deque")
+        return self._d.pop()
+    def popleft(self):
+        if len(self._d) == 0:
+            raise IndexError("pop from an empty deque")
+        return self._d.pop(0)
+    def extend(self, it):
+        for x in it:
+            self.append(x)
+    def extendleft(self, it):
+        for x in it:
+            self.appendleft(x)
+    def clear(self):
+        self._d = []
+    def rotate(self, n=1):
+        k = len(self._d)
+        if k == 0:
+            return
+        n = n % k
+        if n:
+            self._d = self._d[-n:] + self._d[:-n]
+    def count(self, x):
+        return self._d.count(x)
+    def remove(self, x):
+        self._d.remove(x)
+    def reverse(self):
+        self._d.reverse()
+    def index(self, x):
+        return self._d.index(x)
+    def copy(self):
+        return deque(self._d, self.maxlen)
+    def __len__(self):
+        return len(self._d)
+    def __getitem__(self, i):
+        return self._d[i]
+    def __iter__(self):
+        return iter(self._d)
+    def __contains__(self, x):
+        return x in self._d
+    def __str__(self):
+        return "deque(" + str(self._d) + ")"
+    def __repr__(self):
+        return "deque(" + str(self._d) + ")"
+    def __eq__(self, o):
+        return isinstance(o, deque) and self._d == o._d

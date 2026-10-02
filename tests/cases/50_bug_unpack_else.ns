@@ -1,0 +1,33 @@
+a, *rest = [1, 2, 3]
+*init, last = [1, 2, 3]
+x, *mid, y = "abcde"
+print(a, rest, x, mid, y)
+h, t = (i for i in range(2))
+print(h, t)
+for n in [2, 3, 4]:
+    if n == 9:
+        break
+else:
+    print("no break")
+for n in [2, 3, 4]:
+    if n == 3:
+        break
+else:
+    print("never")
+i = 0
+while i < 3:
+    i += 1
+else:
+    print("while done", i)
+def find(xs, t):
+    for i, x in enumerate(xs):
+        for j in range(2):
+            if x == t:
+                break
+        else:
+            continue
+        break
+    else:
+        return -1
+    return i
+print(find([1, 2, 3], 2), find([1], 5))

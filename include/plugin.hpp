@@ -15,6 +15,10 @@ namespace plugin {
 // field-access-on-null.
 Value load(const std::string& path);
 
+// Modules built into the binary itself (http, ws, crypto, audio, gambar): fills `out` and
+// returns true when `name` is one of them.
+bool loadBuiltin(const std::string& name, Value& out);
+
 // Marshals `args` into NsValue[], releases the GIL for the native call,
 // reacquires it, converts the result back. Only null/bool/number/string
 // cross directly -- an array/map argument throws (json_encode() it

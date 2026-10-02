@@ -1,0 +1,62 @@
+def reduce(function, iterable, initial=None):
+    it = list(iterable)
+    if initial is None:
+        if len(it) == 0:
+            raise TypeError("reduce() of empty iterable with no initial value")
+        acc = it[0]
+        it = it[1:]
+    else:
+        acc = initial
+    for x in it:
+        acc = function(acc, x)
+    return acc
+
+def partial(fn, *pargs, **pkw):
+    def call(*args, **kw):
+        merged = dict(pkw)
+        merged.update(kw)
+        return fn(*(list(pargs) + list(args)), **merged)
+    return call
+
+def wraps(wrapped):
+    def deco(f):
+        return f
+    return deco
+
+def lru_cache(maxsize=128, typed=False):
+    def deco(fn):
+        cache = {}
+        def wrapper(*args):
+            key = str(args)
+            if key in cache:
+                return cache[key]
+            r = fn(*args)
+            cache[key] = r
+            return r
+        return wrapper
+    if callable(maxsize):
+        f = maxsize
+        maxsize = 128
+        return deco(f)
+    return deco
+
+def cache(fn):
+    return lru_cache()(fn)
+
+def cmp_to_key(mycmp):
+    class K:
+        def __init__(self, obj):
+            self.obj = obj
+        def __lt__(self, other):
+            return mycmp(self.obj, other.obj) < 0
+        def __gt__(self, other):
+            return mycmp(self.obj, other.obj) > 0
+        def __eq__(self, other):
+            return mycmp(self.obj, other.obj) == 0
+    return K
+
+def total_ordering(cls):
+    return cls
+
+def singledispatch(fn):
+    return fn

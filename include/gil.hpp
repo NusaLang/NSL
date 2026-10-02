@@ -3,7 +3,7 @@
 #include <mutex>
 
 // Process-wide Global Interpreter Lock -- at most one thread ever executes
-// Nusantara code at a time (same model as Python's GIL). Released around
+// Nusantara code at a time. Released around
 // blocking I/O so other goroutines can run meanwhile; no CPU parallelism.
 class GIL {
 public:

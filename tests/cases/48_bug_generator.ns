@@ -1,0 +1,57 @@
+# generators
+def g():
+    x = yield 1
+    print("got", x)
+    return
+    yield 2
+it = g()
+print(next(it))
+try:
+    it.send(5)
+except StopIteration:
+    print("stop")
+print(list(g()))
+def gen_in_loop():
+    for i in range(3):
+        try:
+            yield i
+        finally:
+            print("f", i)
+print(list(gen_in_loop()))
+gg = (i for i in range(3))
+print(list(gg), list(gg))
+def outer():
+    def inner():
+        yield 1
+    return list(inner())
+print(outer())
+# generator captured var mutated
+def counter():
+    n = 0
+    while n < 3:
+        n += 1
+        yield lambda: n
+print([f() for f in counter()])
+class K:
+    def gen(self):
+        for i in range(2):
+            yield self.v + i
+    def __init__(self):
+        self.v = 10
+print(list(K().gen()))
+print(sum(x for x in range(5) if x % 2), max(x for x in [3, 9, 2]), "-".join(str(x) for x in range(3)))
+print(dict((k, v) for k, v in [(1, 2)]))
+def fibg():
+    a, b = 0, 1
+    while True:
+        yield a
+        a, b = b, a + b
+import itertools
+print(list(itertools.islice(fibg(), 10)))
+z = zip(range(3), (c for c in "abc"))
+print(list(z))
+print(list(enumerate(x for x in "ab")))
+print(list(map(lambda x: x + 1, (i for i in range(3)))))
+print([x for x in (i * 2 for i in range(3))])
+n = next(iter([]), "dflt")
+print(n)

@@ -1,0 +1,253 @@
+import sys
+
+class ArgumentError(Exception):
+    pass
+
+class Namespace:
+    def __init__(self, **kw):
+        for k in kw:
+            setattr(self, k, kw[k])
+    def __repr__(self):
+        items = []
+        for k in vars(self):
+            items.append(k + "=" + repr(getattr(self, k)))
+        return "Namespace(" + ", ".join(items) + ")"
+
+class ArgumentParser:
+    def __init__(self, prog=None, description=None, epilog=None, usage=None, add_help=True, **kw):
+        self.prog = prog if prog is not None else (sys.argv[0].split("/")[-1] if len(sys.argv) > 0 else "prog")
+        self.description = description
+        self.epilog = epilog
+        self._positionals = []
+        self._optionals = []
+        self._add_help = add_help
+        self._subparsers = None
+    def add_argument(self, *names, **kw):
+        spec = {"names": names, "action": kw.get("action", "store"), "type": kw.get("type", None),
+                "default": kw.get("default", None), "help": kw.get("help", ""), "nargs": kw.get("nargs", None),
+                "choices": kw.get("choices", None), "required": kw.get("required", False),
+                "metavar": kw.get("metavar", None), "const": kw.get("const", None)}
+        if names[0].startswith("-"):
+            dest = kw.get("dest", None)
+            if dest is None:
+                longs = [n for n in names if n.startswith("--")]
+                base = longs[0] if len(longs) > 0 else names[0]
+                dest = base.lstrip("-").replace("-", "_")
+            spec["dest"] = dest
+            if spec["action"] == "store_true":
+                spec["default"] = kw.get("default", False)
+            elif spec["action"] == "store_false":
+                spec["default"] = kw.get("default", True)
+            elif spec["action"] == "count":
+                spec["default"] = kw.get("default", 0)
+            self._optionals.append(spec)
+        else:
+            spec["dest"] = kw.get("dest", names[0])
+            self._positionals.append(spec)
+        return spec
+    def add_subparsers(self, dest=None, **kw):
+        self._subparsers = {"dest": dest, "parsers": {}}
+        outer = self
+        class _Sub:
+            def add_parser(self, name, **kw2):
+                p = ArgumentParser(prog=outer.prog + " " + name, **kw2)
+                outer._subparsers["parsers"][name] = p
+                return p
+        return _Sub()
+    def add_mutually_exclusive_group(self, **kw):
+        return self
+    def add_argument_group(self, *a, **kw):
+        return self
+    def _convert(self, spec, text):
+        t = spec["type"]
+        if t is not None:
+            try:
+                v = t(text)
+            except Exception:
+                self.error("argument " + "/".join(spec["names"]) + ": invalid " + getattr(t, "__name__", "value") + " value: '" + text + "'")
+        else:
+            v = text
+        if spec["choices"] is not None and v not in spec["choices"]:
+            self.error("argument " + "/".join(spec["names"]) + ": invalid choice: " + repr(v) + " (choose from " + ", ".join([repr(c) for c in spec["choices"]]) + ")")
+        return v
+    def format_usage(self):
+        parts = ["usage: " + self.prog]
+        if self._add_help:
+            parts.append("[-h]")
+        for o in self._optionals:
+            n = o["names"][0]
+            if o["action"] in ("store_true", "store_false", "count"):
+                parts.append("[" + n + "]")
+            else:
+                parts.append("[" + n + " " + (o["metavar"] or o["dest"].upper()) + "]")
+        for p in self._positionals:
+            parts.append(p["metavar"] or p["dest"])
+        return " ".join(parts) + "\n"
+    def format_help(self):
+        out = self.format_usage()
+        if self.description:
+            out += "\n" + self.description + "\n"
+        if len(self._positionals) > 0:
+            out += "\npositional arguments:\n"
+            for p in self._positionals:
+                out += "  " + (p["metavar"] or p["dest"]).ljust(22) + p["help"] + "\n"
+        out += "\noptions:\n"
+        if self._add_help:
+            out += "  -h, --help".ljust(24) + "show this help message and exit\n"
+        for o in self._optionals:
+            label = ", ".join(o["names"])
+            if o["action"] not in ("store_true", "store_false", "count"):
+                label += " " + (o["metavar"] or o["dest"].upper())
+            out += ("  " + label).ljust(24) + o["help"] + "\n"
+        if self.epilog:
+            out += "\n" + self.epilog + "\n"
+        return out
+    def print_help(self):
+        sys.stdout.write(self.format_help())
+    def print_usage(self):
+        sys.stdout.write(self.format_usage())
+    def error(self, message):
+        sys.stderr.write(self.format_usage())
+        sys.stderr.write(self.prog + ": error: " + message + "\n")
+        sys.exit(2)
+    def exit(self, status=0, message=None):
+        if message:
+            sys.stderr.write(message)
+        sys.exit(status)
+    def parse_args(self, args=None):
+        ns, rest = self.parse_known_args(args)
+        if len(rest) > 0:
+            self.error("unrecognized arguments: " + " ".join(rest))
+        return ns
+    def parse_known_args(self, args=None):
+        if args is None:
+            args = sys.argv[1:]
+        args = list(args)
+        ns = Namespace()
+        for o in self._optionals:
+            setattr(ns, o["dest"], o["default"] if o["action"] != "append" else o["default"])
+        for p in self._positionals:
+            setattr(ns, p["dest"], p["default"])
+        extras = []
+        pos_values = []
+        i = 0
+        only_pos = False
+        while i < len(args):
+            a = args[i]
+            if only_pos or not a.startswith("-") or a == "-" or (a[1:].replace(".", "", 1).isdigit()):
+                pos_values.append(a)
+                i += 1
+                continue
+            if a == "--":
+                only_pos = True
+                i += 1
+                continue
+            if a in ("-h", "--help") and self._add_help:
+                self.print_help()
+                sys.exit(0)
+            name = a
+            inline = None
+            if a.startswith("--") and "=" in a:
+                name, _, inline = a.partition("=")
+            spec = None
+            for o in self._optionals:
+                if name in o["names"]:
+                    spec = o
+            if spec is None and a.startswith("--"):
+                matches = [o for o in self._optionals if any([n.startswith(name) for n in o["names"] if n.startswith("--")])]
+                if len(matches) == 1:
+                    spec = matches[0]
+            if spec is None and not a.startswith("--") and len(a) > 2:
+                for o in self._optionals:
+                    if a[:2] in o["names"] and o["action"] not in ("store_true", "store_false", "count"):
+                        spec = o
+                        inline = a[2:]
+            if spec is None:
+                extras.append(a)
+                i += 1
+                continue
+            act = spec["action"]
+            if act == "store_true":
+                setattr(ns, spec["dest"], True)
+            elif act == "store_false":
+                setattr(ns, spec["dest"], False)
+            elif act == "count":
+                setattr(ns, spec["dest"], getattr(ns, spec["dest"]) + 1)
+            elif act == "store_const":
+                setattr(ns, spec["dest"], spec["const"])
+            elif act == "version":
+                sys.stdout.write(str(spec["default"]) + "\n")
+                sys.exit(0)
+            else:
+                nargs = spec["nargs"]
+                if nargs is None:
+                    if inline is None:
+                        if i + 1 >= len(args):
+                            self.error("argument " + "/".join(spec["names"]) + ": expected one argument")
+                        i += 1
+                        inline = args[i]
+                    val = self._convert(spec, inline)
+                else:
+                    vals = []
+                    if inline is not None:
+                        vals.append(self._convert(spec, inline))
+                    while i + 1 < len(args) and not args[i + 1].startswith("-") and (nargs in ("*", "+") or len(vals) < nargs):
+                        i += 1
+                        vals.append(self._convert(spec, args[i]))
+                    if nargs == "+" and len(vals) == 0:
+                        self.error("argument " + "/".join(spec["names"]) + ": expected at least one argument")
+                    val = vals
+                if act == "append":
+                    cur = getattr(ns, spec["dest"])
+                    if cur is None:
+                        cur = []
+                    cur.append(val)
+                    setattr(ns, spec["dest"], cur)
+                else:
+                    setattr(ns, spec["dest"], val)
+            i += 1
+        pi = 0
+        if self._subparsers is not None and len(pos_values) > 0 and pos_values[0] in self._subparsers["parsers"]:
+            sub = self._subparsers["parsers"][pos_values[0]]
+            if self._subparsers["dest"] is not None:
+                setattr(ns, self._subparsers["dest"], pos_values[0])
+            subns, subextra = sub.parse_known_args(pos_values[1:])
+            for k in vars(subns):
+                setattr(ns, k, getattr(subns, k))
+            extras.extend(subextra)
+            pos_values = []
+        for p in self._positionals:
+            nargs = p["nargs"]
+            if nargs in ("*", "+"):
+                vals = [self._convert(p, v) for v in pos_values[pi:]]
+                if nargs == "+" and len(vals) == 0:
+                    self.error("the following arguments are required: " + p["dest"])
+                setattr(ns, p["dest"], vals)
+                pi = len(pos_values)
+            elif nargs == "?":
+                if pi < len(pos_values):
+                    setattr(ns, p["dest"], self._convert(p, pos_values[pi]))
+                    pi += 1
+            elif isinstance(nargs, int):
+                vals = [self._convert(p, v) for v in pos_values[pi:pi + nargs]]
+                setattr(ns, p["dest"], vals)
+                pi += nargs
+            else:
+                if pi >= len(pos_values):
+                    self.error("the following arguments are required: " + p["dest"])
+                setattr(ns, p["dest"], self._convert(p, pos_values[pi]))
+                pi += 1
+        extras.extend(pos_values[pi:])
+        for o in self._optionals:
+            if o["required"] and getattr(ns, o["dest"]) is None:
+                self.error("the following arguments are required: " + "/".join(o["names"]))
+        return (ns, extras)
+
+class HelpFormatter:
+    pass
+class RawTextHelpFormatter(HelpFormatter):
+    pass
+class RawDescriptionHelpFormatter(HelpFormatter):
+    pass
+class ArgumentDefaultsHelpFormatter(HelpFormatter):
+    pass

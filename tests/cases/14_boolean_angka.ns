@@ -13,7 +13,9 @@ buat m = peta_baru();
 m["t"] = benar; m["f"] = salah;
 cetak(m["t"], m["f"], json_encode(m["t"]), json_encode(m["f"]));
 jika salah { cetak("BUG"); } lain { cetak("ok-falsy"); }
-jika 0 { cetak("ok-nol-truthy"); } lain { cetak("BUG2"); }
+jika 0 { cetak("BUG2"); } lain { cetak("ok-nol-falsy"); }
 jika kosong { cetak("BUG3"); } lain { cetak("ok-kosong-falsy"); }
-jika "" { cetak("ok-string-kosong-truthy"); } lain { cetak("BUG4"); }
+jika "" { cetak("BUG4"); } lain { cetak("ok-string-kosong-falsy"); }
+jika [] { cetak("BUG5"); } lain { cetak("ok-larik-kosong-falsy"); }
+jika 1 { cetak("ok-satu-truthy"); }
 cetak(salah || benar, benar && salah, !salah);

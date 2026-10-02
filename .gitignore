@@ -7,3 +7,4 @@ plugins/*/vendor/*.o
 /dist/
 nusantara.js
 nusantara.wasm
+/nusantara

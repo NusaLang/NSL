@@ -1,0 +1,92 @@
+try:
+    raise ValueError("bad")
+except ValueError as e:
+    print("VE", e)
+class MyErr(Exception):
+    pass
+try:
+    raise MyErr("mine")
+except MyErr as e:
+    print("ME", e)
+except Exception as e:
+    print("other", e)
+try:
+    x = 1 / 0
+except ZeroDivisionError as e:
+    print("zde", e)
+try:
+    [1][5]
+except IndexError as e:
+    print("ie", e)
+try:
+    {}["k"]
+except KeyError as e:
+    print("ke", e)
+print(getattr(MyErr, "x", 5), hasattr("a", "b"))
+class AppError(Exception):
+    def __init__(self, msg, code=1):
+        super().__init__(msg)
+        self.code = code
+class DbError(AppError):
+    pass
+
+def risky(n):
+    if n == 0:
+        raise DbError("db down", 7)
+    if n == 1:
+        raise ValueError("bad value")
+    if n == 2:
+        return 10 / 0
+    if n == 3:
+        raise KeyError("k")
+    if n == 4:
+        raise NotImplementedError
+    return "ok"
+
+for i in range(6):
+    try:
+        print("result", risky(i))
+    except DbError as e:
+        print("db:", e, e.code, type(e).__name__)
+    except (ValueError, KeyError) as e:
+        print("val/key:", e, type(e).__name__)
+    except ArithmeticError as e:
+        print("arith:", e)
+    except Exception as e:
+        print("generic:", repr(e), e.args)
+    else:
+        print("no error")
+    finally:
+        print("done", i)
+
+def reraise():
+    try:
+        raise RuntimeError("inner")
+    except RuntimeError as e:
+        print("caught", e)
+        raise
+try:
+    reraise()
+except Exception as e:
+    print("outer", e, isinstance(e, RuntimeError), isinstance(e, ValueError))
+
+try:
+    raise "legacy string"
+except Exception as e:
+    print("legacy:", e)
+try:
+    raise "x"
+except:
+    print("bare")
+
+def f():
+    try:
+        return 1
+    finally:
+        print("fin")
+print(f())
+print(isinstance(DbError("a"), AppError), issubclass(DbError, Exception))
+try:
+    int("zz")
+except ValueError as e:
+    print("int fail")

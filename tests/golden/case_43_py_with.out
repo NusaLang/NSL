@@ -1,0 +1,14 @@
+enter a
+body a
+exit a kosong
+enter b
+exit b oops
+after b
+enter c
+exit c k
+outer got k
+enter d
+exit d kosong
+5
+hi
+--- exit: 0

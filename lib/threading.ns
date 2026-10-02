@@ -1,0 +1,116 @@
+import time
+
+_ident = [1]
+
+class Thread:
+    def __init__(self, group=None, target=None, name=None, args=(), kwargs=None, daemon=None):
+        self._target = target
+        self._args = args
+        self._kwargs = kwargs if kwargs is not None else {}
+        _ident[0] += 1
+        self.name = name if name is not None else "Thread-" + str(_ident[0])
+        self.ident = _ident[0]
+        self.daemon = daemon
+        self._done = kanal_baru(1)
+        self._started = False
+        self._alive = False
+        self.result = None
+        self.error = None
+    def run(self):
+        if self._target is not None:
+            self.result = self._target(*self._args, **self._kwargs)
+    def _main(self):
+        try:
+            self.run()
+        except Exception as e:
+            self.error = e
+            print("Exception in thread " + self.name + ": " + str(e))
+        self._alive = False
+        kanal_tutup(self._done)
+    def start(self):
+        if self._started:
+            raise RuntimeError("threads can only be started once")
+        self._started = True
+        self._alive = True
+        me = self
+        jalan(lambda: me._main())
+    def join(self, timeout=None):
+        if self._started:
+            kanal_terima(self._done)
+    def is_alive(self):
+        return self._alive
+    def isDaemon(self):
+        return self.daemon
+
+class Lock:
+    def __init__(self):
+        self._ch = kanal_baru(1)
+    def acquire(self, blocking=True, timeout=-1):
+        kanal_kirim(self._ch, 1)
+        return True
+    def release(self):
+        kanal_terima(self._ch)
+    def locked(self):
+        return kanal_panjang(self._ch) > 0
+    def __enter__(self):
+        self.acquire()
+        return self
+    def __exit__(self, a, b, c):
+        self.release()
+        return False
+
+RLock = Lock
+
+class Event:
+    def __init__(self):
+        self._flag = False
+    def set(self):
+        self._flag = True
+    def clear(self):
+        self._flag = False
+    def is_set(self):
+        return self._flag
+    def wait(self, timeout=None):
+        waited = 0.0
+        while not self._flag:
+            time.sleep(0.001)
+            waited += 0.001
+            if timeout is not None and waited >= timeout:
+                break
+        return self._flag
+
+class Semaphore:
+    def __init__(self, value=1):
+        self._ch = kanal_baru(value)
+    def acquire(self, blocking=True):
+        kanal_kirim(self._ch, 1)
+        return True
+    def release(self):
+        kanal_terima(self._ch)
+    def __enter__(self):
+        self.acquire()
+        return self
+    def __exit__(self, a, b, c):
+        self.release()
+        return False
+
+class Timer(Thread):
+    def __init__(self, interval, function, args=(), kwargs=None):
+        Thread.__init__(self, target=function, args=args, kwargs=kwargs)
+        self.interval = interval
+    def run(self):
+        time.sleep(self.interval)
+        self._target(*self._args, **self._kwargs)
+
+def current_thread():
+    t = Thread(name="MainThread")
+    return t
+
+def get_ident():
+    return 1
+
+def active_count():
+    return 1
+
+def cpu_count():
+    return 1

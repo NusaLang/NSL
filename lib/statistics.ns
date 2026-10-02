@@ -1,0 +1,69 @@
+import math
+
+def mean(data):
+    d = list(data)
+    if len(d) == 0:
+        raise ValueError("mean requires at least one data point")
+    return sum(d) / len(d)
+
+fmean = mean
+
+def median(data):
+    d = sorted(data)
+    n = len(d)
+    if n == 0:
+        raise ValueError("no median for empty data")
+    if n % 2 == 1:
+        return d[n // 2]
+    return (d[n // 2 - 1] + d[n // 2]) / 2
+
+def median_low(data):
+    d = sorted(data)
+    n = len(d)
+    return d[n // 2] if n % 2 == 1 else d[n // 2 - 1]
+
+def median_high(data):
+    d = sorted(data)
+    return d[len(d) // 2]
+
+def mode(data):
+    counts = {}
+    best = None
+    bestn = 0
+    for x in data:
+        counts[x] = counts.get(x, 0) + 1
+        if counts[x] > bestn:
+            bestn = counts[x]
+            best = x
+    if best is None:
+        raise ValueError("no mode for empty data")
+    return best
+
+def multimode(data):
+    counts = {}
+    for x in data:
+        counts[x] = counts.get(x, 0) + 1
+    if not counts:
+        return []
+    top = max(counts.values())
+    return [k for k in counts if counts[k] == top]
+
+def pvariance(data, mu=None):
+    d = list(data)
+    if mu is None:
+        mu = sum(d) / len(d)
+    return sum([(x - mu) ** 2 for x in d]) / len(d)
+
+def variance(data, xbar=None):
+    d = list(data)
+    if len(d) < 2:
+        raise ValueError("variance requires at least two data points")
+    if xbar is None:
+        xbar = sum(d) / len(d)
+    return sum([(x - xbar) ** 2 for x in d]) / (len(d) - 1)
+
+def pstdev(data, mu=None):
+    return math.sqrt(pvariance(data, mu))
+
+def stdev(data, xbar=None):
+    return math.sqrt(variance(data, xbar))

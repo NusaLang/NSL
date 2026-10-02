@@ -28,7 +28,7 @@ struct HttpResponse {
     std::string body;
 };
 
-// Minimal HTTP/1.1 client over plain TCP or TLS (vendored BearSSL for
+// Minimal HTTP/1.1 client over plain TCP or TLS (the built-in client in tls.hpp for
 // https://). body/contentType are ignored for GET.
 HttpResponse httpRequest(const std::string& method, const std::string& url,
                           const std::string& body, const std::string& contentType,

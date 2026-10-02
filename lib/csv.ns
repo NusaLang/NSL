@@ -1,0 +1,112 @@
+QUOTE_MINIMAL = 0
+QUOTE_ALL = 1
+QUOTE_NONNUMERIC = 2
+QUOTE_NONE = 3
+
+class Error(Exception):
+    pass
+
+def _parse_line(line, delimiter, quotechar):
+    row = []
+    field = ""
+    inq = False
+    i = 0
+    n = len(line)
+    while i < n:
+        c = line[i]
+        if inq:
+            if c == quotechar:
+                if i + 1 < n and line[i + 1] == quotechar:
+                    field += quotechar
+                    i += 1
+                else:
+                    inq = False
+            else:
+                field += c
+        else:
+            if c == quotechar:
+                inq = True
+            elif c == delimiter:
+                row.append(field)
+                field = ""
+            else:
+                field += c
+        i += 1
+    row.append(field)
+    return row
+
+def _lines(source):
+    if isinstance(source, str):
+        return source.split("\n")
+    if hasattr(source, "read"):
+        return source.read().split("\n")
+    return list(source)
+
+def reader(source, delimiter=",", quotechar='"', **kw):
+    pending = ""
+    for raw in _lines(source):
+        line = raw.rstrip("\r\n")
+        if pending != "":
+            line = pending + "\n" + line
+            pending = ""
+        if line.count(quotechar) % 2 == 1:
+            pending = line
+            continue
+        if line == "":
+            continue
+        yield _parse_line(line, delimiter, quotechar)
+    if pending != "":
+        yield _parse_line(pending, delimiter, quotechar)
+
+class DictReader:
+    def __init__(self, source, fieldnames=None, delimiter=",", quotechar='"', **kw):
+        self._rows = list(reader(source, delimiter, quotechar))
+        if fieldnames is None:
+            self.fieldnames = self._rows[0] if self._rows else []
+            self._rows = self._rows[1:]
+        else:
+            self.fieldnames = fieldnames
+    def __iter__(self):
+        out = []
+        for r in self._rows:
+            d = {}
+            for i in range(len(self.fieldnames)):
+                d[self.fieldnames[i]] = r[i] if i < len(r) else None
+            out.append(d)
+        return iter(out)
+
+def _quote(v, delimiter, quotechar, quoting):
+    s = "" if v is None else str(v)
+    need = quoting == 1 or delimiter in s or quotechar in s or "\n" in s or "\r" in s
+    if quoting == 2 and not isinstance(v, (int, float)):
+        need = True
+    if need and quoting != 3:
+        return quotechar + s.replace(quotechar, quotechar + quotechar) + quotechar
+    return s
+
+class writer:
+    def __init__(self, target, delimiter=",", quotechar='"', quoting=0, lineterminator="\n", **kw):
+        self._t = target
+        self._d = delimiter
+        self._q = quotechar
+        self._quoting = quoting
+        self._lt = lineterminator
+    def writerow(self, row):
+        line = self._d.join([_quote(v, self._d, self._q, self._quoting) for v in row]) + self._lt
+        self._t.write(line)
+        return len(line)
+    def writerows(self, rows):
+        for r in rows:
+            self.writerow(r)
+
+class DictWriter:
+    def __init__(self, target, fieldnames, delimiter=",", quotechar='"', quoting=0, lineterminator="\n", **kw):
+        self._w = writer(target, delimiter, quotechar, quoting, lineterminator)
+        self.fieldnames = fieldnames
+    def writeheader(self):
+        self._w.writerow(self.fieldnames)
+    def writerow(self, d):
+        self._w.writerow([d.get(k, "") for k in self.fieldnames])
+    def writerows(self, rows):
+        for d in rows:
+            self.writerow(d)

@@ -1,0 +1,17 @@
+x = 5
+print(1 if x > 3 else 2, "a" if x < 3 else "b")
+nama = 'Rex'
+print(f"halo {nama}, x={x + 1} {{lit}}")
+print(f'{nama.upper()} {[1,2][0]}')
+print(3 in [1, 2, 3], "z" in "abc", "a" in {"a": 1}, 5 not in [1, 2])
+y = None
+print(y is None, x is not None)
+def f(n):
+    return "genap" if n % 2 == 0 else "ganjil"
+print(f(2), f(3))
+print("""baris1
+baris2""")
+d = {"k": [1, 2]}
+print(f"{d['k'][1]}")
+z = 1 if x == 5 else 2 if x == 6 else 3
+print(z)

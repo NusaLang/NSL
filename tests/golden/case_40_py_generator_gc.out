@@ -1,0 +1,5 @@
+keep keep 2
+keep keep 1
+end {pesan: "StopIteration (line 26, col 5)"}
+ok
+--- exit: 0

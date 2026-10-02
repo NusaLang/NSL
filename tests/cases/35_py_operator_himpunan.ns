@@ -1,0 +1,47 @@
+try:
+    print("a")
+finally:
+    print("cleanup")
+def f():
+    try:
+        raise "boom"
+    finally:
+        print("fin")
+try:
+    f()
+except e:
+    print("caught", e)
+a = {1, 2, 3, 2}
+b = {2, 3, 4}
+print(len(a), 2 in a, a | b, a & b, a - b, a ^ b, a.union(b), a.issubset({1, 2, 3, 4}))
+a.add(9)
+a.add(1)
+print(a)
+print(5 & 3, 5 | 3, 5 ^ 3, 1 << 4, 256 >> 2, ~5)
+x = 10
+x //= 3
+x **= 2
+x %= 5
+x |= 8
+x <<= 1
+print(x)
+class C:
+    def __init__(self):
+        self.n = 0
+        self.d = {"k": 1}
+    def inc(self):
+        self.n += 1
+        self.d["k"] *= 5
+c = C()
+c.inc()
+c.inc()
+print(c.n, c.d)
+d = {"a": 1}
+d["a"] += 4
+xs = [1, 2]
+xs[0] -= 5
+print(d, xs)
+v = 3.14159
+n = "Rex"
+print(f"{v:.2f}|{v:8.3f}|{n:>6}|{n:<6}|{n:^7}|{255:x}|{1234567:,}|{0.256:.1%}")
+print({q * 2 for q in [1, 2, 2]})

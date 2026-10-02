@@ -6,6 +6,7 @@
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "environment.hpp"
@@ -29,103 +30,64 @@ public:
 
     Environment* alloc(Environment* parent);
     Cell* allocCell(Value v);
+    // Instances are refcounted (shared field table), so a cycle between objects
+    // (a.other = b; b.other = a) would never free itself. Every instance's field
+    // table is registered here; a collection clears the ones no root can reach.
+    void trackInstance(const std::shared_ptr<ValueMap>& fields);
+    // Same for arrays and maps, but only once one of them has had a container stored into it
+    // (a cycle needs such a store), so plain data never pays for tracking.
+    void noteStore(const Value& container, const Value& stored) {
+        ValueType st = stored.type;
+        if (st != ValueType::Array && st != ValueType::Map && st != ValueType::Instance && st != ValueType::VmArray) return;
+        noteStoreSlow(container);
+    }
     void setGlobals(Environment* globals) { globals_ = globals; }
+    // For environments that must outlive every scope guard (a VM module's globals,
+    // which its closures reach only through a raw pointer).
+    void addPermanentRoot(Environment* env) {
+        std::lock_guard<std::mutex> lock(gcMutex_);
+        permanentRoots_.push_back(env);
+    }
 
     // Fast path when liveGoroutines == 0: no other thread can be
     // touching GC state, so gcMutex_ can be skipped entirely.
-    void pushRoot(Environment* env) {
-        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) {
-            rootsByThread_[std::this_thread::get_id()].push_back(env);
-            return;
-        }
-        std::lock_guard<std::mutex> lock(gcMutex_);
-        rootsByThread_[std::this_thread::get_id()].push_back(env);
-    }
-    void popRoot() {
-        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) {
-            auto it = rootsByThread_.find(std::this_thread::get_id());
-            it->second.pop_back();
-            if (it->second.empty()) rootsByThread_.erase(it);
-            return;
-        }
-        std::lock_guard<std::mutex> lock(gcMutex_);
-        auto it = rootsByThread_.find(std::this_thread::get_id());
-        it->second.pop_back();
-        if (it->second.empty()) rootsByThread_.erase(it);
-    }
+    // Roots live in per-thread vectors inside the *RootsByThread_ maps. The
+    // vector is looked up once per thread and cached (unordered_map nodes are
+    // never invalidated, and entries are never erased), so a push/pop is a
+    // plain vector op instead of a hash lookup + node alloc.
+    void pushRoot(Environment* env) { push(envRoots(), env); }
+    void popRoot() { pop(envRoots()); }
 
     // Same as pushRoot/popRoot, for a VM runFrame()'s stack/locals/
     // boxedLocals (registered for the frame's duration via VmRootGuard).
+    // Frames form an intrusive per-thread list (innermost first) that lives on
+    // the C++ stack, so registering a frame is two pointer writes. The head
+    // cell is heap-allocated once per thread and never freed: the GC may still
+    // walk it after the thread exits (the list is empty by then).
     struct VmFrameRoots {
-        const std::vector<Value>* stack = nullptr;
-        const std::vector<Value>* locals = nullptr;
+        const ValueWindow* stack = nullptr;
+        const ValueWindow* locals = nullptr;
         const std::vector<Cell*>* boxedLocals = nullptr;
+        VmFrameRoots* prev = nullptr;
     };
-    void pushVmRoots(const VmFrameRoots& roots) {
-        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) {
-            vmRootsByThread_[std::this_thread::get_id()].push_back(roots);
-            return;
-        }
-        std::lock_guard<std::mutex> lock(gcMutex_);
-        vmRootsByThread_[std::this_thread::get_id()].push_back(roots);
+    void pushVmRoots(VmFrameRoots& roots) {
+        VmFrameRoots*& head = vmHead();
+        roots.prev = head;
+        head = &roots;
     }
     void popVmRoots() {
-        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) {
-            auto it = vmRootsByThread_.find(std::this_thread::get_id());
-            it->second.pop_back();
-            if (it->second.empty()) vmRootsByThread_.erase(it);
-            return;
-        }
-        std::lock_guard<std::mutex> lock(gcMutex_);
-        auto it = vmRootsByThread_.find(std::this_thread::get_id());
-        it->second.pop_back();
-        if (it->second.empty()) vmRootsByThread_.erase(it);
+        VmFrameRoots*& head = vmHead();
+        head = head->prev;
     }
 
     // RAII-rooting for a raw C++ local mid-eval (e.g. `callee` in
     // `f(a(), b())` while `b()` still evaluates) -- lets exprDepth_
     // return to 0 across a nested call without a collection sweeping
     // the caller's not-yet-consumed temporary.
-    void pushValueRoot(const Value* v) {
-        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) {
-            valueRootsByThread_[std::this_thread::get_id()].push_back(v);
-            return;
-        }
-        std::lock_guard<std::mutex> lock(gcMutex_);
-        valueRootsByThread_[std::this_thread::get_id()].push_back(v);
-    }
-    void popValueRoot() {
-        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) {
-            auto it = valueRootsByThread_.find(std::this_thread::get_id());
-            it->second.pop_back();
-            if (it->second.empty()) valueRootsByThread_.erase(it);
-            return;
-        }
-        std::lock_guard<std::mutex> lock(gcMutex_);
-        auto it = valueRootsByThread_.find(std::this_thread::get_id());
-        it->second.pop_back();
-        if (it->second.empty()) valueRootsByThread_.erase(it);
-    }
-    void pushValueVectorRoot(const std::vector<Value>* v) {
-        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) {
-            valueVectorRootsByThread_[std::this_thread::get_id()].push_back(v);
-            return;
-        }
-        std::lock_guard<std::mutex> lock(gcMutex_);
-        valueVectorRootsByThread_[std::this_thread::get_id()].push_back(v);
-    }
-    void popValueVectorRoot() {
-        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) {
-            auto it = valueVectorRootsByThread_.find(std::this_thread::get_id());
-            it->second.pop_back();
-            if (it->second.empty()) valueVectorRootsByThread_.erase(it);
-            return;
-        }
-        std::lock_guard<std::mutex> lock(gcMutex_);
-        auto it = valueVectorRootsByThread_.find(std::this_thread::get_id());
-        it->second.pop_back();
-        if (it->second.empty()) valueVectorRootsByThread_.erase(it);
-    }
+    void pushValueRoot(const Value* v) { push(valueRoots(), v); }
+    void popValueRoot() { pop(valueRoots()); }
+    void pushValueVectorRoot(const std::vector<Value>* v) { push(valueVectorRoots(), v); }
+    void popValueVectorRoot() { pop(valueVectorRoots()); }
 
     // Every thread running Nusantara code must register its own
     // exprDepth_ (thread_local, see interpreter.cpp) after first
@@ -133,6 +95,12 @@ public:
     void registerThread(const int* depthPtr);
     void unregisterThread(const int* depthPtr);
     static std::atomic<int> liveGoroutines;
+    // Goroutines that called latar(): background workers (e.g. Go callback listeners) that
+    // must not keep the process alive once the main script has finished.
+    static std::atomic<int> daemonGoroutines;
+    static void markDaemonThread();
+    // Every goroutine's last act (replaces a bare liveGoroutines--).
+    static void goroutineDone();
 
     // Collects if enough allocations have piled up and every thread is
     // at a safe point. Call only while holding the GIL at exprDepth_==0.
@@ -144,7 +112,7 @@ public:
     void mintaTrim() { trimSekarang_ = true; }
     // Marks a collection as due at the next safe point without
     // collecting synchronously -- gc_paksa() itself runs mid-expression.
-    void requestCollection() { allocSinceCollect_ = kCollectThreshold; }
+    void requestCollection() { allocSinceCollect_ = collectThreshold_; }
 
     size_t liveCount() const { return envs_.size(); }
     size_t totalAllocated() const { return totalAllocated_; }
@@ -152,6 +120,49 @@ public:
     size_t collections() const { return collections_; }
 
 private:
+    template <class T, class Map>
+    std::vector<T>& threadVec(Map& m, std::vector<T>*& cache) {
+        if (!cache) {
+            std::unique_lock<std::mutex> lock(gcMutex_, std::defer_lock);
+            if (GC::liveGoroutines.load(std::memory_order_seq_cst) != 0) lock.lock();
+            cache = &m[std::this_thread::get_id()];
+        }
+        return *cache;
+    }
+    template <class T>
+    void push(std::vector<T>& v, const T& x) {
+        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) { v.push_back(x); return; }
+        std::lock_guard<std::mutex> lock(gcMutex_);
+        v.push_back(x);
+    }
+    template <class T>
+    void pop(std::vector<T>& v) {
+        if (GC::liveGoroutines.load(std::memory_order_seq_cst) == 0) { v.pop_back(); return; }
+        std::lock_guard<std::mutex> lock(gcMutex_);
+        v.pop_back();
+    }
+    std::vector<Environment*>& envRoots() {
+        static thread_local std::vector<Environment*>* c = nullptr;
+        return threadVec(rootsByThread_, c);
+    }
+    VmFrameRoots*& vmHead() {
+        static thread_local VmFrameRoots** cache = nullptr;
+        if (!cache) cache = vmHeadSlow();
+        return *cache;
+    }
+    VmFrameRoots** vmHeadSlow();
+    std::vector<const Value*>& valueRoots() {
+        static thread_local std::vector<const Value*>* c = nullptr;
+        return threadVec(valueRootsByThread_, c);
+    }
+    std::vector<const std::vector<Value>*>& valueVectorRoots() {
+        static thread_local std::vector<const std::vector<Value>*>* c = nullptr;
+        return threadVec(valueVectorRootsByThread_, c);
+    }
+
+    void noteStoreSlow(const Value& container);
+    void trackVector(const std::shared_ptr<std::vector<Value>>& v);
+    void trackMap(const std::shared_ptr<ValueMap>& m);
     void markValue(const Value& v);
     void markEnv(Environment* e);
     void markCell(Cell* c);
@@ -162,18 +173,30 @@ private:
     std::vector<std::unique_ptr<Environment>> envs_;
     std::vector<std::unique_ptr<Cell>> cells_;
     std::unordered_map<std::thread::id, std::vector<Environment*>> rootsByThread_;
-    std::unordered_map<std::thread::id, std::vector<VmFrameRoots>> vmRootsByThread_;
+    std::unordered_map<std::thread::id, VmFrameRoots**> vmHeads_;
     std::unordered_map<std::thread::id, std::vector<const Value*>> valueRootsByThread_;
     std::unordered_map<std::thread::id, std::vector<const std::vector<Value>*>> valueVectorRootsByThread_;
+    std::vector<std::weak_ptr<ValueMap>> instances_;
+    std::unordered_set<const void*> markedFields_;
+    std::vector<std::weak_ptr<std::vector<Value>>> vectors_;
+    std::vector<std::weak_ptr<ValueMap>> maps_;
+    std::unordered_set<const void*> markedVectors_;
+    std::unordered_set<const void*> trackedContainers_;
+    size_t instancesSinceCollect_ = 0;
+    size_t instanceThreshold_ = 8192;
     std::vector<const int*> threadDepths_;
     Environment* globals_ = nullptr;
+    std::vector<Environment*> permanentRoots_;
 
     size_t allocSinceCollect_ = 0;
     size_t totalAllocated_ = 0;
     size_t totalFreed_ = 0;
     size_t collections_ = 0;
     bool trimSekarang_ = false;
-    static constexpr size_t kCollectThreshold = 256;
+    static constexpr size_t kMinCollectThreshold = 256;
+    // Grows with the live heap (collect when as much has been allocated as survived last time),
+    // so a big long-lived heap (a wrapped Go module's thousands of closures) isn't re-marked every 256 allocations.
+    size_t collectThreshold_ = kMinCollectThreshold;
 };
 
 // Roots `env` as reachable from the C++ call stack for as long as this
@@ -187,7 +210,7 @@ struct GcRootGuard {
 
 // RAII equivalent of GcRootGuard for one active VM call frame.
 struct VmRootGuard {
-    explicit VmRootGuard(const GC::VmFrameRoots& roots) { GC::instance().pushVmRoots(roots); }
+    explicit VmRootGuard(GC::VmFrameRoots& roots) { GC::instance().pushVmRoots(roots); }
     ~VmRootGuard() { GC::instance().popVmRoots(); }
     VmRootGuard(const VmRootGuard&) = delete;
     VmRootGuard& operator=(const VmRootGuard&) = delete;

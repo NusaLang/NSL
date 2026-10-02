@@ -1,0 +1,23 @@
+import sys
+
+def system():
+    p = sys.platform
+    return "Linux" if p.startswith("linux") else ("Darwin" if p == "darwin" else p)
+
+def machine():
+    return "x86_64"
+
+def python_version():
+    return "3.11.0"
+
+def python_implementation():
+    return "Nusantara"
+
+def node():
+    return "localhost"
+
+def platform():
+    return system()
+
+def uname():
+    return {"system": system(), "node": node(), "machine": machine()}

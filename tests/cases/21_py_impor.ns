@@ -1,0 +1,9 @@
+import pypkg
+from pypkg import salam, PI
+from pypkg.mat import kali
+import pypkg.mat as m
+from pypkg.mat import kali as kalikan
+
+print(pypkg.salam("dunia"))
+print(salam("a"), PI)
+print(kali(6, 7), m.kali(2, 3), kalikan(4, 5))

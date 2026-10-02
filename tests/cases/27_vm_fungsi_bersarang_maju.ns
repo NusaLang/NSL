@@ -1,0 +1,14 @@
+fungsi f() {
+    fungsi a() { hasil b() + 1; }
+    fungsi b() { hasil 10; }
+    hasil a();
+}
+cetak(f());
+fungsi g(n) {
+    jika n > 0 {
+        fungsi h() { hasil n * 2; }
+        hasil h();
+    }
+    hasil 0;
+}
+cetak(g(4), g(0));

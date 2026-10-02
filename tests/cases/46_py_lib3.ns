@@ -1,0 +1,69 @@
+import logging, csv, io, threading, queue, argparse
+from urllib.parse import quote, unquote, urlencode, urlparse, parse_qs, urljoin
+from pathlib import Path
+import unittest
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
+log = logging.getLogger("app")
+log.info("hello %s", "world")
+log.debug("hidden")
+log.warning("careful")
+
+buf = io.StringIO()
+w = csv.writer(buf)
+w.writerow(["name", "age", "note"])
+w.writerow(["Ann", 30, 'says "hi", ok'])
+print(buf.getvalue().strip().split("\n"))
+rows = list(csv.reader(buf.getvalue()))
+print(rows)
+for r in csv.DictReader("a,b\n1,2\n3,4\n"):
+    print(r)
+
+results = []
+def work(n):
+    results.append(n * n)
+ts = [threading.Thread(target=work, args=(i,)) for i in range(4)]
+for t in ts:
+    t.start()
+for t in ts:
+    t.join()
+print(sorted(results))
+lock = threading.Lock()
+with lock:
+    print("locked")
+qq = queue.Queue()
+qq.put(1)
+qq.put(2)
+print(qq.get(), qq.qsize(), qq.empty())
+try:
+    queue.Queue().get_nowait()
+except queue.Empty:
+    print("empty")
+
+print(quote("a b/c?é"), unquote("a%20b%C3%A9"), urlencode({"q": "x y", "n": 1}))
+u = urlparse("https://user@example.com:8080/p/a?x=1&y=2#frag")
+print(u.scheme, u.hostname, u.port, u.path, parse_qs(u.query), u.fragment)
+print(urljoin("http://a.com/b/c", "../d"))
+
+p = Path("/tmp/feat") / "pl" / "f.txt"
+p.parent.mkdir(parents=True, exist_ok=True)
+p.write_text("hi there")
+print(p.name, p.stem, p.suffix, p.parent, p.exists(), p.read_text(), str(p))
+print([x.name for x in p.parent.iterdir()])
+p.unlink()
+
+ap = argparse.ArgumentParser(description="demo")
+ap.add_argument("name")
+ap.add_argument("-n", "--count", type=int, default=1)
+ap.add_argument("-v", "--verbose", action="store_true")
+ap.add_argument("--tags", nargs="+")
+a = ap.parse_args(["bob", "-n", "3", "-v", "--tags", "x", "y"])
+print(a.name, a.count, a.verbose, a.tags)
+
+class T(unittest.TestCase):
+    def test_add(self):
+        self.assertEqual(1 + 1, 2)
+    def test_raises(self):
+        with self.assertRaises(ZeroDivisionError):
+            1 / 0
+unittest.main([T])

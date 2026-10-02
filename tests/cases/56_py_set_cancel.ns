@@ -1,0 +1,29 @@
+import asyncio
+s = {3, 1, 2}
+print(s, set(), {1} | {2}, {1, 2} & {2}, {"a", "b"} - {"a"}, {1, 2} ^ {2, 3}, len(s), 2 in s)
+t = s.copy(); t.add(9)
+print(t, s, sorted(s), list(s), frozenset([1]))
+def dv(a, b):
+    return a / b
+try:
+    dv(1, 0)
+except ZeroDivisionError as e:
+    print("zde", e)
+for _ in range(3):
+    pass
+async def slow():
+    await asyncio.sleep(2)
+    print("SHOULD NOT PRINT")
+async def m():
+    try:
+        await asyncio.wait_for(slow(), 0.05)
+    except asyncio.TimeoutError:
+        print("timeout")
+    t = asyncio.create_task(slow())
+    await asyncio.sleep(0.02)
+    t.cancel()
+    try:
+        await t
+    except asyncio.CancelledError:
+        print("cancelled")
+asyncio.run(m())

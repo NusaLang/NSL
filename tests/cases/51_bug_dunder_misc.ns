@@ -1,0 +1,50 @@
+import json, re, os, sys
+# dunder + misc
+class V:
+    def __init__(self, x): self.x = x
+    def __add__(self, o): return V(self.x + o.x)
+    def __radd__(self, o): return V(self.x + o)
+    def __neg__(self): return V(-self.x)
+    def __hash__(self): return self.x
+    def __str__(self): return "V" + str(self.x)
+print(V(1) + V(2))
+print(sum([V(1), V(2)], V(0)))
+d = {}
+d[V(1)] = "a"
+print(len(d))
+print(-V(3))
+x = [3, 1, 2]
+x.sort(reverse=True)
+print(x, x[::-1], x[-1], sorted("bca"))
+print("a,b,,c".split(","), " x ".strip(), "abc".find("z"))
+print(1 if [] else 2, [] or "d", 0 or None, "" and 1)
+a = b = 5
+a += 1
+print(a, b)
+def f(a, b=[]):
+    b.append(a)
+    return b
+print(f(1), f(2))
+print(round(2.5), round(3.5), round(-2.5), 7 // 2, -7 // 2, -7 % 3, 2 ** -1, 10 / 4)
+print(int(3.9), int("12"), float("1.5"), str(1.0), str(10 / 2), 1e20, 0.1 + 0.2)
+print(divmod(-7, 2), abs(-3), min(3, 1), max([1, 5]), sum([]))
+t = (1, 2, 3)
+p = t[0]; rest = t[1:]
+print(p, rest)
+print("%s-%d-%5.2f" % ("a", 3, 2.5), "{:>5}|{:<5}|{:^5}".format(1, 2, 3))
+print(f"{3.14159:.2f} {42:05d} {'x':>3} {255:x} {1234567:,}")
+print(list(range(10, 0, -3)), list(reversed([1, 2])), any([]), all([]))
+print(isinstance(1, int), isinstance("a", str), isinstance([], list), isinstance(1.5, float))
+g = {"a": 1}
+g.update(b=2)
+print(g, list(g), "a" in g, g.get("z", 0))
+import copy
+c = copy.deepcopy({"k": [1, 2]})
+print(c)
+print(json.dumps({"a": [1, None, True]}), json.loads('{"x": [1, 2]}'))
+print(re.sub(r"\d+", "#", "a1b22"), re.findall(r"\w+", "hi there"))
+lst = [1, 2, 3, 4]
+del lst[1]
+print(lst, lst.index(3), lst * 2)
+
+print(type(1), type("a"), type([]), type({}), type(None))

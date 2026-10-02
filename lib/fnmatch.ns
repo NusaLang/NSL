@@ -1,0 +1,44 @@
+import re
+
+def translate(pat):
+    i = 0
+    n = len(pat)
+    res = ""
+    while i < n:
+        c = pat[i]
+        i += 1
+        if c == "*":
+            res += ".*"
+        elif c == "?":
+            res += "."
+        elif c == "[":
+            j = i
+            if j < n and pat[j] == "!":
+                j += 1
+            if j < n and pat[j] == "]":
+                j += 1
+            while j < n and pat[j] != "]":
+                j += 1
+            if j >= n:
+                res += "\\["
+            else:
+                stuff = pat[i:j]
+                i = j + 1
+                if stuff[0] == "!":
+                    stuff = "^" + stuff[1:]
+                res += "[" + stuff + "]"
+        else:
+            if c in ".^$+{}()|\\":
+                res += "\\" + c
+            else:
+                res += c
+    return "^" + res + "$"
+
+def fnmatch(name, pat):
+    return re.match(translate(pat), name) is not None
+
+fnmatchcase = fnmatch
+
+def filter(names, pat):
+    rx = translate(pat)
+    return [n for n in names if re.match(rx, n) is not None]

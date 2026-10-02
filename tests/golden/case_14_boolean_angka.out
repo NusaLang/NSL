@@ -10,8 +10,10 @@ true
 [benar, salah, 1, 0, "benar"]
 benar salah true false
 ok-falsy
-ok-nol-truthy
+ok-nol-falsy
 ok-kosong-falsy
-ok-string-kosong-truthy
+ok-string-kosong-falsy
+ok-larik-kosong-falsy
+ok-satu-truthy
 benar salah benar
 --- exit: 0

@@ -1,2 +1,2 @@
-nusa --vm: error: Tipe 'angka' nggak bisa di-index pakai []
+nusantara: error: Tipe 'angka' nggak bisa di-index pakai [] (line 2, col 7)
 --- exit: 1

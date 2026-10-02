@@ -1,3 +1,4 @@
+// nusa:tree-walker -- ngetes GC Environment, yang cuma ada di tree-walker
 fungsi ambil_koleksi(info) {
     buat bagian = pisah(info, "koleksi=");
     hasil ke_angka(bagian[panjang(bagian) - 1]);

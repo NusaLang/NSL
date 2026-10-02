@@ -1,0 +1,45 @@
+fungsi f1() {
+    coba { hasil "dari try"; } tangkap (e) { hasil "catch"; } akhirnya { cetak("fin1"); }
+}
+cetak(f1());
+fungsi f2() {
+    coba { lempar "x"; } tangkap (e) { hasil "catch:" + e; } akhirnya { cetak("fin2"); }
+}
+cetak(f2());
+fungsi f3() {
+    untuk (buat i = 0; i < 4; i = i + 1) {
+        coba {
+            jika i == 1 { lanjut; }
+            jika i == 3 { berhenti; }
+            cetak("body", i);
+        } tangkap (e) { } akhirnya { cetak("fin3", i); }
+    }
+    hasil "selesai";
+}
+cetak(f3());
+fungsi f4() {
+    coba {
+        coba { lempar "dalam"; } tangkap (e) { lempar "ulang:" + e; } akhirnya { cetak("fin-dalam"); }
+    } tangkap (e2) { hasil "luar dapat " + e2; }
+}
+cetak(f4());
+fungsi f5() { lempar [1, 2]; }
+fungsi f6() {
+    coba { f5(); } tangkap (e) { hasil e; }
+}
+buat r = f6();
+cetak(tipe(r));
+fungsi f7() {
+    coba { hasil 1; } tangkap (e) { } akhirnya { cetak("fin7"); }
+    hasil 2;
+}
+cetak(f7());
+fungsi f8(n) {
+    coba { jika n > 0 { hasil f8(n - 1) + 1; } lempar "dasar"; } tangkap (e) { hasil 100; } akhirnya { cetak("f8 fin", n); }
+}
+cetak(f8(2));
+buat u = kosong; coba { buat q = 1 + u; } tangkap (e) { cetak(e["pesan"]); }
+fungsi boom() { hasil tidak_ada_var; }
+fungsi lewat() { hasil boom(); }
+coba { lewat(); } tangkap (e) { cetak(e["pesan"]); }
+coba { coba { lempar 1; } tangkap (a) { lempar a + 1; } akhirnya { cetak("fin b"); } } tangkap (e) { cetak("luar:", e); }

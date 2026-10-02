@@ -1,0 +1,21 @@
+inner fin
+outer a
+outer fin
+r
+i 0
+fin 0
+fin 1
+i 2
+fin 2
+else 0
+1
+converted ["converted"]
+code 4 4
+benar x ValueError('x')
+caught none call
+NameError
+pop empty IndexError
+int ValueError
+assert too small
+recursion
+--- exit: 0

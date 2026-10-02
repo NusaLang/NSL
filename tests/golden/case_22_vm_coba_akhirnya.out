@@ -1,0 +1,27 @@
+fin1
+dari try
+fin2
+catch:x
+body 0
+fin3 0
+fin3 1
+body 2
+fin3 2
+fin3 3
+selesai
+fin-dalam
+luar dapat ulang:dalam
+larik
+fin7
+1
+f8 fin 0
+f8 fin 1
+f8 fin 2
+102
+Operand '+' harus dua angka atau dua teks (line 41, col 34)
+Undefined variable 'tidak_ada_var' (line 42, col 23)
+  di dalam fungsi 'boom' (dipanggil dari line 43, col 24)
+  di dalam fungsi 'lewat' (dipanggil dari line 44, col 8)
+fin b
+luar: 2
+--- exit: 0

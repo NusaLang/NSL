@@ -1,0 +1,15 @@
+fungsi luar(n) {
+    fungsi fak(k) { jika k <= 1 { hasil 1; } hasil k * fak(k - 1); }
+    hasil fak(n);
+}
+cetak(luar(5));
+fungsi pabrik() {
+    buat total = 0;
+    fungsi tambah(x) { total = total + x; hasil total; }
+    fungsi ganda() { hasil tambah(total); }
+    tambah(3);
+    hasil ganda();
+}
+cetak(pabrik());
+buat rek = fungsi(n) { hasil n; };
+cetak(rek(4));

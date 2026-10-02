@@ -1,0 +1,57 @@
+import os
+import random
+import shutil
+
+def gettempdir():
+    return os.getenv("TMPDIR") or "/tmp"
+
+def _name(prefix, suffix):
+    digits = "abcdefghijklmnopqrstuvwxyz0123456789_"
+    s = ""
+    for i in range(8):
+        s += digits[random.randint(0, 36)]
+    return gettempdir() + "/" + prefix + s + suffix
+
+def mkdtemp(suffix="", prefix="tmp", dir=None):
+    p = _name(prefix, suffix)
+    os.makedirs(p)
+    return p
+
+def mktemp(suffix="", prefix="tmp", dir=None):
+    return _name(prefix, suffix)
+
+def mkstemp(suffix="", prefix="tmp", dir=None):
+    p = _name(prefix, suffix)
+    with open(p, "w") as f:
+        f.write("")
+    return (0, p)
+
+class TemporaryDirectory:
+    def __init__(self, suffix="", prefix="tmp", dir=None):
+        self.name = mkdtemp(suffix, prefix)
+    def cleanup(self):
+        shutil.rmtree(self.name)
+    def __enter__(self):
+        return self.name
+    def __exit__(self, a, b, c):
+        self.cleanup()
+        return False
+
+class NamedTemporaryFile:
+    def __init__(self, mode="w+", suffix="", prefix="tmp", delete=True):
+        self.name = _name(prefix, suffix)
+        self._delete = delete
+        self._f = open(self.name, "w")
+    def write(self, s):
+        return self._f.write(s)
+    def flush(self):
+        self._f.flush()
+    def close(self):
+        self._f.close()
+        if self._delete and os.path.exists(self.name):
+            os.remove(self.name)
+    def __enter__(self):
+        return self
+    def __exit__(self, a, b, c):
+        self.close()
+        return False

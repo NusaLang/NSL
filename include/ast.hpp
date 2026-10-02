@@ -103,6 +103,7 @@ struct ArrayLitExpr : Expr {
 struct IndexExpr : Expr {
     ExprPtr target;
     ExprPtr index;
+    bool strict = false;  // written as x[k] (not x.k): a missing dict key is a KeyError
     IndexExpr(ExprPtr t, ExprPtr i)
         : Expr(ExprKind::Index), target(std::move(t)), index(std::move(i)) {}
 };
@@ -166,6 +167,14 @@ struct FnDeclStmt : Stmt {
     std::vector<std::string> paramTypes;
     std::string returnType;
     std::unique_ptr<BlockStmt> body;
+    // Parameters from index `minArgs` on have defaults (filled in by a prologue the parser
+    // prepends to the body); -1 = all parameters are required.
+    int minArgs = -1;
+    int kind = 0;        // class members: 1 @staticmethod, 2 @classmethod, 3 @property getter, 4 @x.setter
+    int restIndex = -1;  // index of the `*args` parameter in `params`, or -1
+    int kwIndex = -1;    // index of the `**kwargs` parameter, or -1
+    bool variadic() const { return restIndex >= 0 || kwIndex >= 0; }
+    int requiredArgs() const { return minArgs < 0 ? static_cast<int>(params.size()) : minArgs; }
     FnDeclStmt(std::string n, std::vector<std::string> p, std::unique_ptr<BlockStmt> b,
                std::vector<std::string> pt = {}, std::string rt = "")
         : Stmt(StmtKind::FnDecl), name(std::move(n)), params(std::move(p)),
