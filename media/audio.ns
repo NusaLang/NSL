@@ -1,0 +1,125 @@
+func _read_u16(buf, off):
+    return ord(buf[off]) | (ord(buf[off + 1]) << 8)
+
+func _read_u32(buf, off):
+    return ord(buf[off]) | (ord(buf[off + 1]) << 8) | (ord(buf[off + 2]) << 16) | (ord(buf[off + 3]) << 24)
+
+func _to_hex_byte(b):
+    hex_chars = "0123456789abcdef"
+    return hex_chars[(b >> 4) & 15] + hex_chars[b & 15]
+
+func muat_wav(path):
+    info = {
+        "ok": False,
+        "format": 0,
+        "channels": 0,
+        "sample_rate": 0,
+        "bits_per_sample": 0,
+        "data_start": 0,
+        "data_size": 0,
+        "buf": ""
+    }
+
+    if not file_ada(path):
+        return info
+
+    buf = baca_file(path)
+    tot = len(buf)
+    if tot < 12:
+        return info
+
+    if buf[0:4] != "RIFF" or buf[8:12] != "WAVE":
+        return info
+
+    pos = 12
+    have_fmt = False
+    have_data = False
+
+    while pos + 8 <= tot:
+        cid = buf[pos:pos + 4]
+        sz = _read_u32(buf, pos + 4)
+        bstart = pos + 8
+        if bstart + sz > tot:
+            break
+
+        if cid == "fmt " and sz >= 16:
+            info["format"] = _read_u16(buf, bstart)
+            info["channels"] = _read_u16(buf, bstart + 2)
+            info["sample_rate"] = _read_u32(buf, bstart + 4)
+            info["bits_per_sample"] = _read_u16(buf, bstart + 14)
+            have_fmt = True
+        elif cid == "data":
+            info["data_start"] = bstart
+            info["data_size"] = sz
+            have_data = True
+
+        pos = bstart + sz + (sz % 2)
+
+    if not have_fmt or not have_data:
+        return info
+    if info["format"] != 1:
+        return info
+    bps = info["bits_per_sample"]
+    if bps != 8 and bps != 16 and bps != 24 and bps != 32:
+        return info
+    if info["channels"] == 0:
+        return info
+
+    info["buf"] = buf
+    info["ok"] = True
+    return info
+
+func wav_info(path):
+    w = muat_wav(path)
+    if not w["ok"]:
+        return "{\"ok\": false, \"error\": \"gagal buka/parse WAV (cuma dukung PCM mentah, 8/16/24/32-bit)\"}"
+
+    bps = w["bits_per_sample"] / 8
+    nsamp = 0
+    if bps > 0 and w["channels"] > 0:
+        nsamp = w["data_size"] / bps / w["channels"]
+
+    return (
+        "{\"ok\": true, \"sample_rate\": " + str(w["sample_rate"]) +
+        ", \"channels\": " + str(w["channels"]) +
+        ", \"bit_depth\": " + str(w["bits_per_sample"]) +
+        ", \"num_samples\": " + str(nsamp) + "}"
+    )
+
+func wav_lsb_extract(path, n_bit):
+    w = muat_wav(path)
+    if not w["ok"]:
+        return ""
+    if n_bit < 1 or n_bit > 8:
+        return ""
+
+    bps = w["bits_per_sample"] / 8
+    stride = bps
+    buf = w["buf"]
+    dstart = w["data_start"]
+    dsize = w["data_size"]
+
+    out = ""
+    cur = 0
+    filled = 0
+    off = 0
+
+    while off + stride <= dsize:
+        v = ord(buf[dstart + off])
+        bit = n_bit - 1
+        while bit >= 0:
+            bval = (v >> bit) & 1
+            cur = (cur << 1) | bval
+            filled += 1
+            if filled == 8:
+                out += _to_hex_byte(cur)
+                cur = 0
+                filled = 0
+            bit -= 1
+        off += stride
+
+    if filled > 0:
+        cur = cur << (8 - filled)
+        out += _to_hex_byte(cur)
+
+    return out

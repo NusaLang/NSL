@@ -1,9 +1,6 @@
-// hello.ns — program pertama di Nusantara
+cetak("Halo, Nusantara!")
 
-cetak("Halo, Nusantara!");
+func sapa(nama):
+    cetak("Halo,", nama)
 
-fungsi sapa(nama) {
-    cetak("Halo,", nama);
-}
-
-sapa("dunia");
+sapa("dunia")

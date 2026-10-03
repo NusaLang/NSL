@@ -1,0 +1,29 @@
+func salam(nama):
+    return "Salam hangat, " + nama + "!"
+
+cetak(salam("Nopal"))
+
+data = [10, 20, 30, 40, 50]
+total = 0
+i = 0
+while i < panjang(data):
+    total = total + data[i]
+    i = i + 1
+cetak("Total penjumlahan array:", total)
+
+identitas = {
+    "nama": "Nusantara",
+    "tipe": "Bahasa Pemrograman",
+    "status": "Self-Hosted"
+}
+
+cetak("Bahasa:", identitas["nama"])
+cetak("Status:", identitas["status"])
+
+func faktorial(n):
+    if n <= 1:
+        return 1
+    return n * faktorial(n - 1)
+
+cetak("Faktorial 5! =", faktorial(5))
+cetak("Faktorial 6! =", faktorial(6))

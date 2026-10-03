@@ -1,0 +1,507 @@
+buat sys = impor("sys");
+buat Lingkup = impor("env").Lingkup;
+
+kelas SinyalHasil {
+    fungsi konstruktor(nilai) {
+        ini.is_hasil = benar;
+        ini.nilai = nilai;
+    }
+}
+
+kelas SinyalBerhenti {
+    fungsi konstruktor() {
+        ini.is_berhenti = benar;
+    }
+}
+
+kelas SinyalLanjut {
+    fungsi konstruktor() {
+        ini.is_lanjut = benar;
+    }
+}
+
+kelas FungsiPengguna {
+    fungsi konstruktor(nama, params, badan, penutup) {
+        ini.is_fungsi = benar;
+        ini.nama = nama;
+        ini.params = params;
+        ini.badan = badan;
+        ini.penutup = penutup;
+    }
+}
+
+kelas Interpreter {
+    fungsi konstruktor() {
+        ini.lingkup_global = Lingkup(kosong);
+        ini.daftarkan_bawaan();
+    }
+
+    fungsi daftarkan_bawaan() {
+        ini.lingkup_global.definisikan("cetak", {"is_bawaan": benar, "nama": "cetak"});
+        ini.lingkup_global.definisikan("print", {"is_bawaan": benar, "nama": "cetak"});
+        ini.lingkup_global.definisikan("panjang", {"is_bawaan": benar, "nama": "panjang"});
+        ini.lingkup_global.definisikan("len", {"is_bawaan": benar, "nama": "panjang"});
+        ini.lingkup_global.definisikan("ke_teks", {"is_bawaan": benar, "nama": "ke_teks"});
+        ini.lingkup_global.definisikan("str", {"is_bawaan": benar, "nama": "ke_teks"});
+        ini.lingkup_global.definisikan("ke_angka", {"is_bawaan": benar, "nama": "ke_angka"});
+        ini.lingkup_global.definisikan("int", {"is_bawaan": benar, "nama": "ke_angka"});
+        ini.lingkup_global.definisikan("float", {"is_bawaan": benar, "nama": "ke_angka"});
+        ini.lingkup_global.definisikan("tipe", {"is_bawaan": benar, "nama": "tipe"});
+        ini.lingkup_global.definisikan("type", {"is_bawaan": benar, "nama": "tipe"});
+        ini.lingkup_global.definisikan("range", {"is_bawaan": benar, "nama": "range"});
+        ini.lingkup_global.definisikan("larik", {"is_bawaan": benar, "nama": "larik"});
+        ini.lingkup_global.definisikan("peta", {"is_bawaan": benar, "nama": "peta"});
+        ini.lingkup_global.definisikan("sys", sys);
+        ini.lingkup_global.definisikan("baca_file", {"is_bawaan": benar, "nama": "baca_file"});
+        ini.lingkup_global.definisikan("tulis_file", {"is_bawaan": benar, "nama": "tulis_file"});
+        ini.lingkup_global.definisikan("impor", {"is_bawaan": benar, "nama": "impor"});
+    }
+
+    fungsi panggil_bawaan(nama, args) {
+        jika nama == "cetak" {
+            buat teks_args = [];
+            untuk a dalam args {
+                teks_args.append(ke_teks(a));
+            }
+            cetak(" ".join(teks_args));
+            hasil kosong;
+        } lain jika nama == "panjang" {
+            jika panjang(args) > 0 {
+                hasil panjang(args[0]);
+            }
+            hasil 0;
+        } lain jika nama == "ke_teks" {
+            jika panjang(args) > 0 {
+                hasil ke_teks(args[0]);
+            }
+            hasil "";
+        } lain jika nama == "ke_angka" {
+            jika panjang(args) > 0 {
+                hasil ke_angka(args[0]);
+            }
+            hasil 0;
+        } lain jika nama == "tipe" {
+            jika panjang(args) > 0 {
+                hasil tipe(args[0]);
+            }
+            hasil "kosong";
+        } lain jika nama == "range" {
+            buat start = 0;
+            buat stop = 0;
+            buat step = 1;
+            jika panjang(args) == 1 {
+                stop = ke_angka(args[0]);
+            } lain jika panjang(args) >= 2 {
+                start = ke_angka(args[0]);
+                stop = ke_angka(args[1]);
+                jika panjang(args) >= 3 {
+                    step = ke_angka(args[2]);
+                }
+            }
+            buat res = [];
+            buat cur = start;
+            selama cur < stop {
+                res.append(cur);
+                cur = cur + step;
+            }
+            hasil res;
+        } lain jika nama == "larik" {
+            hasil args;
+        } lain jika nama == "peta" {
+            hasil {};
+        } lain jika nama == "baca_file" {
+            jika panjang(args) > 0 { hasil baca_file(args[0]); }
+            hasil "";
+        } lain jika nama == "tulis_file" {
+            jika panjang(args) >= 2 { tulis_file(args[0], args[1]); }
+            hasil kosong;
+        } lain jika nama == "impor" {
+            jika panjang(args) > 0 { hasil impor(args[0]); }
+            hasil kosong;
+        }
+
+        hasil kosong;
+    }
+
+    fungsi jalankan(program) {
+        buat hasil_akhir = kosong;
+        untuk stmt dalam program {
+            hasil_akhir = ini.eksekusi(stmt, ini.lingkup_global);
+        }
+        hasil hasil_akhir;
+    }
+
+    fungsi eksekusi(stmt, env) {
+        jika stmt == kosong {
+            hasil kosong;
+        }
+
+        buat j = stmt.jenis;
+
+        jika j == "BLOK" {
+            buat lingkup_anak = Lingkup(env);
+            untuk s dalam stmt.stmts {
+                ini.eksekusi(s, lingkup_anak);
+            }
+            hasil kosong;
+        } lain jika j == "BUAT" {
+            buat val = ini.evaluasi(stmt.nilai, env);
+            env.definisikan(stmt.nama, val);
+            hasil val;
+        } lain jika j == "FUNGSI" {
+            buat fn_obj = FungsiPengguna(stmt.nama, stmt.params, stmt.badan, env);
+            env.definisikan(stmt.nama, fn_obj);
+            hasil fn_obj;
+        } lain jika j == "JIKA" {
+            buat cond_val = ini.evaluasi(stmt.kondisi, env);
+            jika ini.truthy(cond_val) {
+                ini.eksekusi(stmt.maka, env);
+            } lain jika stmt.lain != kosong {
+                ini.eksekusi(stmt.lain, env);
+            }
+            hasil kosong;
+        } lain jika j == "SELAMA" {
+            selama ini.truthy(ini.evaluasi(stmt.kondisi, env)) {
+                coba {
+                    ini.eksekusi(stmt.badan, env);
+                } tangkap (sig) {
+                    jika hasattr(sig, "is_berhenti") {
+                        berhenti;
+                    } lain jika hasattr(sig, "is_lanjut") {
+                        lanjut;
+                    } lain {
+                        lempar sig;
+                    }
+                }
+            }
+            hasil kosong;
+        } lain jika j == "UNTUK" {
+            buat lingkup_loop = Lingkup(env);
+            jika stmt.inisialisasi != kosong {
+                ini.eksekusi(stmt.inisialisasi, lingkup_loop);
+            }
+            selama ini.truthy(ini.evaluasi(stmt.kondisi, lingkup_loop)) {
+                coba {
+                    ini.eksekusi(stmt.badan, lingkup_loop);
+                } tangkap (sig) {
+                    jika hasattr(sig, "is_berhenti") {
+                        berhenti;
+                    } lain jika hasattr(sig, "is_lanjut") {
+                    } lain {
+                        lempar sig;
+                    }
+                }
+                jika stmt.pasca != kosong {
+                    ini.evaluasi(stmt.pasca, lingkup_loop);
+                }
+            }
+            hasil kosong;
+        } lain jika j == "UNTUK_DALAM" {
+            buat koleksi = ini.evaluasi(stmt.iter, env);
+            untuk item dalam koleksi {
+                buat lingkup_iter = Lingkup(env);
+                lingkup_iter.definisikan(stmt.variabel, item);
+                coba {
+                    ini.eksekusi(stmt.badan, lingkup_iter);
+                } tangkap (sig) {
+                    jika hasattr(sig, "is_berhenti") {
+                        berhenti;
+                    } lain jika hasattr(sig, "is_lanjut") {
+                        lanjut;
+                    } lain {
+                        lempar sig;
+                    }
+                }
+            }
+            hasil kosong;
+        } lain jika j == "HASIL" {
+            buat val = ini.evaluasi(stmt.nilai, env);
+            lempar SinyalHasil(val);
+        } lain jika j == "BERHENTI" {
+            lempar SinyalBerhenti();
+        } lain jika j == "LANJUT" {
+            lempar SinyalLanjut();
+        } lain jika j == "COBA" {
+            coba {
+                ini.eksekusi(stmt.coba_blok, env);
+            } tangkap (e) {
+                jika hasattr(e, "is_hasil") atau hasattr(e, "is_berhenti") atau hasattr(e, "is_lanjut") {
+                    lempar e;
+                }
+                jika stmt.tangkap_blok != kosong {
+                    buat lingkup_catch = Lingkup(env);
+                    lingkup_catch.definisikan(stmt.tangkap_var, e);
+                    ini.eksekusi(stmt.tangkap_blok, lingkup_catch);
+                }
+            } akhirnya {
+                jika stmt.akhirnya_blok != kosong {
+                    ini.eksekusi(stmt.akhirnya_blok, env);
+                }
+            }
+            hasil kosong;
+        } lain jika j == "LEMPAR" {
+            buat val = ini.evaluasi(stmt.nilai, env);
+            lempar val;
+        } lain jika j == "KELAS" {
+            buat kls = {"is_kelas": benar, "nama": stmt.nama, "induk": stmt.induk, "metode": {}};
+            untuk m dalam stmt.metode {
+                buat fn_obj = FungsiPengguna(m.nama, m.params, m.badan, env);
+                kls["metode"][m.nama] = fn_obj;
+                jika m.nama == "__init__" {
+                    kls["metode"]["konstruktor"] = fn_obj;
+                }
+            }
+            env.definisikan(stmt.nama, kls);
+            hasil kosong;
+        } lain jika j == "EKSPRESI" {
+            hasil ini.evaluasi(stmt.expr, env);
+        }
+
+        hasil kosong;
+    }
+
+    fungsi evaluasi(expr, env) {
+        jika expr == kosong {
+            hasil kosong;
+        }
+
+        buat j = expr.jenis;
+
+        jika j == "ANGKA" atau j == "TEKS" atau j == "BOOL" {
+            hasil expr.nilai;
+        } lain jika j == "KOSONG" {
+            hasil kosong;
+        } lain jika j == "PENGENAL" {
+            hasil env.ambil(expr.nama);
+        } lain jika j == "LARIK" {
+            buat res = [];
+            untuk el dalam expr.elemen {
+                res.append(ini.evaluasi(el, env));
+            }
+            hasil res;
+        } lain jika j == "PETA" {
+            buat res = {};
+            buat m = panjang(expr.kunci);
+            buat idx = 0;
+            selama idx < m {
+                buat k = expr.kunci[idx];
+                buat v = ini.evaluasi(expr.nilai[idx], env);
+                res[k] = v;
+                idx = idx + 1;
+            }
+            hasil res;
+        } lain jika j == "BINER" {
+            buat op = expr.op;
+
+            jika op == "atau" {
+                buat k = ini.evaluasi(expr.kiri, env);
+                jika ini.truthy(k) { hasil k; }
+                hasil ini.evaluasi(expr.kanan, env);
+            }
+            jika op == "dan" {
+                buat k = ini.evaluasi(expr.kiri, env);
+                jika !ini.truthy(k) { hasil k; }
+                hasil ini.evaluasi(expr.kanan, env);
+            }
+
+            buat kiri = ini.evaluasi(expr.kiri, env);
+            buat kanan = ini.evaluasi(expr.kanan, env);
+
+            jika op == "+" { hasil kiri + kanan; }
+            lain jika op == "-" { hasil kiri - kanan; }
+            lain jika op == "*" {
+                jika tipe(kiri) == "string" dan tipe(kanan) == "angka" {
+                    buat r = "";
+                    buat cnt = ke_angka(kanan);
+                    selama cnt > 0 { r = r + kiri; cnt = cnt - 1; }
+                    hasil r;
+                }
+                hasil kiri * kanan;
+            }
+            lain jika op == "/" {
+                jika kanan == 0 {
+                    cetak("RuntimeError: Pembagian dengan nol");
+                    hasil 0;
+                }
+                hasil kiri / kanan;
+            }
+            lain jika op == "%" { hasil kiri % kanan; }
+            lain jika op == "==" { hasil kiri == kanan; }
+            lain jika op == "!=" { hasil kiri != kanan; }
+            lain jika op == "<" { hasil kiri < kanan; }
+            lain jika op == "<=" { hasil kiri <= kanan; }
+            lain jika op == ">" { hasil kiri > kanan; }
+            lain jika op == ">=" { hasil kiri >= kanan; }
+
+            hasil kosong;
+        } lain jika j == "UNER" {
+            buat val = ini.evaluasi(expr.operand, env);
+            jika expr.op == "-" {
+                hasil -val;
+            } lain jika expr.op == "!" atau expr.op == "bukan" {
+                hasil !ini.truthy(val);
+            }
+            hasil val;
+        } lain jika j == "PANGGIL" {
+            buat fn_target = ini.evaluasi(expr.callee, env);
+            buat args = [];
+            untuk a dalam expr.args {
+                args.append(ini.evaluasi(a, env));
+            }
+
+            jika tipe(fn_target) == "peta" dan "is_bawaan" in fn_target {
+                hasil ini.panggil_bawaan(fn_target["nama"], args);
+            }
+
+            jika hasattr(fn_target, "is_fungsi") {
+                buat lingkup_fungsi = Lingkup(fn_target.penutup);
+                buat n_params = panjang(fn_target.params);
+                buat n_args = panjang(args);
+                buat i = 0;
+                selama i < n_params {
+                    buat p_val = args[i] jika i < n_args lain kosong;
+                    lingkup_fungsi.definisikan(fn_target.params[i], p_val);
+                    i = i + 1;
+                }
+
+                coba {
+                    ini.eksekusi(fn_target.badan, lingkup_fungsi);
+                } tangkap (sig) {
+                    jika hasattr(sig, "is_hasil") {
+                        hasil sig.nilai;
+                    }
+                    lempar sig;
+                }
+                hasil kosong;
+            }
+
+            jika tipe(fn_target) == "peta" dan "is_kelas" in fn_target {
+                buat instans = {"is_instans": benar, "kelas": fn_target, "bidang": {}};
+                jika "konstruktor" in fn_target["metode"] {
+                    buat ctor = fn_target["metode"]["konstruktor"];
+                    buat lk = Lingkup(ctor.penutup);
+                    lk.definisikan("self", instans);
+                    lk.definisikan("ini", instans);
+                    buat n_p = panjang(ctor.params);
+                    buat n_a = panjang(args);
+                    buat idx = 0;
+                    selama idx < n_p {
+                        buat p_name = ctor.params[idx];
+                        jika p_name != "self" dan p_name != "ini" {
+                            buat arg_idx = idx - 1 jika ("self" in ctor.params atau "ini" in ctor.params) lain idx;
+                            lk.definisikan(p_name, args[arg_idx] jika arg_idx >= 0 dan arg_idx < n_a lain kosong);
+                        }
+                        idx = idx + 1;
+                    }
+                    ini.eksekusi(ctor.badan, lk);
+                }
+                hasil instans;
+            }
+
+            jika tipe(fn_target) == "peta" dan "is_metode_terikat" in fn_target {
+                buat m = fn_target["fungsi"];
+                buat instans = fn_target["instans"];
+                buat lk = Lingkup(m.penutup);
+                lk.definisikan("self", instans);
+                lk.definisikan("ini", instans);
+                buat n_p = panjang(m.params);
+                buat n_a = panjang(args);
+                buat idx = 0;
+                selama idx < n_p {
+                    buat p_name = m.params[idx];
+                    jika p_name != "self" dan p_name != "ini" {
+                        buat arg_idx = idx - 1 jika ("self" in m.params atau "ini" in m.params) lain idx;
+                        lk.definisikan(p_name, args[arg_idx] jika arg_idx >= 0 dan arg_idx < n_a lain kosong);
+                    }
+                    idx = idx + 1;
+                }
+                coba {
+                    ini.eksekusi(m.badan, lk);
+                } tangkap (sig) {
+                    jika hasattr(sig, "is_hasil") {
+                        hasil sig.nilai;
+                    }
+                    lempar sig;
+                }
+                hasil kosong;
+            }
+
+            jika tipe(fn_target) == "fungsi" atau tipe(fn_target) == "kelas" {
+                hasil fn_target(*args);
+            }
+
+            cetak("RuntimeError: Objek tidak dapat dipanggil sebagai fungsi");
+            hasil kosong;
+        } lain jika j == "MEMBER" {
+            buat target = ini.evaluasi(expr.target, env);
+            jika tipe(target) == "peta" dan "is_instans" in target {
+                jika expr.nama in target["bidang"] {
+                    hasil target["bidang"][expr.nama];
+                }
+                jika expr.nama in target["kelas"]["metode"] {
+                    buat m = target["kelas"]["metode"][expr.nama];
+                    hasil {"is_metode_terikat": benar, "instans": target, "fungsi": m};
+                }
+            }
+            jika tipe(target) == "peta" dan expr.nama in target {
+                hasil target[expr.nama];
+            }
+            jika hasattr(target, expr.nama) {
+                hasil getattr(target, expr.nama);
+            }
+            hasil kosong;
+        } lain jika j == "INDEX" {
+            buat target = ini.evaluasi(expr.target, env);
+            buat idx = ini.evaluasi(expr.index, env);
+            hasil target[idx];
+        } lain jika j == "IRISAN" {
+            buat target = ini.evaluasi(expr.target, env);
+            buat s = 0;
+            buat e = panjang(target);
+            jika expr.awal != kosong { s = ini.evaluasi(expr.awal, env); }
+            jika expr.sampai != kosong { e = ini.evaluasi(expr.sampai, env); }
+            hasil target[s:e];
+        } lain jika j == "TUGAS" {
+            buat nilai = ini.evaluasi(expr.nilai, env);
+
+            jika expr.target.jenis == "PENGENAL" {
+                buat nama = expr.target.nama;
+                jika expr.op == "=" {
+                    env.tetapkan(nama, nilai);
+                } lain jika expr.op == "+=" {
+                    env.tetapkan(nama, env.ambil(nama) + nilai);
+                } lain jika expr.op == "-=" {
+                    env.tetapkan(nama, env.ambil(nama) - nilai);
+                } lain jika expr.op == "*=" {
+                    env.tetapkan(nama, env.ambil(nama) * nilai);
+                } lain jika expr.op == "/=" {
+                    env.tetapkan(nama, env.ambil(nama) / nilai);
+                }
+                hasil nilai;
+            } lain jika expr.target.jenis == "INDEX" {
+                buat t = ini.evaluasi(expr.target.target, env);
+                buat idx = ini.evaluasi(expr.target.index, env);
+                t[idx] = nilai;
+                hasil nilai;
+            } lain jika expr.target.jenis == "MEMBER" {
+                buat obj = ini.evaluasi(expr.target.target, env);
+                jika tipe(obj) == "peta" dan "is_instans" in obj {
+                    obj["bidang"][expr.target.nama] = nilai;
+                    hasil nilai;
+                }
+            }
+
+            cetak("RuntimeError: Target penugasan tidak valid");
+            hasil kosong;
+        }
+
+        hasil kosong;
+    }
+
+    fungsi truthy(val) {
+        jika val == kosong atau val == salah atau val == 0 atau val == "" {
+            hasil salah;
+        }
+        hasil benar;
+    }
+}

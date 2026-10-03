@@ -1,0 +1,19 @@
+BAHASA_SAAT_INI = "id"
+
+func atur_bahasa(b):
+    global BAHASA_SAAT_INI
+    if b == "en" or b == "EN":
+        BAHASA_SAAT_INI = "en"
+    else:
+        BAHASA_SAAT_INI = "id"
+
+func ambil_bahasa():
+    return BAHASA_SAAT_INI
+
+func apakah_en():
+    return BAHASA_SAAT_INI == "en"
+
+func tr(teks_id, teks_en):
+    if apakah_en():
+        return teks_en
+    return teks_id

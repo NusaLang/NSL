@@ -1,0 +1,333 @@
+HEX_CHARS = "0123456789abcdef"
+
+func _to_hex_byte(b):
+    return HEX_CHARS[(b >> 4) & 15] + HEX_CHARS[b & 15]
+
+func _hex_val(c):
+    if c >= "0" and c <= "9":
+        return ord(c) - 48
+    if c >= "a" and c <= "f":
+        return ord(c) - 97 + 10
+    if c >= "A" and c <= "F":
+        return ord(c) - 65 + 10
+    return -1
+
+func hex_encode(s):
+    out = ""
+    n = len(s)
+    i = 0
+    while i < n:
+        out += _to_hex_byte(ord(s[i]))
+        i += 1
+    return out
+
+func hex_decode(h):
+    n = len(h)
+    if n % 2 != 0:
+        return ""
+    out = ""
+    i = 0
+    while i < n:
+        hi = _hex_val(h[i])
+        lo = _hex_val(h[i + 1])
+        if hi < 0 or lo < 0:
+            return ""
+        out += chr((hi << 4) | lo)
+        i += 2
+    return out
+
+func xor_cipher(s, k):
+    if len(k) == 0:
+        return s
+    out = ""
+    n = len(s)
+    k_len = len(k)
+    i = 0
+    while i < n:
+        b = ord(s[i]) ^ ord(k[i % k_len])
+        out += chr(b)
+        i += 1
+    return out
+
+func url_encode(s):
+    hex_u = "0123456789ABCDEF"
+    out = ""
+    n = len(s)
+    i = 0
+    while i < n:
+        c = s[i]
+        unreserved = (c >= "A" and c <= "Z") or (c >= "a" and c <= "z") or (c >= "0" and c <= "9") or c == "-" or c == "_" or c == "." or c == "~"
+        if unreserved:
+            out += c
+        else:
+            b = ord(c)
+            out = out + "%" + hex_u[(b >> 4) & 15] + hex_u[b & 15]
+        i += 1
+    return out
+
+func url_decode(s):
+    out = ""
+    n = len(s)
+    i = 0
+    while i < n:
+        c = s[i]
+        if c == "%":
+            if i + 2 >= n:
+                return ""
+            hi = _hex_val(s[i + 1])
+            lo = _hex_val(s[i + 2])
+            if hi < 0 or lo < 0:
+                return ""
+            out += chr((hi << 4) | lo)
+            i += 2
+        elif c == "+":
+            out += " "
+        else:
+            out += c
+        i += 1
+    return out
+
+func crc32(s):
+    crc = 4294967295
+    n = len(s)
+    i = 0
+    while i < n:
+        crc = crc ^ ord(s[i])
+        j = 0
+        while j < 8:
+            b = crc & 1
+            crc = (crc >> 1) & 2147483647
+            if b != 0:
+                crc = crc ^ 0xEDB88320
+            j += 1
+        i += 1
+    crc = (crc ^ 4294967295) & 4294967295
+
+    out = ""
+    st = 28
+    while st >= 0:
+        out += HEX_CHARS[(crc >> st) & 15]
+        st -= 4
+    return out
+
+MD5_K = [
+    0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
+    0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
+    0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
+    0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
+    0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
+    0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
+    0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
+    0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391
+]
+
+MD5_S = [
+    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+    5, 9,  14, 20, 5, 9,  14, 20, 5, 9,  14, 20, 5, 9,  14, 20,
+    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21
+]
+
+func _u32(x):
+    return x & 4294967295
+
+func _rotl32(x, n):
+    return _u32((x << n) | (x >> (32 - n)))
+
+func md5_hex(s):
+    a0 = 0x67452301
+    b0 = 0xefcdab89
+    c0 = 0x98badcfe
+    d0 = 0x10325476
+
+    bytes_list = []
+    n = len(s)
+    i = 0
+    while i < n:
+        bytes_list.append(ord(s[i]))
+        i += 1
+
+    bit_len = n * 8
+    bytes_list.append(0x80)
+    while len(bytes_list) % 64 != 56:
+        bytes_list.append(0)
+    b = 0
+    while b < 8:
+        bytes_list.append((bit_len >> (b * 8)) & 255)
+        b += 1
+
+    tot_len = len(bytes_list)
+    chunk = 0
+    while chunk < tot_len:
+        M = []
+        j = 0
+        while j < 16:
+            p = chunk + j * 4
+            w = bytes_list[p] | (bytes_list[p + 1] << 8) | (bytes_list[p + 2] << 16) | (bytes_list[p + 3] << 24)
+            M.append(w)
+            j += 1
+
+        A = a0
+        B = b0
+        C = c0
+        D = d0
+
+        st = 0
+        while st < 64:
+            F = 0
+            g = 0
+            if st < 16:
+                F = (B & C) | ((~B) & D)
+                g = st
+            elif st < 32:
+                F = (D & B) | ((~D) & C)
+                g = (5 * st + 1) % 16
+            elif st < 48:
+                F = B ^ C ^ D
+                g = (3 * st + 5) % 16
+            else:
+                F = C ^ (B | (~D))
+                g = (7 * st) % 16
+
+            F = _u32(F + A + MD5_K[st] + M[g])
+            A = D
+            D = C
+            C = B
+            B = _u32(B + _rotl32(F, MD5_S[st]))
+            st += 1
+
+        a0 = _u32(a0 + A)
+        b0 = _u32(b0 + B)
+        c0 = _u32(c0 + C)
+        d0 = _u32(d0 + D)
+        chunk += 64
+
+    regs = [a0, b0, c0, d0]
+    out = ""
+    r = 0
+    while r < 4:
+        val = regs[r]
+        out = out + _to_hex_byte(val & 255) + _to_hex_byte((val >> 8) & 255) + _to_hex_byte((val >> 16) & 255) + _to_hex_byte((val >> 24) & 255)
+        r += 1
+    return out
+
+func sha1_hex(s):
+    h0 = 0x67452301
+    h1 = 0xEFCDAB89
+    h2 = 0x98BADCFE
+    h3 = 0x10325476
+    h4 = 0xC3D2E1F0
+
+    bytes_list = []
+    n = len(s)
+    i = 0
+    while i < n:
+        bytes_list.append(ord(s[i]))
+        i += 1
+
+    bit_len = n * 8
+    bytes_list.append(0x80)
+    while len(bytes_list) % 64 != 56:
+        bytes_list.append(0)
+    b = 7
+    while b >= 0:
+        bytes_list.append((bit_len >> (b * 8)) & 255)
+        b -= 1
+
+    tot_len = len(bytes_list)
+    chunk = 0
+    while chunk < tot_len:
+        w = []
+        j = 0
+        while j < 16:
+            p = chunk + j * 4
+            word = (bytes_list[p] << 24) | (bytes_list[p + 1] << 16) | (bytes_list[p + 2] << 8) | bytes_list[p + 3]
+            w.append(word)
+            j += 1
+        while j < 80:
+            x = w[j - 3] ^ w[j - 8] ^ w[j - 14] ^ w[j - 16]
+            w.append(_rotl32(x, 1))
+            j += 1
+
+        a = h0
+        b_val = h1
+        c = h2
+        d = h3
+        e = h4
+
+        t = 0
+        while t < 80:
+            f = 0
+            k = 0
+            if t < 20:
+                f = (b_val & c) | ((~b_val) & d)
+                k = 0x5A827999
+            elif t < 40:
+                f = b_val ^ c ^ d
+                k = 0x6ED9EBA1
+            elif t < 60:
+                f = (b_val & c) | (b_val & d) | (c & d)
+                k = 0x8F1BBCDC
+            else:
+                f = b_val ^ c ^ d
+                k = 0xCA62C1D6
+
+            temp = _u32(_rotl32(a, 5) + f + e + k + w[t])
+            e = d
+            d = c
+            c = _rotl32(b_val, 30)
+            b_val = a
+            a = temp
+            t += 1
+
+        h0 = _u32(h0 + a)
+        h1 = _u32(h1 + b_val)
+        h2 = _u32(h2 + c)
+        h3 = _u32(h3 + d)
+        h4 = _u32(h4 + e)
+        chunk += 64
+
+    out = ""
+    regs = [h0, h1, h2, h3, h4]
+    r = 0
+    while r < 5:
+        val = regs[r]
+        st = 24
+        while st >= 0:
+            out += _to_hex_byte((val >> st) & 255)
+            st -= 8
+        r += 1
+    return out
+
+func gcd(a, b):
+    while b != 0:
+        t = b
+        b = a % b
+        a = t
+    return a
+
+func modpow(b, e, m):
+    if m == 1:
+        return 0
+    res = 1
+    b = b % m
+    while e > 0:
+        if e % 2 == 1:
+            res = (res * b) % m
+        e = e / 2
+        b = (b * b) % m
+    return res
+
+func adalah_prima(n):
+    if n <= 1:
+        return False
+    if n <= 3:
+        return True
+    if n % 2 == 0 or n % 3 == 0:
+        return False
+    i = 5
+    while i * i <= n:
+        if n % i == 0 or n % (i + 2) == 0:
+            return False
+        i += 6
+    return True

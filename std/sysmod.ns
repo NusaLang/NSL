@@ -1,0 +1,331 @@
+_modul_termuat = {}
+
+func muat(nama_plugin):
+    if nama_plugin in _modul_termuat:
+        return _modul_termuat[nama_plugin]
+    try:
+        mod = muat_plugin(nama_plugin)
+        _modul_termuat[nama_plugin] = mod
+        return mod
+    except e:
+        raise "modul sistem '" + nama_plugin + "' tidak ditemukan: " + str(e)
+
+load = muat
+
+func panggil(nama_plugin, nama_fungsi, argumen = []):
+    mod = muat(nama_plugin)
+    if not (nama_fungsi in mod):
+        raise "modul sistem '" + nama_plugin + "' tidak punya fungsi '" + nama_fungsi + "'"
+    fn = mod[nama_fungsi]
+    return fn(argumen)
+
+call = panggil
+
+func isabs(path):
+    return len(path) > 0 and path[0] == "/"
+
+apakah_mutlak = isabs
+
+func basename(path):
+    n = len(path)
+    pos = -1
+    i = n - 1
+    while i >= 0:
+        if path[i] == "/":
+            pos = i
+            break
+        i -= 1
+    if pos == -1:
+        return path
+    return path[pos + 1:]
+
+nama_dasar = basename
+
+func dirname(path):
+    n = len(path)
+    pos = -1
+    i = n - 1
+    while i >= 0:
+        if path[i] == "/":
+            pos = i
+            break
+        i -= 1
+    if pos == -1:
+        return ""
+    if pos == 0:
+        return "/"
+    return path[:pos]
+
+nama_direktori = dirname
+
+func splitext(path):
+    n = len(path)
+    slash = -1
+    dot = -1
+    i = n - 1
+    while i >= 0:
+        if path[i] == "." and dot == -1:
+            dot = i
+        if path[i] == "/":
+            slash = i
+            break
+        i -= 1
+    if dot == -1 or (slash != -1 and dot < slash) or dot == 0 or (slash != -1 and dot == slash + 1):
+        return [path, ""]
+    return [path[:dot], path[dot:]]
+
+pisah_ekstensi = splitext
+
+func join_path(bagian_larik):
+    hasil_path = ""
+    for bagian in bagian_larik:
+        p = str(bagian)
+        if isabs(p):
+            hasil_path = p
+        elif hasil_path == "" or hasil_path[len(hasil_path) - 1] == "/":
+            hasil_path += p
+        else:
+            hasil_path = hasil_path + "/" + p
+    return hasil_path
+
+gabung_path = join_path
+
+func normpath(path):
+    if path == "":
+        return "."
+    mutlak = isabs(path)
+    bagian = []
+    cur = ""
+    n = len(path)
+    i = 0
+    while i < n:
+        if path[i] == "/":
+            if cur != "":
+                bagian.append(cur)
+                cur = ""
+        else:
+            cur += path[i]
+        i += 1
+    if cur != "":
+        bagian.append(cur)
+
+    tumpukan = []
+    for b in bagian:
+        if b == ".":
+            pass
+        elif b == "..":
+            if len(tumpukan) > 0 and tumpukan[len(tumpukan) - 1] != "..":
+                tumpukan.pop()
+            elif not mutlak:
+                tumpukan.append("..")
+        else:
+            tumpukan.append(b)
+
+    hasil_path = ""
+    m = len(tumpukan)
+    k = 0
+    while k < m:
+        if k > 0:
+            hasil_path += "/"
+        hasil_path += tumpukan[k]
+        k += 1
+
+    if mutlak:
+        return "/" + hasil_path
+    if hasil_path == "":
+        return "."
+    return hasil_path
+
+normalkan_path = normpath
+
+func expanduser(path):
+    if len(path) > 0 and path[0] == "~":
+        home = ambil_env("HOME")
+        if home != "":
+            return home + path[1:]
+    return path
+
+perluas_user = expanduser
+
+func getenv(kunci, baku = None):
+    val = ambil_env(kunci)
+    if val == "":
+        return baku
+    return val
+
+func getcwd():
+    res = jalankan_perintah("pwd", [])
+    if res.status == 0:
+        out = res.keluaran
+        if len(out) > 0 and out[len(out) - 1] == "\n":
+            out = out[:len(out) - 1]
+        return out
+    return "."
+
+ambil_cwd = getcwd
+
+func abspath(path):
+    if isabs(path):
+        return normpath(path)
+    return normpath(getcwd() + "/" + path)
+
+path_mutlak = abspath
+
+func exists(path):
+    return file_ada(path)
+
+berkas_ada = exists
+
+func read_file(path):
+    return baca_file(path)
+
+baca_berkas = read_file
+
+func write_file(path, konten):
+    tulis_file(path, konten)
+
+tulis_berkas = write_file
+
+func append_file(path, konten):
+    lama = ""
+    if exists(path):
+        lama = read_file(path)
+    write_file(path, lama + konten)
+
+tambah_berkas = append_file
+
+func mkdir(path):
+    res = jalankan_perintah("mkdir", [path])
+    if res.status != 0:
+        raise "OSError: gagal membuat direktori '" + path + "': " + res.error
+
+buat_dir = mkdir
+
+func makedirs(path):
+    res = jalankan_perintah("mkdir", ["-p", path])
+    if res.status != 0:
+        raise "OSError: gagal membuat direktori bertingkat '" + path + "': " + res.error
+
+buat_banyak_dir = makedirs
+
+func remove(path):
+    res = jalankan_perintah("rm", ["-f", path])
+    if res.status != 0:
+        raise "OSError: gagal menghapus berkas '" + path + "': " + res.error
+
+hapus_berkas = remove
+
+func rmdir(path):
+    res = jalankan_perintah("rmdir", [path])
+    if res.status != 0:
+        raise "OSError: gagal menghapus direktori '" + path + "': " + res.error
+
+hapus_dir = rmdir
+
+func rmtree(path):
+    res = jalankan_perintah("rm", ["-rf", path])
+    if res.status != 0:
+        raise "OSError: gagal menghapus pohon direktori '" + path + "': " + res.error
+
+hapus_semua = rmtree
+
+func rename(lama, baru):
+    res = jalankan_perintah("mv", [lama, baru])
+    if res.status != 0:
+        raise "OSError: gagal mengubah nama dari '" + lama + "' ke '" + baru + "': " + res.error
+
+ganti_nama = rename
+
+func copyfile(sumber, tujuan):
+    res = jalankan_perintah("cp", [sumber, tujuan])
+    if res.status != 0:
+        raise "OSError: gagal menyalin dari '" + sumber + "' ke '" + tujuan + "': " + res.error
+
+salin_berkas = copyfile
+
+func listdir(dir = "."):
+    res = jalankan_perintah("ls", ["-1", dir])
+    if res.status != 0:
+        raise "OSError: tidak bisa membuka direktori '" + dir + "': " + res.error
+    teks = res.keluaran
+    hasil_larik = []
+    cur = ""
+    n = len(teks)
+    i = 0
+    while i < n:
+        if teks[i] == "\n":
+            if cur != "" and cur != "." and cur != "..":
+                hasil_larik.append(cur)
+            cur = ""
+        else:
+            cur += teks[i]
+        i += 1
+    if cur != "" and cur != "." and cur != "..":
+        hasil_larik.append(cur)
+    return hasil_larik
+
+daftar_dir = listdir
+
+func isfile(path):
+    res = jalankan_perintah("test", ["-f", path])
+    return res.status == 0
+
+apakah_berkas = isfile
+
+func isdir(path):
+    res = jalankan_perintah("test", ["-d", path])
+    return res.status == 0
+
+apakah_direktori = isdir
+
+func getsize(path):
+    res = jalankan_perintah("wc", ["-c", path])
+    if res.status == 0:
+        out = res.keluaran
+        s = ""
+        n = len(out)
+        i = 0
+        while i < n and (out[i] == " " or out[i] == "\t"):
+            i += 1
+        while i < n and out[i] in "0123456789":
+            s += out[i]
+            i += 1
+        if s != "":
+            return float(s)
+    raise "OSError: gagal mengambil ukuran berkas '" + path + "'"
+
+ukuran_berkas = getsize
+
+func pid():
+    res = jalankan_perintah("sh", ["-c", "echo $$"])
+    if res.status == 0:
+        out = res.keluaran
+        s = ""
+        n = len(out)
+        i = 0
+        while i < n and (out[i] == " " or out[i] == "\t"):
+            i += 1
+        while i < n and out[i] in "0123456789":
+            s += out[i]
+            i += 1
+        if s != "":
+            return float(s)
+    return 0
+
+func platform():
+    return "linux"
+
+func jalankan(perintah, argumen = []):
+    return jalankan_perintah(perintah, argumen)
+
+run = jalankan
+
+func sistem(perintah):
+    res = jalankan_perintah("sh", ["-c", perintah])
+    return res.status
+
+system = sistem
+
+class SysMod:
+    func __init__(self):
+        pass

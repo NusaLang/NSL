@@ -1,0 +1,665 @@
+net = impor("net")
+
+KODE_STATUS_HTTP = {
+    "100": "Continue",
+    "101": "Switching Protocols",
+    "200": "OK",
+    "201": "Created",
+    "202": "Accepted",
+    "204": "No Content",
+    "301": "Moved Permanently",
+    "302": "Found",
+    "303": "See Other",
+    "304": "Not Modified",
+    "307": "Temporary Redirect",
+    "308": "Permanent Redirect",
+    "400": "Bad Request",
+    "401": "Unauthorized",
+    "403": "Forbidden",
+    "404": "Not Found",
+    "405": "Method Not Allowed",
+    "408": "Request Timeout",
+    "409": "Conflict",
+    "413": "Payload Too Large",
+    "500": "Internal Server Error",
+    "501": "Not Implemented",
+    "502": "Bad Gateway",
+    "503": "Service Unavailable",
+    "504": "Gateway Timeout"
+}
+
+func alasan_status_http(code):
+    s = str(code)
+    if s in KODE_STATUS_HTTP:
+        return KODE_STATUS_HTTP[s]
+    return "Unknown"
+
+KARAKTER_AMAN_URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~"
+
+func url_encode(val):
+    s = str(val)
+    n = len(s)
+    arr = []
+    hex_chars = "0123456789ABCDEF"
+    i = 0
+    while i < n:
+        ch = s[i]
+        if ch in KARAKTER_AMAN_URL:
+            arr.append(ch)
+        elif ch == " ":
+            arr.append("%20")
+        else:
+            b = ord(ch)
+            h1 = hex_chars[(b >> 4) & 15]
+            h2 = hex_chars[b & 15]
+            arr.append("%" + h1 + h2)
+        i += 1
+    return "".join(arr)
+
+func hex_ke_angka(ch):
+    if ch >= "0" and ch <= "9":
+        return ord(ch) - 48
+    c = huruf_kecil(ch)
+    if c >= "a" and c <= "f":
+        return ord(c) - 97 + 10
+    return 0
+
+func url_decode(val):
+    s = str(val)
+    n = len(s)
+    arr = []
+    i = 0
+    while i < n:
+        ch = s[i]
+        if ch == "+":
+            arr.append(" ")
+            i += 1
+        elif ch == "%" and (i + 2 < n):
+            h1 = hex_ke_angka(s[i + 1])
+            h2 = hex_ke_angka(s[i + 2])
+            b = (h1 << 4) | h2
+            arr.append(chr(b))
+            i += 3
+        else:
+            arr.append(ch)
+            i += 1
+    return "".join(arr)
+
+func parse_kueri(qs):
+    res = {}
+    if qs == "" or qs == None:
+        return res
+    s = qs
+    if s.startswith("?"):
+        s = s[1:]
+    pairs = s.split("&")
+    for p in pairs:
+        if p != "":
+            pos = p.find("=")
+            if pos != -1:
+                k = url_decode(p[:pos])
+                v = url_decode(p[pos + 1:])
+                res[k] = v
+            else:
+                k = url_decode(p)
+                res[k] = ""
+    return res
+
+func bangun_kueri(params):
+    arr = []
+    for k in params:
+        arr.append(url_encode(k) + "=" + url_encode(params[k]))
+    return "&".join(arr)
+
+class URL:
+    func __init__(self, proto = "http", host = "localhost", port = 80, path = "/", query = "", frag = "", auth = ""):
+        self.protokol = huruf_kecil(proto)
+        self.aman = (self.protokol == "https" or self.protokol == "wss")
+        self.host = host
+        self.port = port
+        self.path = path if path != "" else "/"
+        self.kueri = query
+        self.fragmen = frag
+        if auth != "":
+            self.otoritas = auth
+        else:
+            if (self.protokol == "http" and self.port == 80) or (self.protokol == "https" and self.port == 443):
+                self.otoritas = self.host
+            else:
+                self.otoritas = self.host + ":" + str(self.port)
+
+    func target(self):
+        if self.kueri != "":
+            return self.path + "?" + self.kueri
+        return self.path
+
+    func ambil_parameter(self):
+        return parse_kueri(self.kueri)
+
+    func ke_teks(self):
+        out = self.protokol + "://" + self.otoritas + self.path
+        if self.kueri != "":
+            out += "?" + self.kueri
+        if self.fragmen != "":
+            out += "#" + self.fragmen
+        return out
+
+func parse_url(raw):
+    s = raw
+    if s == "" or s == None:
+        lempar "URL tidak boleh kosong"
+
+    frag = ""
+    pos_hash = s.find("#")
+    if pos_hash != -1:
+        frag = s[pos_hash + 1:]
+        s = s[:pos_hash]
+
+    proto = "http"
+    port = 80
+    rem = s
+
+    if s.startswith("https://"):
+        proto = "https"
+        port = 443
+        rem = s[8:]
+    elif s.startswith("http://"):
+        proto = "http"
+        port = 80
+        rem = s[7:]
+    elif s.startswith("wss://"):
+        proto = "wss"
+        port = 443
+        rem = s[6:]
+    elif s.startswith("ws://"):
+        proto = "ws"
+        port = 80
+        rem = s[5:]
+    elif s.find("://") != -1:
+        pos = s.find("://")
+        proto = huruf_kecil(s[:pos])
+        rem = s[pos + 3:]
+
+    pslash = rem.find("/")
+    pq = rem.find("?")
+    path_sep = -1
+
+    if pslash != -1 and pq != -1:
+        path_sep = pslash if pslash < pq else pq
+    elif pslash != -1:
+        path_sep = pslash
+    elif pq != -1:
+        path_sep = pq
+
+    auth = ""
+    path_query = "/"
+    if path_sep != -1:
+        auth = rem[:path_sep]
+        path_query = rem[path_sep:]
+    else:
+        auth = rem
+        path_query = "/"
+
+    path = "/"
+    query = ""
+    pos_q = path_query.find("?")
+    if pos_q != -1:
+        path = path_query[:pos_q]
+        query = path_query[pos_q + 1:]
+    else:
+        path = path_query
+    if path == "":
+        path = "/"
+
+    pos_at = auth.rfind("@")
+    host_port = auth[pos_at + 1:] if pos_at != -1 else auth
+
+    host = host_port
+    if host_port.startswith("["):
+        cpos = host_port.find("]")
+        if cpos != -1:
+            host = host_port[1:cpos]
+            if cpos + 1 < len(host_port) and host_port[cpos + 1] == ":":
+                port = ke_angka(host_port[cpos + 2:])
+    else:
+        colon = host_port.rfind(":")
+        if colon != -1:
+            host = host_port[:colon]
+            port = ke_angka(host_port[colon + 1:])
+
+    if host == "":
+        lempar "Host pada URL tidak valid: " + raw
+
+    return URL(proto, host, port, path, query, frag, auth)
+
+func gabung_url(base_url, rel_path):
+    if rel_path == "" or rel_path == None:
+        return base_url
+    if rel_path.startswith("http://") or rel_path.startswith("https://"):
+        return rel_path
+
+    u = parse_url(base_url)
+    base = u.protokol + "://" + u.otoritas
+
+    if rel_path.startswith("//"):
+        return u.protokol + ":" + rel_path
+    if rel_path.startswith("/"):
+        return base + rel_path
+
+    dir_path = u.path
+    pos = dir_path.rfind("/")
+    dir_path = dir_path[:pos + 1] if pos != -1 else "/"
+    return base + dir_path + rel_path
+
+class HeaderHTTP:
+    func __init__(self, init_map = None):
+        self.data = {}
+        self.kunci_asli = {}
+        if init_map != None:
+            if type(init_map) == "HeaderHTTP":
+                for k in init_map.data:
+                    self.atur(init_map.kunci_asli[k], init_map.data[k])
+            elif type(init_map) == "peta" or type(init_map) == "dict":
+                for k in init_map:
+                    self.atur(k, init_map[k])
+
+    func atur(self, name, val):
+        lk = huruf_kecil(name)
+        self.data[lk] = str(val)
+        self.kunci_asli[lk] = name
+
+    func ambil(self, name, default_val = ""):
+        lk = huruf_kecil(name)
+        if lk in self.data:
+            return self.data[lk]
+        return default_val
+
+    func punya(self, name):
+        return huruf_kecil(name) in self.data
+
+    func hapus_kunci(self, name):
+        lk = huruf_kecil(name)
+        if lk in self.data:
+            hapus self.data[lk]
+
+    func semua(self):
+        return self.data
+
+    func ke_teks(self):
+        arr = []
+        for k in self.data:
+            v = self.data[k]
+            if v != None:
+                lbl = self.kunci_asli[k]
+                arr.append(lbl + ": " + v)
+        return "\r\n".join(arr)
+
+class PermintaanHTTP:
+    func __init__(self, method = "GET", path = "/", header = None, body = "", ver = "HTTP/1.1"):
+        self.metode = huruf_besar(method)
+        self.path = path
+        self.versi = ver
+        self.tubuh = body
+        self.header = header if type(header) == "HeaderHTTP" else HeaderHTTP(header)
+        self.ip = ""
+
+    func ambil_header(self, name, default_val = ""):
+        return self.header.ambil(name, default_val)
+
+    func atur_header(self, name, val):
+        self.header.atur(name, val)
+
+    func panjang_konten(self):
+        cl = self.ambil_header("content-length", "0")
+        return ke_angka(cl)
+
+    func tipe_konten(self):
+        return self.ambil_header("content-type", "")
+
+    func json(self):
+        return json_decode(self.tubuh)
+
+    func ke_teks(self):
+        first = self.metode + " " + self.path + " " + self.versi + "\r\n"
+        thdr = self.header.ke_teks()
+        if thdr != "":
+            return first + thdr + "\r\n\r\n" + self.tubuh
+        return first + "\r\n" + self.tubuh
+
+class ResponsHTTP:
+    func __init__(self, status = 200, reason = "", header = None, body = "", ver = "HTTP/1.1"):
+        self.status = status
+        self.alasan = reason if (reason != "" and reason != None) else alasan_status_http(status)
+        self.versi = ver
+        self.tubuh = body
+        self.header = header if type(header) == "HeaderHTTP" else HeaderHTTP(header)
+        self.ok = (status >= 200 and status < 300)
+
+    func ambil_header(self, name, default_val = ""):
+        return self.header.ambil(name, default_val)
+
+    func atur_header(self, name, val):
+        self.header.atur(name, val)
+
+    func json(self):
+        return json_decode(self.tubuh)
+
+    func ke_teks(self):
+        status_line = self.versi + " " + str(self.status) + " " + self.alasan + "\r\n"
+        thdr = self.header.ke_teks()
+        if thdr != "":
+            return status_line + thdr + "\r\n\r\n" + self.tubuh
+        return status_line + "\r\n" + self.tubuh
+
+func parse_permintaan_http(raw):
+    sep_pos = raw.find("\r\n\r\n")
+    sep_len = 4
+    if sep_pos == -1:
+        sep_pos = raw.find("\n\n")
+        sep_len = 2
+
+    hdr_part = ""
+    body = ""
+    if sep_pos != -1:
+        hdr_part = raw[:sep_pos]
+        body = raw[sep_pos + sep_len:]
+    else:
+        hdr_part = raw
+        body = ""
+
+    lines = hdr_part.split("\n")
+    if len(lines) == 0:
+        lempar "Permintaan HTTP kosong"
+
+    req_line = lines[0].strip()
+    tokens = req_line.split(" ")
+    if len(tokens) < 2:
+        lempar "Baris permintaan HTTP tidak valid: " + req_line
+
+    method = tokens[0]
+    path = tokens[1]
+    ver = tokens[2] if len(tokens) >= 3 else "HTTP/1.1"
+
+    hdr = HeaderHTTP()
+    i = 1
+    n = len(lines)
+    while i < n:
+        b = lines[i].strip()
+        if b != "":
+            colon = b.find(":")
+            if colon != -1:
+                hdr.atur(b[:colon].strip(), b[colon + 1:].strip())
+        i += 1
+
+    return PermintaanHTTP(method, path, hdr, body, ver)
+
+func dekode_chunked(raw):
+    parts = []
+    pos = 0
+    n = len(raw)
+
+    while pos < n:
+        eol = raw.find("\r\n", pos)
+        if eol == -1:
+            break
+        sz_str = raw[pos:eol].strip()
+        sz = ke_angka("0x" + sz_str)
+        pos = eol + 2
+        if sz == 0:
+            break
+        if pos + sz > n:
+            parts.append(raw[pos:])
+            break
+        parts.append(raw[pos:pos + sz])
+        pos = pos + sz + 2
+
+    return "".join(parts)
+
+func parse_respons_http(raw):
+    sep_pos = raw.find("\r\n\r\n")
+    sep_len = 4
+    if sep_pos == -1:
+        sep_pos = raw.find("\n\n")
+        sep_len = 2
+
+    hdr_part = ""
+    body_raw = ""
+    if sep_pos != -1:
+        hdr_part = raw[:sep_pos]
+        body_raw = raw[sep_pos + sep_len:]
+    else:
+        hdr_part = raw
+        body_raw = ""
+
+    lines = hdr_part.split("\n")
+    if len(lines) == 0:
+        lempar "Respons HTTP kosong"
+
+    sline = lines[0].strip()
+    sp1 = sline.find(" ")
+    if sp1 == -1 or not sline.startswith("HTTP/"):
+        lempar "Baris status respons HTTP tidak valid: " + sline
+
+    ver = sline[:sp1]
+    rest = sline[sp1 + 1:].strip()
+    sp2 = rest.find(" ")
+    status = 200
+    reason = "OK"
+
+    if sp2 != -1:
+        status = ke_angka(rest[:sp2])
+        reason = rest[sp2 + 1:].strip()
+    else:
+        status = ke_angka(rest)
+        reason = alasan_status_http(status)
+
+    hdr = HeaderHTTP()
+    i = 1
+    n = len(lines)
+    while i < n:
+        b = lines[i].strip()
+        if b != "":
+            colon = b.find(":")
+            if colon != -1:
+                hdr.atur(b[:colon].strip(), b[colon + 1:].strip())
+        i += 1
+
+    body = body_raw
+    te = hdr.ambil("transfer-encoding", "")
+    if huruf_kecil(te).find("chunked") != -1:
+        body = dekode_chunked(body_raw)
+
+    return ResponsHTTP(status, reason, hdr, body, ver)
+
+class KlienHTTP:
+    func __init__(self, opts = None):
+        self.opts = opts
+
+    func minta(self, method, url_str, header = None, body = "", redirect_limit = 5):
+        target_url = url_str
+        hop = 0
+
+        while hop <= redirect_limit:
+            u = parse_url(target_url)
+            conn = net.konek(u.host, u.port)
+            if conn == None:
+                lempar "Gagal terhubung ke host: " + u.host + ":" + str(u.port)
+
+            req_hdr = HeaderHTTP(header)
+            if not req_hdr.punya("Host"):
+                req_hdr.atur("Host", u.otoritas)
+            if not req_hdr.punya("Connection"):
+                req_hdr.atur("Connection", "close")
+            if not req_hdr.punya("User-Agent"):
+                req_hdr.atur("User-Agent", "nusantara-pure/1.0")
+            if not req_hdr.punya("Accept"):
+                req_hdr.atur("Accept", "*/*")
+
+            has_body = (body != "" and body != None)
+            if has_body or method == "POST" or method == "PUT" or method == "PATCH":
+                if not req_hdr.punya("Content-Length"):
+                    req_hdr.atur("Content-Length", str(len(body)))
+
+            req_line = method + " " + u.target() + " HTTP/1.1\r\n"
+            msg = req_line + req_hdr.ke_teks() + "\r\n\r\n" + body
+
+            sent = conn.kirim(msg)
+            if sent < 0:
+                conn.tutup()
+                lempar "Gagal mengirim permintaan HTTP ke " + u.host
+
+            hdr_part = conn.baca_sampai("\r\n\r\n")
+            if hdr_part == None:
+                rest_all = conn.baca_semua()
+                conn.tutup()
+                return parse_respons_http(rest_all)
+
+            resp_dummy = parse_respons_http(hdr_part + "\r\n\r\n")
+            code = resp_dummy.status
+
+            if (code == 301 or code == 302 or code == 303 or code == 307 or code == 308) and resp_dummy.header.punya("location"):
+                new_loc = resp_dummy.header.ambil("location")
+                conn.tutup()
+                target_url = gabung_url(target_url, new_loc)
+                if code == 303 or ((code == 301 or code == 302) and method != "HEAD"):
+                    method = "GET"
+                    body = ""
+                hop += 1
+                continue
+
+            full_body = ""
+            te = huruf_kecil(resp_dummy.ambil_header("transfer-encoding", ""))
+            cl_str = resp_dummy.ambil_header("content-length", "")
+
+            if method == "HEAD" or code == 204 or code == 304:
+                full_body = ""
+            elif te.find("chunked") != -1:
+                rest = conn.baca_semua()
+                full_body = dekode_chunked(rest)
+            elif cl_str != "":
+                cl = ke_angka(cl_str)
+                full_body = conn.baca_persis(cl)
+            else:
+                full_body = conn.baca_semua()
+
+            conn.tutup()
+            return ResponsHTTP(resp_dummy.status, resp_dummy.alasan, resp_dummy.header, full_body, resp_dummy.versi)
+
+        lempar "Terlalu banyak redirect HTTP"
+
+    func get(self, url_str, header = None):
+        return self.minta("GET", url_str, header, "")
+
+    func post(self, url_str, body = "", header = None, content_type = "application/json"):
+        hdr = HeaderHTTP(header)
+        if not hdr.punya("Content-Type"):
+            hdr.atur("Content-Type", content_type)
+        return self.minta("POST", url_str, hdr, body)
+
+    func put(self, url_str, body = "", header = None):
+        return self.minta("PUT", url_str, header, body)
+
+    func delete(self, url_str, header = None):
+        return self.minta("DELETE", url_str, header, "")
+
+    func head(self, url_str, header = None):
+        return self.minta("HEAD", url_str, header, "")
+
+klien_http = KlienHTTP()
+
+func minta(method, url_str, header = None, body = ""):
+    return klien_http.minta(method, url_str, header, body)
+
+func get(url_str, header = None):
+    return klien_http.get(url_str, header)
+
+func post(url_str, body = "", header = None):
+    return klien_http.post(url_str, body, header)
+
+func post_json(url_str, data_map, header = None):
+    return klien_http.post(url_str, json_encode(data_map), header, "application/json")
+
+class ServerHTTP:
+    func __init__(self):
+        self.rute = {}
+        self.penangan_bawaan = None
+
+    func pada(self, method, path, handler):
+        k = huruf_besar(method) + ":" + path
+        self.rute[k] = handler
+
+    func get(self, path, handler):
+        self.pada("GET", path, handler)
+
+    func post(self, path, handler):
+        self.pada("POST", path, handler)
+
+    func put(self, path, handler):
+        self.pada("PUT", path, handler)
+
+    func delete(self, path, handler):
+        self.pada("DELETE", path, handler)
+
+    func tangani_permintaan(self, req):
+        k = req.metode + ":" + req.path
+        if k in self.rute:
+            fn = self.rute[k]
+            return fn(req)
+        wc = "*:" + req.path
+        if wc in self.rute:
+            fn = self.rute[wc]
+            return fn(req)
+        if self.penangan_bawaan != None:
+            return self.penangan_bawaan(req)
+        return ResponsHTTP(404, "Not Found", {"Content-Type": "text/plain"}, "404 Not Found")
+
+    func dengar(self, port, direct_handler = None):
+        srv = self
+
+        func net_handler(raw_req):
+            hdr = HeaderHTTP()
+            if "header" in raw_req:
+                ph = raw_req["header"]
+                for k in ph:
+                    hdr.atur(k, ph[k])
+
+            req = PermintaanHTTP(
+                raw_req["metode"],
+                raw_req["path"],
+                hdr,
+                raw_req["tubuh"]
+            )
+            req.ip = raw_req["ip"]
+
+            resp = direct_handler(req) if direct_handler != None else srv.tangani_permintaan(req)
+
+            if type(resp) == "string" or type(resp) == "str" or type(resp) == "teks":
+                resp = ResponsHTTP(200, "OK", {"Content-Type": "text/plain"}, resp)
+            elif type(resp) == "peta" or type(resp) == "dict":
+                if "status" in resp and "tubuh" in resp:
+                    return resp
+                resp = ResponsHTTP(200, "OK", {"Content-Type": "application/json"}, json_encode(resp))
+
+            out = {}
+            out["status"] = resp.status
+            out["tubuh"] = resp.tubuh
+            out["header"] = resp.header.semua()
+            return out
+
+        http_dengar(port, net_handler)
+
+func respons_teks(body, status = 200):
+    return ResponsHTTP(status, alasan_status_http(status), {"Content-Type": "text/plain; charset=utf-8"}, body)
+
+func respons_json(data, status = 200):
+    return ResponsHTTP(status, alasan_status_http(status), {"Content-Type": "application/json"}, json_encode(data))
+
+func respons_html(html, status = 200):
+    return ResponsHTTP(status, alasan_status_http(status), {"Content-Type": "text/html; charset=utf-8"}, html)
+
+func respons_redirect(loc, status = 302):
+    return ResponsHTTP(status, alasan_status_http(status), {"Location": loc}, "")
+
+func respons_kesalahan(status, msg = ""):
+    body = msg if msg != "" else alasan_status_http(status)
+    return ResponsHTTP(status, alasan_status_http(status), {"Content-Type": "text/plain"}, body)

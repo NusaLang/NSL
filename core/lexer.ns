@@ -1,0 +1,303 @@
+import token
+
+Token = token.Token
+
+KataKunci = {
+    "buat": "BUAT", "fungsi": "FUNGSI", "fung": "FUNGSI",
+    "jika": "JIKA", "kalau": "JIKA", "jk": "JIKA",
+    "lain": "LAIN",
+    "selama": "SELAMA", "slm": "SELAMA",
+    "untuk": "UNTUK", "dalam": "DALAM",
+    "hasil": "HASIL", "kem": "HASIL",
+    "berhenti": "BERHENTI", "henti": "BERHENTI",
+    "lanjut": "LANJUT",
+    "benar": "BENAR", "Benar": "BENAR",
+    "salah": "SALAH", "Salah": "SALAH",
+    "kosong": "KOSONG", "Kosong": "KOSONG",
+    "kelas": "KELAS", "ini": "INI", "induk": "INDUK",
+    "coba": "COBA", "tangkap": "TANGKAP", "akhirnya": "AKHIRNYA", "akhir": "AKHIRNYA",
+    "lempar": "LEMPAR",
+    "dan": "dan", "atau": "atau", "bukan": "bukan",
+    "pass": "PASS",
+
+    "let": "BUAT", "var": "BUAT",
+    "fun": "FUNGSI", "func": "FUNGSI", "function": "FUNGSI", "def": "FUNGSI",
+    "if": "JIKA", "elif": "ELIF", "else": "LAIN",
+    "while": "SELAMA",
+    "for": "UNTUK", "in": "DALAM",
+    "return": "HASIL",
+    "break": "BERHENTI", "continue": "LANJUT",
+    "true": "BENAR", "True": "BENAR",
+    "false": "SALAH", "False": "SALAH",
+    "null": "KOSONG", "nil": "KOSONG", "None": "KOSONG",
+    "class": "KELAS", "this": "INI", "self": "INI", "super": "INDUK",
+    "try": "COBA", "catch": "TANGKAP", "except": "TANGKAP", "finally": "AKHIRNYA",
+    "throw": "LEMPAR", "raise": "LEMPAR",
+    "and": "dan", "or": "atau", "not": "bukan"
+}
+
+class Lexer:
+    func __init__(self, sumber):
+        self.sumber = sumber
+        self.pos = 0
+        self.baris = 1
+        self.kolom = 1
+        self.n = len(sumber)
+        self.KataKunci = KataKunci
+
+    func intip(self, offset):
+        idx = self.pos + offset
+        if idx < self.n:
+            return self.sumber[idx]
+        return ""
+
+    func maju(self):
+        ch = self.sumber[self.pos]
+        self.pos += 1
+        if ch == "\n":
+            self.baris += 1
+            self.kolom = 1
+        else:
+            self.kolom += 1
+        return ch
+
+    func cocok(self, karakter):
+        if self.pos < self.n and self.sumber[self.pos] == karakter:
+            self.maju()
+            return True
+        return False
+
+    func tokenize(self):
+        raw = self.tokenize_mentah()
+        return self.terapkan_layout(raw)
+
+    func tokenize_mentah(self):
+        tokens = []
+
+        while self.pos < self.n:
+            ch = self.sumber[self.pos]
+
+            if ch == " " or ch == "\t" or ch == "\r":
+                self.maju()
+            elif ch == "\n":
+                self.maju()
+            elif ch == "#" or (ch == "/" and self.intip(1) == "/"):
+                while self.pos < self.n and self.sumber[self.pos] != "\n":
+                    self.maju()
+            elif ch.isdigit():
+                tokens.append(self.baca_angka())
+            elif ch == "\"" or ch == "'":
+                tokens.append(self.baca_string(ch))
+            elif ch.isalpha() or ch == "_":
+                tok = self.baca_pengenal()
+                if tok.teks == "elif":
+                    tokens.append(Token("LAIN", "else", 0, tok.baris, tok.kolom))
+                    tokens.append(Token("JIKA", "if", 0, tok.baris, tok.kolom))
+                else:
+                    tokens.append(tok)
+            else:
+                tokens.append(self.baca_simbol())
+
+        tokens.append(Token("EOF", "", 0, self.baris, self.kolom))
+        return tokens
+
+    func terapkan_layout(self, toks):
+        out = []
+        indents = [0]
+        depth = 0
+        pending_block = False
+        prev_line = 0
+        line_open = False
+        inline_blocks = 0
+
+        n_toks = len(toks)
+        i = 0
+        while i < n_toks:
+            t = toks[i]
+            is_eof = t.tipe == "EOF"
+            cur_line = t.baris
+
+            if depth == 0 and cur_line > prev_line:
+                while inline_blocks > 0:
+                    out.append(Token("}", "}", 0, prev_line, 0))
+                    out.append(Token(";", ";", 0, prev_line, 0))
+                    inline_blocks -= 1
+
+                indent = t.kolom - 1
+                if is_eof:
+                    indent = 0
+
+                if pending_block:
+                    if indent > indents[-1]:
+                        indents.append(indent)
+                        out.append(Token("{", "{", 0, t.baris, t.kolom))
+                    else:
+                        out.append(Token("{", "{", 0, t.baris, t.kolom))
+                        out.append(Token("}", "}", 0, t.baris, t.kolom))
+                    pending_block = False
+                else:
+                    if line_open and len(out) > 0:
+                        last = out[-1].tipe
+                        if last != ";" and last != "{" and last != "}":
+                            out.append(Token(";", ";", 0, t.baris, t.kolom))
+                    while indent < indents[-1]:
+                        indents.pop()
+                        out.append(Token("}", "}", 0, t.baris, t.kolom))
+                        out.append(Token(";", ";", 0, t.baris, t.kolom))
+                line_open = False
+
+            if is_eof:
+                while inline_blocks > 0:
+                    out.append(Token("}", "}", 0, cur_line, 0))
+                    inline_blocks -= 1
+                while len(indents) > 1:
+                    indents.pop()
+                    out.append(Token("}", "}", 0, cur_line, 0))
+                out.append(t)
+                break
+
+            if t.tipe == "(" or t.tipe == "[" or t.tipe == "{":
+                depth += 1
+            elif (t.tipe == ")" or t.tipe == "]" or t.tipe == "}") and depth > 0:
+                depth -= 1
+
+            if t.tipe == ":" and depth == 0:
+                is_eol = (i + 1 >= n_toks) or (toks[i + 1].baris > cur_line) or (toks[i + 1].tipe == "EOF")
+                if is_eol:
+                    pending_block = True
+                    line_open = False
+                    prev_line = cur_line
+                    i += 1
+                    continue
+                else:
+                    out.append(Token("{", "{", 0, t.baris, t.kolom))
+                    inline_blocks += 1
+                    line_open = True
+                    prev_line = cur_line
+                    i += 1
+                    continue
+
+            out.append(t)
+            line_open = True
+            prev_line = cur_line
+            i += 1
+
+        return out
+
+    func baca_angka(self):
+        awal_baris = self.baris
+        awal_kolom = self.kolom
+        teks = ""
+
+        while self.pos < self.n and (self.sumber[self.pos].isdigit() or self.sumber[self.pos] == "."):
+            teks += self.maju()
+
+        return Token("ANGKA", teks, float(teks), awal_baris, awal_kolom)
+
+    func baca_string(self, kutip):
+        awal_baris = self.baris
+        awal_kolom = self.kolom
+        self.maju()
+
+        teks = ""
+        while self.pos < self.n and self.sumber[self.pos] != kutip:
+            ch = self.maju()
+            if ch == "\\" and self.pos < self.n:
+                esc = self.maju()
+                if esc == "n":
+                    teks += "\n"
+                elif esc == "t":
+                    teks += "\t"
+                elif esc == "r":
+                    teks += "\r"
+                elif esc == "\\":
+                    teks += "\\"
+                elif esc == "\"":
+                    teks += "\""
+                elif esc == "'":
+                    teks += "'"
+                else:
+                    teks += esc
+            else:
+                teks += ch
+
+        if self.pos < self.n:
+            self.maju()
+
+        return Token("STRING", teks, 0, awal_baris, awal_kolom)
+
+    func baca_pengenal(self):
+        awal_baris = self.baris
+        awal_kolom = self.kolom
+        teks = ""
+
+        while self.pos < self.n and (self.sumber[self.pos].isalnum() or self.sumber[self.pos] == "_"):
+            teks += self.maju()
+
+        tipe = "IDENT"
+        if teks in self.KataKunci:
+            tipe = self.KataKunci[teks]
+
+        return Token(tipe, teks, 0, awal_baris, awal_kolom)
+
+    func baca_simbol(self):
+        awal_baris = self.baris
+        awal_kolom = self.kolom
+        ch = self.maju()
+
+        if ch == "+":
+            if self.cocok("="):
+                return Token("+=", "+=", 0, awal_baris, awal_kolom)
+            return Token("+", "+", 0, awal_baris, awal_kolom)
+        elif ch == "-":
+            if self.cocok("="):
+                return Token("-=", "-=", 0, awal_baris, awal_kolom)
+            return Token("-", "-", 0, awal_baris, awal_kolom)
+        elif ch == "*":
+            if self.cocok("="):
+                return Token("*=", "*=", 0, awal_baris, awal_kolom)
+            return Token("*", "*", 0, awal_baris, awal_kolom)
+        elif ch == "/":
+            if self.cocok("="):
+                return Token("/=", "/=", 0, awal_baris, awal_kolom)
+            return Token("/", "/", 0, awal_baris, awal_kolom)
+        elif ch == "%":
+            return Token("%", "%", 0, awal_baris, awal_kolom)
+        elif ch == "=":
+            if self.cocok("="):
+                return Token("==", "==", 0, awal_baris, awal_kolom)
+            return Token("=", "=", 0, awal_baris, awal_kolom)
+        elif ch == "!":
+            if self.cocok("="):
+                return Token("!=", "!=", 0, awal_baris, awal_kolom)
+            return Token("!", "!", 0, awal_baris, awal_kolom)
+        elif ch == "<":
+            if self.cocok("="):
+                return Token("<=", "<=", 0, awal_baris, awal_kolom)
+            return Token("<", "<", 0, awal_baris, awal_kolom)
+        elif ch == ">":
+            if self.cocok("="):
+                return Token(">=", ">=", 0, awal_baris, awal_kolom)
+            return Token(">", ">", 0, awal_baris, awal_kolom)
+        elif ch == "(":
+            return Token("(", "(", 0, awal_baris, awal_kolom)
+        elif ch == ")":
+            return Token(")", ")", 0, awal_baris, awal_kolom)
+        elif ch == "{":
+            return Token("{", "{", 0, awal_baris, awal_kolom)
+        elif ch == "}":
+            return Token("}", "}", 0, awal_baris, awal_kolom)
+        elif ch == "[":
+            return Token("[", "[", 0, awal_baris, awal_kolom)
+        elif ch == "]":
+            return Token("]", "]", 0, awal_baris, awal_kolom)
+        elif ch == ",":
+            return Token(",", ",", 0, awal_baris, awal_kolom)
+        elif ch == ";":
+            return Token(";", ";", 0, awal_baris, awal_kolom)
+        elif ch == ":":
+            return Token(":", ":", 0, awal_baris, awal_kolom)
+        elif ch == ".":
+            return Token(".", ".", 0, awal_baris, awal_kolom)
+
+        return Token("UNKNOWN", ch, 0, awal_baris, awal_kolom)

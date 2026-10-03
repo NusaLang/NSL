@@ -1,0 +1,64 @@
+class TipeToken:
+    konst_ANGKA = "ANGKA"
+    konst_STRING = "STRING"
+    konst_IDENT = "IDENT"
+
+    konst_BUAT = "BUAT"
+    konst_FUNGSI = "FUNGSI"
+    konst_JIKA = "JIKA"
+    konst_LAIN = "LAIN"
+    konst_SELAMA = "SELAMA"
+    konst_UNTUK = "UNTUK"
+    konst_DALAM = "DALAM"
+    konst_HASIL = "HASIL"
+    konst_BERHENTI = "BERHENTI"
+    konst_LANJUT = "LANJUT"
+    konst_BENAR = "BENAR"
+    konst_SALAH = "SALAH"
+    konst_KOSONG = "KOSONG"
+    konst_KELAS = "KELAS"
+    konst_INI = "INI"
+    konst_INDUK = "INDUK"
+    konst_COBA = "COBA"
+    konst_TANGKAP = "TANGKAP"
+    konst_AKHIRNYA = "AKHIRNYA"
+    konst_LEMPAR = "LEMPAR"
+
+    konst_TAMBAH = "+"
+    konst_KURANG = "-"
+    konst_KALI = "*"
+    konst_BAGI = "/"
+    konst_PERSEN = "%"
+    konst_SAMA = "="
+    konst_SAMA_DENGAN = "=="
+    konst_BEDA = "!="
+    konst_KURANG_DARI = "<"
+    konst_KURANG_SAMA = "<="
+    konst_LEBIH_DARI = ">"
+    konst_LEBIH_SAMA = ">="
+    konst_DAN = "dan"
+    konst_ATAU = "atau"
+    konst_BUKAN = "bukan"
+
+    konst_KURUNG_BUKA = "("
+    konst_KURUNG_TUTUP = ")"
+    konst_KURAWAL_BUKA = "{"
+    konst_KURAWAL_TUTUP = "}"
+    konst_SIKU_BUKA = "["
+    konst_SIKU_TUTUP = "]"
+    konst_KOMA = ","
+    konst_TITIK_KOMA = ";"
+    konst_TITIK = "."
+    konst_TITIK_DUA = ":"
+    konst_EOF = "EOF"
+
+class Token:
+    func __init__(self, tipe, teks, angka, baris, kolom):
+        self.tipe = tipe
+        self.teks = teks
+        self.angka = angka
+        self.baris = baris
+        self.kolom = kolom
+
+    func ke_teks(self):
+        return "Token(" + self.tipe + ", '" + self.teks + "', baris=" + str(self.baris) + ")"

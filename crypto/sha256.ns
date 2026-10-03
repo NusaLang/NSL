@@ -1,0 +1,121 @@
+MASK32 = 4294967295
+
+func _u32(n):
+    return n & MASK32
+
+func _rotr(x, n):
+    return _u32((x >> n) | (x << (32 - n)))
+
+K_SHA256 = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+]
+
+func _to_hex_byte(b):
+    hx = "0123456789abcdef"
+    h1 = (b >> 4) & 15
+    h2 = b & 15
+    return hx[h1] + hx[h2]
+
+func sha256_hex(s):
+    h0 = 0x6a09e667
+    h1 = 0x71374491
+    h2 = 0xb5c0fbcf
+    h3 = 0xe9b5dba5
+    h4 = 0x3956c25b
+    h5 = 0x59f111f1
+    h6 = 0x923f82a4
+    h7 = 0xab1c5ed5
+
+    bytes_list = []
+    n = len(s)
+    i = 0
+    while i < n:
+        bytes_list.append(ord(s[i]))
+        i += 1
+
+    bit_len = n * 8
+    bytes_list.append(0x80)
+    while (len(bytes_list) % 64) != 56:
+        bytes_list.append(0x00)
+
+    j = 7
+    while j >= 0:
+        bytes_list.append(_u32(bit_len >> (j * 8)) & 255)
+        j -= 1
+
+    chunk = 0
+    tot_bytes = len(bytes_list)
+    while chunk < tot_bytes:
+        w = []
+        idx = 0
+        while idx < 16:
+            p = chunk + idx * 4
+            b0 = bytes_list[p]
+            b1 = bytes_list[p + 1]
+            b2 = bytes_list[p + 2]
+            b3 = bytes_list[p + 3]
+            w.append(_u32((b0 << 24) | (b1 << 16) | (b2 << 8) | b3))
+            idx += 1
+
+        while idx < 64:
+            s0 = _rotr(w[idx - 15], 7) ^ _rotr(w[idx - 15], 18) ^ (w[idx - 15] >> 3)
+            s1 = _rotr(w[idx - 2], 17) ^ _rotr(w[idx - 2], 19) ^ (w[idx - 2] >> 10)
+            w.append(_u32(w[idx - 16] + s0 + w[idx - 7] + s1))
+            idx += 1
+
+        a = h0
+        b = h1
+        c = h2
+        d = h3
+        e = h4
+        f = h5
+        g = h6
+        h = h7
+
+        k_idx = 0
+        while k_idx < 64:
+            s1 = _rotr(e, 6) ^ _rotr(e, 11) ^ _rotr(e, 25)
+            ch = (e & f) ^ ((~e) & g)
+            temp1 = _u32(h + s1 + ch + K_SHA256[k_idx] + w[k_idx])
+            s0 = _rotr(a, 2) ^ _rotr(a, 13) ^ _rotr(a, 22)
+            maj = (a & b) ^ (a & c) ^ (b & c)
+            temp2 = _u32(s0 + maj)
+
+            h = g
+            g = f
+            f = e
+            e = _u32(d + temp1)
+            d = c
+            c = b
+            b = a
+            a = _u32(temp1 + temp2)
+
+            k_idx += 1
+
+        h0 = _u32(h0 + a)
+        h1 = _u32(h1 + b)
+        h2 = _u32(h2 + c)
+        h3 = _u32(h3 + d)
+        h4 = _u32(h4 + e)
+        h5 = _u32(h5 + f)
+        h6 = _u32(h6 + g)
+        h7 = _u32(h7 + h)
+
+        chunk += 64
+
+    out = ""
+    final_h = [h0, h1, h2, h3, h4, h5, h6, h7]
+    for val in final_h:
+        out += _to_hex_byte((val >> 24) & 255)
+        out += _to_hex_byte((val >> 16) & 255)
+        out += _to_hex_byte((val >> 8) & 255)
+        out += _to_hex_byte(val & 255)
+
+    return out

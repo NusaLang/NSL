@@ -1,0 +1,167 @@
+#!/usr/bin/env nusa
+import sys
+
+func load_mod(name):
+    try:
+        return impor(name)
+    except:
+        return impor("core/" + name)
+
+Lexer = load_mod("lexer").Lexer
+Parser = load_mod("parser").Parser
+Interpreter = load_mod("interpreter").Interpreter
+VmCompiler = load_mod("vm").VmCompiler
+VmRunner = load_mod("vm").VmRunner
+
+func parse_source(kode_sumber):
+    lex = Lexer(kode_sumber)
+    tokens = lex.tokenize()
+    p = Parser(tokens)
+    return p.parse()
+
+func jalankan_berkas(path, use_vm = False):
+    if not file_ada(path):
+        cetak("error: berkas '" + path + "' tidak ditemukan")
+        sys.exit(1)
+    try:
+        sumber = baca_file(path)
+        ast = parse_source(sumber)
+        if use_vm:
+            compiler = VmCompiler()
+            fn = compiler.compile(ast)
+            vm = VmRunner()
+            vm.run(fn)
+        else:
+            runtime = Interpreter()
+            runtime.jalankan(ast)
+    except e:
+        cetak("error: " + str(e))
+        sys.exit(1)
+
+func jalankan_eval(kode):
+    try:
+        ast = parse_source(kode)
+        runtime = Interpreter()
+        runtime.jalankan(ast)
+    except e:
+        cetak("error: " + str(e))
+        sys.exit(1)
+
+func periksa_sintaks(path):
+    if not file_ada(path):
+        cetak("error: berkas '" + path + "' tidak ditemukan")
+        sys.exit(1)
+    try:
+        sumber = baca_file(path)
+        parse_source(sumber)
+    except e:
+        cetak("error sintaks di " + path + ": " + str(e))
+        sys.exit(1)
+
+func bangun_proyek(args):
+    target = "."
+    output = ""
+    i = 2
+    n = len(args)
+
+    while i < n:
+        a = args[i]
+        if a == "-o" and i + 1 < n:
+            output = args[i + 1]
+            i += 2
+        elif target == "." and a != ".":
+            target = a
+            i += 1
+        else:
+            i += 1
+
+    berkas_utama = ""
+    if target == "." or not target.endswith(".ns"):
+        dir = target
+        if dir == ".":
+            if file_ada("main.ns"):
+                berkas_utama = "main.ns"
+            elif file_ada("core/main.ns"):
+                berkas_utama = "core/main.ns"
+        else:
+            candidate = dir + "/main.ns"
+            if file_ada(candidate):
+                berkas_utama = candidate
+
+        if berkas_utama == "":
+            cetak("error: tidak ditemukan berkas utama (main.ns) di " + target)
+            sys.exit(1)
+
+        if output == "":
+            if target == ".":
+                output = "a.out"
+            else:
+                output = target
+    else:
+        berkas_utama = target
+        if not file_ada(berkas_utama):
+            cetak("error: berkas '" + berkas_utama + "' tidak ditemukan")
+            sys.exit(1)
+        if output == "":
+            output = berkas_utama
+            if output.endswith(".ns"):
+                output = output[:len(output) - 3]
+
+    try:
+        sumber = baca_file(berkas_utama)
+        parse_source(sumber)
+    except e:
+        cetak("error: " + str(e))
+        sys.exit(1)
+
+    bundle = "#!/usr/bin/env nusa\n" + baca_file(berkas_utama)
+    tulis_file(output, bundle)
+    jalankan_perintah("chmod", ["+x", output])
+
+func main():
+    args = sys.argv
+    n = len(args)
+
+    if n < 2:
+        cetak("Nusantara (nusa) 0.0.1")
+        cetak("Pemakaian: nusa [opsi] <berkas.ns> [argumen]")
+        cetak("Opsi:")
+        cetak("    build [target]  Bangun program menjadi biner eksekusi")
+        cetak("    run <file.ns>   Jalankan berkas secara langsung")
+        cetak("    -c <file.ns>    Periksa sintaks tanpa menjalankan")
+        cetak("    -e <code>       Evaluasi kode langsung")
+        cetak("    --vm <file.ns>  Jalankan lewat Bytecode VM")
+        cetak("    -v, version     Tampilkan versi")
+        sys.exit(0)
+
+    opt = args[1]
+
+    if opt == "-v" or opt == "version" or opt == "--version":
+        cetak("nusa 0.0.1")
+        sys.exit(0)
+    elif opt == "build":
+        bangun_proyek(args)
+    elif opt == "-e":
+        if n < 3:
+            cetak("error: -e membutuhkan kode untuk dievaluasi")
+            sys.exit(1)
+        jalankan_eval(args[2])
+    elif opt == "-c":
+        if n < 3:
+            cetak("error: -c membutuhkan path berkas")
+            sys.exit(1)
+        periksa_sintaks(args[2])
+    elif opt == "--vm":
+        if n < 3:
+            cetak("error: --vm membutuhkan path berkas")
+            sys.exit(1)
+        jalankan_berkas(args[2], True)
+    elif opt == "run":
+        if n < 3:
+            cetak("error: run membutuhkan path berkas")
+            sys.exit(1)
+        jalankan_berkas(args[2], False)
+    else:
+        jalankan_berkas(opt, False)
+
+main()

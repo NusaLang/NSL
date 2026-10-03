@@ -1,0 +1,60 @@
+class HasilEksekusi:
+    func __init__(self, status, keluaran, error):
+        self.status = status
+        self.keluaran = keluaran
+        self.error = error
+        self.returncode = status
+        self.stdout = keluaran
+        self.stderr = error
+
+    func sukses(self):
+        return self.status == 0
+
+class StreamProses:
+    func __init__(self, pid, fd, perintah = ""):
+        self.pid = pid
+        self.fd = fd
+        self.perintah = perintah
+        self.ditutup = False
+
+    func baca(self, max_panjang = 4096):
+        if self.ditutup or self.fd < 0:
+            return ""
+        return proc_stream_baca(self.fd, max_panjang)
+
+    func tutup(self):
+        if not self.ditutup:
+            proc_stream_tutup(self.pid, self.fd)
+            self.ditutup = True
+
+func jalankan(perintah, argumen = []):
+    res = jalankan_perintah(perintah, argumen)
+    return HasilEksekusi(res.status, res.keluaran, res.error)
+
+run = jalankan
+
+func jalankan_shell(perintah_string):
+    res = jalankan_perintah("sh", ["-c", perintah_string])
+    return HasilEksekusi(res.status, res.keluaran, res.error)
+
+run_shell = jalankan_shell
+
+func mulai_stream(perintah, argumen = []):
+    h = proc_stream_mulai(perintah, argumen)
+    return StreamProses(h.pid, h.fd, perintah)
+
+start_stream = mulai_stream
+
+func baca_stream(fd, max_panjang = 4096):
+    return proc_stream_baca(fd, max_panjang)
+
+read_stream = baca_stream
+
+func tutup_stream(pid, fd):
+    proc_stream_tutup(pid, fd)
+
+close_stream = tutup_stream
+
+class Proc:
+    func __init__(self):
+        pass

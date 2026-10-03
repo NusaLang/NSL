@@ -1,0 +1,233 @@
+WS_OP_LANJUT = 0
+WS_OP_TEKS   = 1
+WS_OP_BINER  = 2
+WS_OP_TUTUP  = 8
+WS_OP_PING   = 9
+WS_OP_PONG   = 10
+
+func _to_hex_byte(b):
+    hex_chars = "0123456789abcdef"
+    return hex_chars[(b >> 4) & 15] + hex_chars[b & 15]
+
+func _pack_u16_be(val):
+    return chr((val >> 8) & 255) + chr(val & 255)
+
+func ws_buat_frame(payload, opcode = 1, is_client = True):
+    n = len(payload)
+    hdr = chr(128 | (opcode & 15))
+    mbit = 128 if is_client else 0
+
+    if n < 126:
+        hdr += chr(mbit | n)
+    elif n < 65536:
+        hdr += chr(mbit | 126) + _pack_u16_be(n)
+    else:
+        hdr += chr(mbit | 127)
+        i = 7
+        while i >= 0:
+            hdr += chr((n >> (i * 8)) & 255)
+            i -= 1
+
+    if is_client:
+        m0 = 18
+        m1 = 52
+        m2 = 86
+        m3 = 120
+        hdr += chr(m0) + chr(m1) + chr(m2) + chr(m3)
+        mask = [m0, m1, m2, m3]
+        masked = ""
+        i = 0
+        while i < n:
+            b = ord(payload[i]) ^ mask[i % 4]
+            masked += chr(b)
+            i += 1
+        return hdr + masked
+
+    return hdr + payload
+
+func ws_urai_frame(data):
+    res = {
+        "ok": False,
+        "fin": False,
+        "opcode": 0,
+        "payload": "",
+        "consumed": 0
+    }
+
+    n = len(data)
+    if n < 2:
+        return res
+
+    b0 = ord(data[0])
+    b1 = ord(data[1])
+
+    fin = (b0 & 128) != 0
+    opcode = b0 & 15
+    masked = (b1 & 128) != 0
+    plen = b1 & 127
+    pos = 2
+
+    if plen == 126:
+        if n < pos + 2:
+            return res
+        plen = (ord(data[pos]) << 8) | ord(data[pos + 1])
+        pos += 2
+    elif plen == 127:
+        if n < pos + 8:
+            return res
+        plen = 0
+        i = 0
+        while i < 8:
+            plen = (plen << 8) | ord(data[pos + i])
+            i += 1
+        pos += 8
+
+    mask = [0, 0, 0, 0]
+    if masked:
+        if n < pos + 4:
+            return res
+        mask[0] = ord(data[pos])
+        mask[1] = ord(data[pos + 1])
+        mask[2] = ord(data[pos + 2])
+        mask[3] = ord(data[pos + 3])
+        pos += 4
+
+    if n < pos + plen:
+        return res
+
+    raw_payload = data[pos:pos + plen]
+    payload = ""
+    if masked:
+        i = 0
+        while i < plen:
+            payload += chr(ord(raw_payload[i]) ^ mask[i % 4])
+            i += 1
+    else:
+        payload = raw_payload
+
+    res["ok"] = True
+    res["fin"] = fin
+    res["opcode"] = opcode
+    res["payload"] = payload
+    res["consumed"] = pos + plen
+    return res
+
+_WS_SESI = {}
+_WS_NEXT_ID = 1
+
+func ws_buka(url, headers_json = "{}"):
+    global _WS_NEXT_ID, _WS_SESI
+    schema = "ws"
+    rem = url
+    if url.startswith("ws://"):
+        schema = "ws"
+        rem = url[5:]
+    elif url.startswith("wss://"):
+        schema = "wss"
+        rem = url[6:]
+
+    spos = rem.find("/")
+    host_port = rem if spos == -1 else rem[:spos]
+    path = "/" if spos == -1 else rem[spos:]
+
+    cpos = host_port.find(":")
+    host = host_port if cpos == -1 else host_port[:cpos]
+    port = (80 if schema == "ws" else 443) if cpos == -1 else ke_angka(host_port[cpos + 1:])
+
+    fd = tcp_konek(host, port)
+    if fd < 0:
+        return "{\"ok\": false, \"error\": \"gagal konek ke " + host + "\"}"
+
+    key = "dGhlIHNhbXBsZSBub25jZQ=="
+
+    req = (
+        "GET " + path + " HTTP/1.1\r\n" +
+        "Host: " + host + "\r\n" +
+        "Upgrade: websocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        "Sec-WebSocket-Key: " + key + "\r\n" +
+        "Sec-WebSocket-Version: 13\r\n\r\n"
+    )
+
+    tcp_kirim(fd, req)
+
+    resp = ""
+    while resp.find("\r\n\r\n") == -1:
+        chunk = tcp_terima(fd, 1024)
+        if chunk == "":
+            break
+        resp += chunk
+
+    if resp.find("101 Switching Protocols") == -1 and resp.find("101") == -1:
+        tcp_tutup(fd)
+        return "{\"ok\": false, \"error\": \"handshake ditolak: respon bukan 101\"}"
+
+    id = _WS_NEXT_ID
+    _WS_NEXT_ID += 1
+    _WS_SESI[id] = {
+        "fd": fd,
+        "buffer": ""
+    }
+
+    return "{\"ok\": true, \"id\": " + str(id) + "}"
+
+func ws_kirim(id, msg):
+    if not (id in _WS_SESI):
+        return False
+    s = _WS_SESI[id]
+    frame = ws_buat_frame(msg, WS_OP_TEKS, True)
+    res = tcp_kirim(s["fd"], frame)
+    return res > 0
+
+func ws_kirim_biner(id, hex_data):
+    if not (id in _WS_SESI):
+        return False
+    s = _WS_SESI[id]
+    bin_str = ""
+    n = len(hex_data)
+    i = 0
+    while i < n:
+        hi = ord(hex_data[i])
+        lo = ord(hex_data[i + 1])
+        vhi = (hi - 48) if (hi >= 48 and hi <= 57) else ((hi - 87) if hi >= 97 else (hi - 55))
+        vlo = (lo - 48) if (lo >= 48 and lo <= 57) else ((lo - 87) if lo >= 97 else (lo - 55))
+        bin_str += chr((vhi << 4) | vlo)
+        i += 2
+    frame = ws_buat_frame(bin_str, WS_OP_BINER, True)
+    res = tcp_kirim(s["fd"], frame)
+    return res > 0
+
+func ws_terima(id, timeout_ms = 1000):
+    if not (id in _WS_SESI):
+        return "{\"ok\": false, \"error\": \"sesi tidak ditemukan\"}"
+    s = _WS_SESI[id]
+
+    while True:
+        parsed = ws_urai_frame(s["buffer"])
+        if parsed["ok"]:
+            s["buffer"] = s["buffer"][parsed["consumed"]:]
+            if parsed["opcode"] == WS_OP_PING:
+                pong = ws_buat_frame(parsed["payload"], WS_OP_PONG, True)
+                tcp_kirim(s["fd"], pong)
+                continue
+            elif parsed["opcode"] == WS_OP_TUTUP:
+                ws_tutup(id)
+                return "{\"ok\": false, \"error\": \"koneksi ditutup oleh server\"}"
+            return "{\"ok\": true, \"pesan\": \"" + parsed["payload"] + "\", \"opcode\": " + str(parsed["opcode"]) + "}"
+
+        chunk = tcp_terima(s["fd"], 4096)
+        if chunk == "":
+            break
+        s["buffer"] += chunk
+
+    return "{\"ok\": false, \"error\": \"timeout / koneksi terputus\"}"
+
+func ws_tutup(id):
+    if not (id in _WS_SESI):
+        return False
+    s = _WS_SESI[id]
+    close_frame = ws_buat_frame("", WS_OP_TUTUP, True)
+    tcp_kirim(s["fd"], close_frame)
+    tcp_tutup(s["fd"])
+    hapus _WS_SESI[id]
+    return True

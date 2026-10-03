@@ -1,0 +1,1077 @@
+sys = impor("sys")
+
+Op = {
+    "CONST": 1,
+    "NULL": 2,
+    "TRUE": 3,
+    "FALSE": 4,
+
+    "ADD": 5,
+    "SUB": 6,
+    "MUL": 7,
+    "DIV": 8,
+    "MOD": 9,
+    "NEG": 10,
+    "NOT": 11,
+
+    "EQ": 12,
+    "NEQ": 13,
+    "LT": 14,
+    "LTE": 15,
+    "GT": 16,
+    "GTE": 17,
+
+    "POP": 18,
+
+    "GET_LOCAL": 19,
+    "SET_LOCAL": 20,
+    "DEFINE_LOCAL": 21,
+
+    "GET_GLOBAL": 22,
+    "SET_GLOBAL": 23,
+    "DEFINE_GLOBAL": 24,
+
+    "JUMP_IF_FALSE": 25,
+    "JUMP": 26,
+    "JUMP_IF_FALSE_KEEP": 27,
+    "JUMP_IF_TRUE_KEEP": 28,
+    "LOOP": 29,
+
+    "CALL": 30,
+    "MAKE_CLOSURE": 31,
+    "RETURN": 32,
+    "RETURN_NULL": 33,
+
+    "PRINT": 34,
+    "LENGTH": 35,
+    "PUSH": 36,
+
+    "NEW_ARRAY": 37,
+    "NEW_MAP": 38,
+    "GET_INDEX": 39,
+    "SET_INDEX": 40,
+    "GET_FIELD": 41,
+    "SET_FIELD": 42,
+
+    "CALL_METHOD": 43,
+    "MAKE_CLASS": 44,
+
+    "THROW": 45
+}
+
+OP_NAMES = {}
+for k in Op:
+    OP_NAMES[Op[k]] = k
+
+class VmFunction:
+    func __init__(self, name, params):
+        self.nama = name
+        self.params = params
+        self.arity = len(params)
+        self.code = []
+        self.constants = []
+        self.num_locals = self.arity
+
+    func tambah_konstanta(self, val):
+        self.constants.append(val)
+        return len(self.constants) - 1
+
+    func disassemble(self):
+        lines = []
+        lines.append("=== Disassembly: " + self.nama + " (arity=" + str(self.arity) + ", locals=" + str(self.num_locals) + ") ===")
+        i = 0
+        n = len(self.code)
+        while i < n:
+            offset = i
+            op = self.code[i]
+            i += 1
+            op_name = OP_NAMES[op] if op in OP_NAMES else ("OP_" + str(op))
+            detail = ""
+
+            if op == Op.CONST or op == Op.GET_GLOBAL or op == Op.SET_GLOBAL or op == Op.DEFINE_GLOBAL or op == Op.GET_FIELD or op == Op.SET_FIELD:
+                idx = self.code[i] | (self.code[i + 1] << 8)
+                i += 2
+                detail = str(idx) + " ('" + str(self.constants[idx]) + "')"
+            elif op == Op.GET_LOCAL or op == Op.SET_LOCAL or op == Op.DEFINE_LOCAL:
+                slot = self.code[i] | (self.code[i + 1] << 8)
+                i += 2
+                detail = "slot " + str(slot)
+            elif op == Op.JUMP or op == Op.JUMP_IF_FALSE or op == Op.JUMP_IF_FALSE_KEEP or op == Op.JUMP_IF_TRUE_KEEP:
+                off = self.code[i] | (self.code[i + 1] << 8)
+                i += 2
+                detail = "+" + str(off) + " -> " + str(i + off)
+            elif op == Op.LOOP:
+                off = self.code[i] | (self.code[i + 1] << 8)
+                i += 2
+                detail = "-" + str(off) + " -> " + str(i - off)
+            elif op == Op.CALL or op == Op.PRINT:
+                argc = self.code[i]
+                i += 1
+                detail = "argc=" + str(argc)
+            elif op == Op.NEW_ARRAY or op == Op.NEW_MAP:
+                cnt = self.code[i] | (self.code[i + 1] << 8)
+                i += 2
+                detail = "count=" + str(cnt)
+
+            lines.append(str(offset) + ": " + op_name + " " + detail)
+        return "\n".join(lines)
+
+class CallFrame:
+    func __init__(self, fn, args):
+        self.fn = fn
+        self.ip = 0
+        self.locals = []
+        max_loc = fn.num_locals
+        if len(args) > max_loc:
+            max_loc = len(args)
+        i = 0
+        while i < max_loc:
+            if i < len(args):
+                self.locals.append(args[i])
+            else:
+                self.locals.append(None)
+            i += 1
+
+class VmClass:
+    func __init__(self, name, base_class):
+        self.is_kelas = True
+        self.nama = name
+        self.induk_kelas = base_class
+        self.metode = {}
+
+class VmInstance:
+    func __init__(self, cls_obj):
+        self.is_instans = True
+        self.kelas = cls_obj
+        self.bidang = {}
+
+class VmCompiler:
+    func __init__(self):
+        self.current_fn = None
+        self.fn_stack = []
+        self.scope_depth = 0
+        self.locals = []
+        self.loop_stack = []
+        self.program_functions = []
+
+    func begin_scope(self):
+        self.scope_depth += 1
+
+    func end_scope(self):
+        self.scope_depth -= 1
+        while len(self.locals) > 0 and self.locals[-1]["depth"] > self.scope_depth:
+            self.locals.pop()
+
+    func add_local(self, name):
+        slot = len(self.locals)
+        self.locals.append({"nama": name, "depth": self.scope_depth, "slot": slot})
+        if slot + 1 > self.current_fn.num_locals:
+            self.current_fn.num_locals = slot + 1
+        return slot
+
+    func resolve_local(self, name):
+        i = len(self.locals) - 1
+        while i >= 0:
+            if self.locals[i]["nama"] == name:
+                return self.locals[i]["slot"]
+            i -= 1
+        return -1
+
+    func emit_byte(self, b):
+        self.current_fn.code.append(b)
+
+    func emit_op(self, op):
+        self.emit_byte(op)
+
+    func emit_u16(self, v):
+        self.emit_byte(v & 255)
+        self.emit_byte((v >> 8) & 255)
+
+    func add_constant(self, val):
+        return self.current_fn.tambah_konstanta(val)
+
+    func emit_constant(self, val):
+        idx = self.add_constant(val)
+        self.emit_op(Op.CONST)
+        self.emit_u16(idx)
+
+    func emit_jump(self, op):
+        self.emit_op(op)
+        self.emit_u16(65535)
+        return len(self.current_fn.code) - 2
+
+    func patch_jump(self, offset):
+        jump = len(self.current_fn.code) - offset - 2
+        self.current_fn.code[offset] = jump & 255
+        self.current_fn.code[offset + 1] = (jump >> 8) & 255
+
+    func emit_loop(self, loop_start):
+        self.emit_op(Op.LOOP)
+        off = len(self.current_fn.code) - loop_start + 2
+        self.emit_u16(off)
+
+    func compile(self, prog_ast):
+        top_fn = VmFunction("<script>", [])
+        self.current_fn = top_fn
+        self.program_functions = [top_fn]
+        self.locals = []
+        self.scope_depth = 0
+        self.loop_stack = []
+
+        stmts = prog_ast
+        if hasattr(prog_ast, "stmts"):
+            stmts = prog_ast.stmts
+        elif hasattr(prog_ast, "statements"):
+            stmts = prog_ast.statements
+
+        for stmt in stmts:
+            self.compile_stmt(stmt, True)
+
+        self.emit_op(Op.RETURN_NULL)
+        return top_fn
+
+    func compile_block(self, stmts):
+        self.begin_scope()
+        for s in stmts:
+            self.compile_stmt(s, False)
+        self.end_scope()
+
+    func compile_stmt(self, stmt, is_top_level):
+        if stmt == None:
+            return None
+
+        j = stmt.jenis
+
+        if j == "BLOK":
+            self.compile_block(stmt.stmts)
+        elif j == "BUAT":
+            self.compile_expr(stmt.nilai)
+            if is_top_level and len(self.fn_stack) == 0 and self.scope_depth == 0:
+                c_idx = self.add_constant(stmt.nama)
+                self.emit_op(Op.DEFINE_GLOBAL)
+                self.emit_u16(c_idx)
+            else:
+                slot = self.add_local(stmt.nama)
+                self.emit_op(Op.DEFINE_LOCAL)
+                self.emit_u16(slot)
+
+        elif j == "FUNGSI":
+            self.compile_fn(stmt, is_top_level)
+        elif j == "JIKA":
+            self.compile_expr(stmt.kondisi)
+            else_jump = self.emit_jump(Op.JUMP_IF_FALSE)
+
+            self.compile_stmt(stmt.maka, False)
+
+            end_jump = self.emit_jump(Op.JUMP)
+            self.patch_jump(else_jump)
+
+            if stmt.lain != None:
+                self.compile_stmt(stmt.lain, False)
+
+            self.patch_jump(end_jump)
+
+        elif j == "SELAMA":
+            loop_start = len(self.current_fn.code)
+            self.compile_expr(stmt.kondisi)
+            exit_jump = self.emit_jump(Op.JUMP_IF_FALSE)
+
+            self.loop_stack.append({"break_jumps": [], "continue_jumps": []})
+
+            self.compile_stmt(stmt.badan, False)
+
+            cur_loop = self.loop_stack.pop()
+            for cj in cur_loop["continue_jumps"]:
+                self.patch_jump(cj)
+
+            self.emit_loop(loop_start)
+            self.patch_jump(exit_jump)
+
+            for bj in cur_loop["break_jumps"]:
+                self.patch_jump(bj)
+
+        elif j == "UNTUK":
+            self.begin_scope()
+            if stmt.inisialisasi != None:
+                self.compile_stmt(stmt.inisialisasi, False)
+
+            loop_start = len(self.current_fn.code)
+            exit_jump = -1
+            if stmt.kondisi != None:
+                self.compile_expr(stmt.kondisi)
+                exit_jump = self.emit_jump(Op.JUMP_IF_FALSE)
+
+            self.loop_stack.append({"break_jumps": [], "continue_jumps": []})
+
+            self.compile_stmt(stmt.badan, False)
+
+            cur_loop = self.loop_stack.pop()
+            for cj in cur_loop["continue_jumps"]:
+                self.patch_jump(cj)
+
+            if stmt.pasca != None:
+                self.compile_expr(stmt.pasca)
+                self.emit_op(Op.POP)
+
+            self.emit_loop(loop_start)
+
+            if exit_jump != -1:
+                self.patch_jump(exit_jump)
+
+            for bj in cur_loop["break_jumps"]:
+                self.patch_jump(bj)
+
+            self.end_scope()
+
+        elif j == "UNTUK_DALAM":
+            self.begin_scope()
+            self.compile_expr(stmt.iter)
+            iter_slot = self.add_local("$iter")
+            self.emit_op(Op.DEFINE_LOCAL)
+            self.emit_u16(iter_slot)
+
+            self.emit_constant(0)
+            idx_slot = self.add_local("$idx")
+            self.emit_op(Op.DEFINE_LOCAL)
+            self.emit_u16(idx_slot)
+
+            var_slot = self.add_local(stmt.variabel)
+            self.emit_op(Op.NULL)
+            self.emit_op(Op.DEFINE_LOCAL)
+            self.emit_u16(var_slot)
+
+            loop_start = len(self.current_fn.code)
+
+            self.emit_op(Op.GET_LOCAL)
+            self.emit_u16(idx_slot)
+            self.emit_op(Op.GET_LOCAL)
+            self.emit_u16(iter_slot)
+            self.emit_op(Op.LENGTH)
+            self.emit_op(Op.LT)
+
+            exit_jump = self.emit_jump(Op.JUMP_IF_FALSE)
+
+            self.emit_op(Op.GET_LOCAL)
+            self.emit_u16(iter_slot)
+            self.emit_op(Op.GET_LOCAL)
+            self.emit_u16(idx_slot)
+            self.emit_op(Op.GET_INDEX)
+            self.emit_op(Op.SET_LOCAL)
+            self.emit_u16(var_slot)
+            self.emit_op(Op.POP)
+
+            self.loop_stack.append({"break_jumps": [], "continue_jumps": []})
+
+            self.compile_stmt(stmt.badan, False)
+
+            cur_loop = self.loop_stack.pop()
+            for cj in cur_loop["continue_jumps"]:
+                self.patch_jump(cj)
+
+            self.emit_op(Op.GET_LOCAL)
+            self.emit_u16(idx_slot)
+            self.emit_constant(1)
+            self.emit_op(Op.ADD)
+            self.emit_op(Op.SET_LOCAL)
+            self.emit_u16(idx_slot)
+            self.emit_op(Op.POP)
+
+            self.emit_loop(loop_start)
+            self.patch_jump(exit_jump)
+
+            for bj in cur_loop["break_jumps"]:
+                self.patch_jump(bj)
+
+            self.end_scope()
+
+        elif j == "HASIL":
+            if stmt.nilai != None:
+                self.compile_expr(stmt.nilai)
+                self.emit_op(Op.RETURN)
+            else:
+                self.emit_op(Op.RETURN_NULL)
+
+        elif j == "BERHENTI":
+            if len(self.loop_stack) == 0:
+                cetak("CompileError: 'berhenti' di luar loop")
+                return None
+            jmp = self.emit_jump(Op.JUMP)
+            self.loop_stack[-1]["break_jumps"].append(jmp)
+
+        elif j == "LANJUT":
+            if len(self.loop_stack) == 0:
+                cetak("CompileError: 'lanjut' di luar loop")
+                return None
+            jmp = self.emit_jump(Op.JUMP)
+            self.loop_stack[-1]["continue_jumps"].append(jmp)
+
+        elif j == "EKSPRESI":
+            self.compile_expr(stmt.expr)
+            self.emit_op(Op.POP)
+
+        elif j == "LEMPAR":
+            self.compile_expr(stmt.nilai)
+            self.emit_op(Op.THROW)
+
+        elif j == "KELAS":
+            cls_fn_map = {}
+            if hasattr(stmt, "metode"):
+                for m in stmt.metode:
+                    m_fn = VmFunction(stmt.nama + "." + m.nama, m.params)
+                    self.fn_stack.append(self.current_fn)
+                    self.current_fn = m_fn
+                    self.begin_scope()
+                    for p in m.params:
+                        self.add_local(p)
+                    self.compile_block(m.badan.stmts if hasattr(m.badan, "stmts") else [m.badan])
+                    self.end_scope()
+                    self.emit_op(Op.RETURN_NULL)
+                    self.current_fn = self.fn_stack.pop()
+                    cls_fn_map[m.nama] = m_fn
+
+            base_val = stmt.induk_kelas if hasattr(stmt, "induk_kelas") else None
+            c = VmClass(stmt.nama, base_val)
+            c.metode = cls_fn_map
+            self.emit_constant(c)
+            if is_top_level and len(self.fn_stack) == 0:
+                c_idx = self.add_constant(stmt.nama)
+                self.emit_op(Op.DEFINE_GLOBAL)
+                self.emit_u16(c_idx)
+            else:
+                slot = self.add_local(stmt.nama)
+                self.emit_op(Op.DEFINE_LOCAL)
+                self.emit_u16(slot)
+
+    func compile_fn(self, stmt, is_top_level):
+        sub_fn = VmFunction(stmt.nama, stmt.params)
+        self.program_functions.append(sub_fn)
+
+        self.fn_stack.append(self.current_fn)
+        self.current_fn = sub_fn
+
+        self.begin_scope()
+        for p in stmt.params:
+            self.add_local(p)
+
+        body_stmts = stmt.badan.stmts if hasattr(stmt.badan, "stmts") else [stmt.badan]
+        self.compile_block(body_stmts)
+        self.end_scope()
+
+        self.emit_op(Op.RETURN_NULL)
+
+        self.current_fn = self.fn_stack.pop()
+
+        self.emit_constant(sub_fn)
+
+        if is_top_level and len(self.fn_stack) == 0 and self.scope_depth == 0:
+            c_idx = self.add_constant(stmt.nama)
+            self.emit_op(Op.DEFINE_GLOBAL)
+            self.emit_u16(c_idx)
+        else:
+            slot = self.add_local(stmt.nama)
+            self.emit_op(Op.DEFINE_LOCAL)
+            self.emit_u16(slot)
+
+    func compile_expr(self, expr):
+        if expr == None:
+            self.emit_op(Op.NULL)
+            return None
+
+        j = expr.jenis
+
+        if j == "ANGKA":
+            self.emit_constant(expr.nilai)
+        elif j == "TEKS":
+            self.emit_constant(expr.nilai)
+        elif j == "BOOL":
+            self.emit_op(Op.TRUE if expr.nilai else Op.FALSE)
+        elif j == "KOSONG":
+            self.emit_op(Op.NULL)
+        elif j == "PENGENAL":
+            self.compile_identifier_get(expr.nama)
+        elif j == "BINER":
+            op = expr.op
+            if op == "dan" or op == "&&":
+                self.compile_expr(expr.kiri)
+                j_keep = self.emit_jump(Op.JUMP_IF_FALSE_KEEP)
+                self.emit_op(Op.POP)
+                self.compile_expr(expr.kanan)
+                self.patch_jump(j_keep)
+            elif op == "atau" or op == "||":
+                self.compile_expr(expr.kiri)
+                j_keep = self.emit_jump(Op.JUMP_IF_TRUE_KEEP)
+                self.emit_op(Op.POP)
+                self.compile_expr(expr.kanan)
+                self.patch_jump(j_keep)
+            else:
+                self.compile_expr(expr.kiri)
+                self.compile_expr(expr.kanan)
+                if op == "+":
+                    self.emit_op(Op.ADD)
+                elif op == "-":
+                    self.emit_op(Op.SUB)
+                elif op == "*":
+                    self.emit_op(Op.MUL)
+                elif op == "/":
+                    self.emit_op(Op.DIV)
+                elif op == "%":
+                    self.emit_op(Op.MOD)
+                elif op == "==":
+                    self.emit_op(Op.EQ)
+                elif op == "!=":
+                    self.emit_op(Op.NEQ)
+                elif op == "<":
+                    self.emit_op(Op.LT)
+                elif op == "<=":
+                    self.emit_op(Op.LTE)
+                elif op == ">":
+                    self.emit_op(Op.GT)
+                elif op == ">=":
+                    self.emit_op(Op.GTE)
+
+        elif j == "UNER":
+            self.compile_expr(expr.operand)
+            if expr.op == "-":
+                self.emit_op(Op.NEG)
+            elif expr.op == "!" or expr.op == "bukan":
+                self.emit_op(Op.NOT)
+
+        elif j == "PANGGIL":
+            if expr.callee.jenis == "PENGENAL" and (expr.callee.nama == "cetak" or expr.callee.nama == "print"):
+                for a in expr.args:
+                    self.compile_expr(a)
+                self.emit_op(Op.PRINT)
+                self.emit_byte(len(expr.args))
+            elif expr.callee.jenis == "PENGENAL" and (expr.callee.nama == "panjang" or expr.callee.nama == "len"):
+                if len(expr.args) > 0:
+                    self.compile_expr(expr.args[0])
+                else:
+                    self.emit_op(Op.NULL)
+                self.emit_op(Op.LENGTH)
+            elif expr.callee.jenis == "MEMBER":
+                self.compile_expr(expr.callee.target)
+                for a in expr.args:
+                    self.compile_expr(a)
+                m_idx = self.add_constant(expr.callee.nama)
+                self.emit_op(Op.CALL_METHOD)
+                self.emit_u16(m_idx)
+                self.emit_byte(len(expr.args))
+            else:
+                self.compile_expr(expr.callee)
+                for a in expr.args:
+                    self.compile_expr(a)
+                self.emit_op(Op.CALL)
+                self.emit_byte(len(expr.args))
+
+        elif j == "LARIK":
+            for el in expr.elemen:
+                self.compile_expr(el)
+            self.emit_op(Op.NEW_ARRAY)
+            self.emit_u16(len(expr.elemen))
+
+        elif j == "PETA":
+            m = len(expr.kunci)
+            k = 0
+            while k < m:
+                self.emit_constant(expr.kunci[k])
+                self.compile_expr(expr.nilai[k])
+                k += 1
+            self.emit_op(Op.NEW_MAP)
+            self.emit_u16(m)
+
+        elif j == "INDEX":
+            self.compile_expr(expr.target)
+            self.compile_expr(expr.index)
+            self.emit_op(Op.GET_INDEX)
+
+        elif j == "MEMBER":
+            self.compile_expr(expr.target)
+            f_idx = self.add_constant(expr.nama)
+            self.emit_op(Op.GET_FIELD)
+            self.emit_u16(f_idx)
+
+        elif j == "TUGAS":
+            if expr.target.jenis == "PENGENAL":
+                name = expr.target.nama
+                if expr.op == "=":
+                    self.compile_expr(expr.nilai)
+                    self.compile_identifier_set(name)
+                else:
+                    self.compile_identifier_get(name)
+                    self.compile_expr(expr.nilai)
+                    bop = expr.op[0]
+                    if bop == "+":
+                        self.emit_op(Op.ADD)
+                    elif bop == "-":
+                        self.emit_op(Op.SUB)
+                    elif bop == "*":
+                        self.emit_op(Op.MUL)
+                    elif bop == "/":
+                        self.emit_op(Op.DIV)
+                    self.compile_identifier_set(name)
+            elif expr.target.jenis == "INDEX":
+                self.compile_expr(expr.target.target)
+                self.compile_expr(expr.target.index)
+                self.compile_expr(expr.nilai)
+                self.emit_op(Op.SET_INDEX)
+            elif expr.target.jenis == "MEMBER":
+                self.compile_expr(expr.target.target)
+                self.compile_expr(expr.nilai)
+                f_idx = self.add_constant(expr.target.nama)
+                self.emit_op(Op.SET_FIELD)
+                self.emit_u16(f_idx)
+
+    func compile_identifier_get(self, name):
+        slot = self.resolve_local(name)
+        if slot != -1:
+            self.emit_op(Op.GET_LOCAL)
+            self.emit_u16(slot)
+        else:
+            c_idx = self.add_constant(name)
+            self.emit_op(Op.GET_GLOBAL)
+            self.emit_u16(c_idx)
+
+    func compile_identifier_set(self, name):
+        slot = self.resolve_local(name)
+        if slot != -1:
+            self.emit_op(Op.SET_LOCAL)
+            self.emit_u16(slot)
+        else:
+            c_idx = self.add_constant(name)
+            self.emit_op(Op.SET_GLOBAL)
+            self.emit_u16(c_idx)
+
+class VmRunner:
+    func __init__(self):
+        self.stack = []
+        self.frames = []
+        self.frame = None
+        self.globals = {}
+        self.daftarkan_bawaan()
+
+    func daftarkan_bawaan(self):
+        self.globals["cetak"] = {"is_bawaan": True, "nama": "cetak"}
+        self.globals["print"] = {"is_bawaan": True, "nama": "cetak"}
+        self.globals["panjang"] = {"is_bawaan": True, "nama": "panjang"}
+        self.globals["len"] = {"is_bawaan": True, "nama": "panjang"}
+        self.globals["ke_teks"] = {"is_bawaan": True, "nama": "ke_teks"}
+        self.globals["str"] = {"is_bawaan": True, "nama": "ke_teks"}
+        self.globals["ke_angka"] = {"is_bawaan": True, "nama": "ke_angka"}
+        self.globals["int"] = {"is_bawaan": True, "nama": "ke_angka"}
+        self.globals["float"] = {"is_bawaan": True, "nama": "ke_angka"}
+        self.globals["tipe"] = {"is_bawaan": True, "nama": "tipe"}
+        self.globals["type"] = {"is_bawaan": True, "nama": "tipe"}
+        self.globals["range"] = {"is_bawaan": True, "nama": "range"}
+        self.globals["larik"] = {"is_bawaan": True, "nama": "larik"}
+        self.globals["peta"] = {"is_bawaan": True, "nama": "peta"}
+        self.globals["sys"] = sys
+        self.globals["baca_file"] = {"is_bawaan": True, "nama": "baca_file"}
+        self.globals["tulis_file"] = {"is_bawaan": True, "nama": "tulis_file"}
+        self.globals["impor"] = {"is_bawaan": True, "nama": "impor"}
+
+    func panggil_bawaan(self, name, args):
+        if name == "cetak":
+            text_args = []
+            for a in args:
+                text_args.append(str(a))
+            cetak(" ".join(text_args))
+            return None
+        elif name == "panjang":
+            if len(args) > 0:
+                return len(args[0])
+            return 0
+        elif name == "ke_teks":
+            if len(args) > 0:
+                return str(args[0])
+            return ""
+        elif name == "ke_angka":
+            if len(args) > 0:
+                return ke_angka(args[0])
+            return 0
+        elif name == "tipe":
+            if len(args) > 0:
+                return type(args[0])
+            return "kosong"
+        elif name == "range":
+            start = 0
+            stop = 0
+            step = 1
+            if len(args) == 1:
+                stop = ke_angka(args[0])
+            elif len(args) >= 2:
+                start = ke_angka(args[0])
+                stop = ke_angka(args[1])
+                if len(args) >= 3:
+                    step = ke_angka(args[2])
+            res = []
+            cur = start
+            while cur < stop:
+                res.append(cur)
+                cur += step
+            return res
+        elif name == "larik":
+            return args
+        elif name == "peta":
+            return {}
+        elif name == "baca_file":
+            if len(args) > 0:
+                return baca_file(args[0])
+            return ""
+        elif name == "tulis_file":
+            if len(args) >= 2:
+                tulis_file(args[0], args[1])
+            return None
+        elif name == "impor":
+            if len(args) > 0:
+                return impor(args[0])
+            return None
+        return None
+
+    func push(self, val):
+        self.stack.append(val)
+
+    func pop(self):
+        if len(self.stack) == 0:
+            return None
+        return self.stack.pop()
+
+    func read_byte(self):
+        b = self.frame.fn.code[self.frame.ip]
+        self.frame.ip += 1
+        return b
+
+    func read_u16(self):
+        b1 = self.frame.fn.code[self.frame.ip]
+        b2 = self.frame.fn.code[self.frame.ip + 1]
+        self.frame.ip += 2
+        return b1 | (b2 << 8)
+
+    func truthy(self, val):
+        if val == None or val == False or val == 0 or val == "":
+            return False
+        return True
+
+    func jalankan(self, top_fn):
+        init_frame = CallFrame(top_fn, [])
+        self.frames = [init_frame]
+        self.frame = init_frame
+        self.stack = []
+
+        while len(self.frames) > 0:
+            if self.frame.ip >= len(self.frame.fn.code):
+                self.frames.pop()
+                if len(self.frames) > 0:
+                    self.frame = self.frames[-1]
+                    self.push(None)
+                continue
+
+            op = self.read_byte()
+
+            if op == Op.CONST:
+                idx = self.read_u16()
+                self.push(self.frame.fn.constants[idx])
+            elif op == Op.NULL:
+                self.push(None)
+            elif op == Op.TRUE:
+                self.push(True)
+            elif op == Op.FALSE:
+                self.push(False)
+            elif op == Op.POP:
+                self.pop()
+            elif op == Op.ADD:
+                b = self.pop()
+                a = self.pop()
+                if (type(a) == "larik" or type(a) == "list") and (type(b) == "larik" or type(b) == "list"):
+                    res = []
+                    for el in a:
+                        res.append(el)
+                    for el in b:
+                        res.append(el)
+                    self.push(res)
+                else:
+                    self.push(a + b)
+            elif op == Op.SUB:
+                b = self.pop()
+                a = self.pop()
+                self.push(a - b)
+            elif op == Op.MUL:
+                b = self.pop()
+                a = self.pop()
+                if (type(a) == "string" or type(a) == "str" or type(a) == "teks") and (type(b) == "angka" or type(b) == "int"):
+                    s = ""
+                    cnt = ke_angka(b)
+                    while cnt > 0:
+                        s += a
+                        cnt -= 1
+                    self.push(s)
+                else:
+                    self.push(a * b)
+            elif op == Op.DIV:
+                b = self.pop()
+                a = self.pop()
+                if b == 0:
+                    cetak("RuntimeError: Pembagian dengan nol")
+                    self.push(0)
+                else:
+                    self.push(a / b)
+            elif op == Op.MOD:
+                b = self.pop()
+                a = self.pop()
+                self.push(a % b)
+            elif op == Op.NEG:
+                a = self.pop()
+                self.push(-a)
+            elif op == Op.NOT:
+                a = self.pop()
+                self.push(not self.truthy(a))
+            elif op == Op.EQ:
+                b = self.pop()
+                a = self.pop()
+                self.push(a == b)
+            elif op == Op.NEQ:
+                b = self.pop()
+                a = self.pop()
+                self.push(a != b)
+            elif op == Op.LT:
+                b = self.pop()
+                a = self.pop()
+                self.push(a < b)
+            elif op == Op.LTE:
+                b = self.pop()
+                a = self.pop()
+                self.push(a <= b)
+            elif op == Op.GT:
+                b = self.pop()
+                a = self.pop()
+                self.push(a > b)
+            elif op == Op.GTE:
+                b = self.pop()
+                a = self.pop()
+                self.push(a >= b)
+            elif op == Op.GET_LOCAL:
+                slot = self.read_u16()
+                self.push(self.frame.locals[slot])
+            elif op == Op.SET_LOCAL:
+                slot = self.read_u16()
+                self.frame.locals[slot] = self.stack[-1]
+            elif op == Op.DEFINE_LOCAL:
+                slot = self.read_u16()
+                self.frame.locals[slot] = self.pop()
+            elif op == Op.GET_GLOBAL:
+                idx = self.read_u16()
+                name = self.frame.fn.constants[idx]
+                if name in self.globals:
+                    self.push(self.globals[name])
+                else:
+                    cetak("RuntimeError: Variabel global tidak dikenal '" + name + "'")
+                    self.push(None)
+            elif op == Op.SET_GLOBAL:
+                idx = self.read_u16()
+                name = self.frame.fn.constants[idx]
+                self.globals[name] = self.stack[-1]
+            elif op == Op.DEFINE_GLOBAL:
+                idx = self.read_u16()
+                name = self.frame.fn.constants[idx]
+                self.globals[name] = self.pop()
+            elif op == Op.JUMP:
+                off = self.read_u16()
+                self.frame.ip += off
+            elif op == Op.JUMP_IF_FALSE:
+                off = self.read_u16()
+                val = self.pop()
+                if not self.truthy(val):
+                    self.frame.ip += off
+            elif op == Op.JUMP_IF_FALSE_KEEP:
+                off = self.read_u16()
+                if not self.truthy(self.stack[-1]):
+                    self.frame.ip += off
+            elif op == Op.JUMP_IF_TRUE_KEEP:
+                off = self.read_u16()
+                if self.truthy(self.stack[-1]):
+                    self.frame.ip += off
+            elif op == Op.LOOP:
+                off = self.read_u16()
+                self.frame.ip -= off
+            elif op == Op.PRINT:
+                arg_count = self.read_byte()
+                args = []
+                k = 0
+                while k < arg_count:
+                    args.append(self.pop())
+                    k += 1
+                pr_args = []
+                k = arg_count - 1
+                while k >= 0:
+                    pr_args.append(str(args[k]))
+                    k -= 1
+                cetak(" ".join(pr_args))
+                self.push(None)
+            elif op == Op.LENGTH:
+                val = self.pop()
+                self.push(len(val))
+            elif op == Op.PUSH:
+                val = self.pop()
+                target = self.pop()
+                target.append(val)
+                self.push(len(target))
+            elif op == Op.NEW_ARRAY:
+                cnt = self.read_u16()
+                elems = []
+                k = 0
+                while k < cnt:
+                    elems.append(self.pop())
+                    k += 1
+                arr = []
+                k = cnt - 1
+                while k >= 0:
+                    arr.append(elems[k])
+                    k -= 1
+                self.push(arr)
+            elif op == Op.NEW_MAP:
+                cnt = self.read_u16()
+                pairs = []
+                k = 0
+                while k < cnt:
+                    v = self.pop()
+                    k_key = self.pop()
+                    pairs.append([k_key, v])
+                    k += 1
+                m = {}
+                k = cnt - 1
+                while k >= 0:
+                    m[pairs[k][0]] = pairs[k][1]
+                    k -= 1
+                self.push(m)
+            elif op == Op.GET_INDEX:
+                idx = self.pop()
+                target = self.pop()
+                self.push(target[idx])
+            elif op == Op.SET_INDEX:
+                val = self.pop()
+                idx = self.pop()
+                target = self.pop()
+                target[idx] = val
+                self.push(val)
+            elif op == Op.GET_FIELD:
+                name_idx = self.read_u16()
+                name = self.frame.fn.constants[name_idx]
+                target = self.pop()
+                if (type(target) == "peta" or type(target) == "dict") and name in target:
+                    self.push(target[name])
+                elif hasattr(target, "bidang") and name in target.bidang:
+                    self.push(target.bidang[name])
+                elif hasattr(target, "kelas") and name in target.kelas.metode:
+                    self.push({"is_metode": True, "instans": target, "fungsi": target.kelas.metode[name]})
+                elif hasattr(target, name):
+                    self.push(getattr(target, name))
+                else:
+                    cetak("RuntimeError: Field '" + name + "' tidak ditemukan")
+                    self.push(None)
+            elif op == Op.SET_FIELD:
+                name_idx = self.read_u16()
+                name = self.frame.fn.constants[name_idx]
+                val = self.pop()
+                target = self.pop()
+                if type(target) == "peta" or type(target) == "dict":
+                    target[name] = val
+                elif hasattr(target, "bidang"):
+                    target.bidang[name] = val
+                elif hasattr(target, name):
+                    setattr(target, name, val)
+                self.push(val)
+            elif op == Op.CALL_METHOD:
+                name_idx = self.read_u16()
+                name = self.frame.fn.constants[name_idx]
+                arg_count = self.read_byte()
+                args = []
+                k = 0
+                while k < arg_count:
+                    args.append(self.pop())
+                    k += 1
+                call_args = []
+                k = arg_count - 1
+                while k >= 0:
+                    call_args.append(args[k])
+                    k -= 1
+                target = self.pop()
+
+                if hasattr(target, "kelas") and name in target.kelas.metode:
+                    meth = target.kelas.metode[name]
+                    call_args.insert(0, target)
+                    new_frame = CallFrame(meth, call_args)
+                    self.frames.append(new_frame)
+                    self.frame = new_frame
+                elif hasattr(target, name):
+                    fn_target = getattr(target, name)
+                    res = fn_target(*call_args)
+                    self.push(res)
+                else:
+                    cetak("RuntimeError: Metode '" + name + "' tidak ditemukan")
+                    self.push(None)
+            elif op == Op.CALL:
+                arg_count = self.read_byte()
+                args = []
+                k = 0
+                while k < arg_count:
+                    args.append(self.pop())
+                    k += 1
+                call_args = []
+                k = arg_count - 1
+                while k >= 0:
+                    call_args.append(args[k])
+                    k -= 1
+                callee = self.pop()
+
+                if hasattr(callee, "code"):
+                    new_frame = CallFrame(callee, call_args)
+                    self.frames.append(new_frame)
+                    self.frame = new_frame
+                elif (type(callee) == "peta" or type(callee) == "dict") and "is_bawaan" in callee:
+                    res = self.panggil_bawaan(callee["nama"], call_args)
+                    self.push(res)
+                elif (type(callee) == "peta" or type(callee) == "dict") and "is_metode" in callee:
+                    call_args.insert(0, callee["instans"])
+                    new_frame = CallFrame(callee["fungsi"], call_args)
+                    self.frames.append(new_frame)
+                    self.frame = new_frame
+                elif hasattr(callee, "is_kelas"):
+                    instans = VmInstance(callee)
+                    init_fn = None
+                    if "__init__" in callee.metode:
+                        init_fn = callee.metode["__init__"]
+                    elif "konstruktor" in callee.metode:
+                        init_fn = callee.metode["konstruktor"]
+                    if init_fn != None:
+                        init_args = [instans]
+                        for a in call_args:
+                            init_args.append(a)
+                        new_frame = CallFrame(init_fn, init_args)
+                        self.frames.append(new_frame)
+                        self.frame = new_frame
+                    self.push(instans)
+                elif type(callee) == "fungsi" or type(callee) == "kelas":
+                    res = callee(*call_args)
+                    self.push(res)
+                else:
+                    cetak("RuntimeError: Objek tidak dapat dipanggil sebagai fungsi:", callee)
+                    self.push(None)
+            elif op == Op.RETURN:
+                val = self.pop()
+                self.frames.pop()
+                if len(self.frames) == 0:
+                    return val
+                self.frame = self.frames[-1]
+                self.push(val)
+            elif op == Op.RETURN_NULL:
+                self.frames.pop()
+                if len(self.frames) == 0:
+                    return None
+                self.frame = self.frames[-1]
+                self.push(None)
+            elif op == Op.THROW:
+                val = self.pop()
+                lempar val
+
+        if len(self.stack) > 0:
+            return self.pop()
+        return None

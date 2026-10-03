@@ -1,0 +1,44 @@
+import sys
+
+Lexer = impor("lexer").Lexer
+Parser = impor("parser").Parser
+
+func kompilasi(berkas_masukan, berkas_keluaran):
+    if not file_ada(berkas_masukan):
+        cetak("error: berkas '" + berkas_masukan + "' tidak ditemukan")
+        sys.exit(1)
+
+    try:
+        sumber = baca_file(berkas_masukan)
+        lex = Lexer(sumber)
+        tokens = lex.tokenize()
+        p = Parser(tokens)
+        p.parse()
+
+        bundle = "#!/usr/bin/env nusa\n" + sumber
+        tulis_file(berkas_keluaran, bundle)
+        jalankan_perintah("chmod", ["+x", berkas_keluaran])
+    except e:
+        cetak("error kompilasi: " + str(e))
+        sys.exit(1)
+
+func utama():
+    args = sys.argv
+    if len(args) < 2:
+        cetak("Penggunaan: nusa compiler/nsc.ns <berkas.ns> [-o output]")
+        sys.exit(1)
+
+    berkas_masukan = args[1]
+    berkas_keluaran = "a.out"
+
+    i = 2
+    while i < len(args):
+        if args[i] == "-o" and i + 1 < len(args):
+            berkas_keluaran = args[i + 1]
+            i += 2
+        else:
+            i += 1
+
+    kompilasi(berkas_masukan, berkas_keluaran)
+
+utama()

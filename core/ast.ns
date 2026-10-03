@@ -1,0 +1,163 @@
+class AngkaExpr:
+    func __init__(self, nilai):
+        self.jenis = "ANGKA"
+        self.nilai = nilai
+
+class TeksExpr:
+    func __init__(self, nilai):
+        self.jenis = "TEKS"
+        self.nilai = nilai
+
+class BoolExpr:
+    func __init__(self, nilai):
+        self.jenis = "BOOL"
+        self.nilai = nilai
+
+class KosongExpr:
+    func __init__(self):
+        self.jenis = "KOSONG"
+
+class PengenalExpr:
+    func __init__(self, nama):
+        self.jenis = "PENGENAL"
+        self.nama = nama
+
+class BinerExpr:
+    func __init__(self, op, kiri, kanan):
+        self.jenis = "BINER"
+        self.op = op
+        self.kiri = kiri
+        self.kanan = kanan
+
+class UnerExpr:
+    func __init__(self, op, operand):
+        self.jenis = "UNER"
+        self.op = op
+        self.operand = operand
+
+class PanggilExpr:
+    func __init__(self, callee, args):
+        self.jenis = "PANGGIL"
+        self.callee = callee
+        self.args = args
+
+class IndexExpr:
+    func __init__(self, target, index):
+        self.jenis = "INDEX"
+        self.target = target
+        self.index = index
+
+class IrisanExpr:
+    func __init__(self, target, awal, sampai):
+        self.jenis = "IRISAN"
+        self.target = target
+        self.awal = awal
+        self.sampai = sampai
+
+class LarikExpr:
+    func __init__(self, elemen):
+        self.jenis = "LARIK"
+        self.elemen = elemen
+
+class PetaExpr:
+    func __init__(self, kunci, nilai):
+        self.jenis = "PETA"
+        self.kunci = kunci
+        self.nilai = nilai
+
+class TugasExpr:
+    func __init__(self, target, op, nilai):
+        self.jenis = "TUGAS"
+        self.target = target
+        self.op = op
+        self.nilai = nilai
+
+class AksesAnggotaExpr:
+    func __init__(self, target, nama):
+        self.jenis = "MEMBER"
+        self.target = target
+        self.nama = nama
+
+class BlokStmt:
+    func __init__(self, stmts):
+        self.jenis = "BLOK"
+        self.stmts = stmts
+
+class BuatStmt:
+    func __init__(self, nama, nilai):
+        self.jenis = "BUAT"
+        self.nama = nama
+        self.nilai = nilai
+
+class FungsiStmt:
+    func __init__(self, nama, params, badan):
+        self.jenis = "FUNGSI"
+        self.nama = nama
+        self.params = params
+        self.badan = badan
+
+class JikaStmt:
+    func __init__(self, kondisi, maka, cabang_lain):
+        self.jenis = "JIKA"
+        self.kondisi = kondisi
+        self.maka = maka
+        self.lain = cabang_lain
+
+class SelamaStmt:
+    func __init__(self, kondisi, badan):
+        self.jenis = "SELAMA"
+        self.kondisi = kondisi
+        self.badan = badan
+
+class UntukStmt:
+    func __init__(self, inisialisasi, kondisi, pasca, badan):
+        self.jenis = "UNTUK"
+        self.inisialisasi = inisialisasi
+        self.kondisi = kondisi
+        self.pasca = pasca
+        self.badan = badan
+
+class UntukDalamStmt:
+    func __init__(self, variabel, iter, badan):
+        self.jenis = "UNTUK_DALAM"
+        self.variabel = variabel
+        self.iter = iter
+        self.badan = badan
+
+class HasilStmt:
+    func __init__(self, nilai):
+        self.jenis = "HASIL"
+        self.nilai = nilai
+
+class BerhentiStmt:
+    func __init__(self):
+        self.jenis = "BERHENTI"
+
+class LanjutStmt:
+    func __init__(self):
+        self.jenis = "LANJUT"
+
+class CobaStmt:
+    func __init__(self, coba_blok, tangkap_var, tangkap_blok, akhirnya_blok):
+        self.jenis = "COBA"
+        self.coba_blok = coba_blok
+        self.tangkap_var = tangkap_var
+        self.tangkap_blok = tangkap_blok
+        self.akhirnya_blok = akhirnya_blok
+
+class LemparStmt:
+    func __init__(self, nilai):
+        self.jenis = "LEMPAR"
+        self.nilai = nilai
+
+class EkspresiStmt:
+    func __init__(self, expr):
+        self.jenis = "EKSPRESI"
+        self.expr = expr
+
+class KelasStmt:
+    func __init__(self, nama, induk_kelas, metode):
+        self.jenis = "KELAS"
+        self.nama = nama
+        self.induk = induk_kelas
+        self.metode = metode

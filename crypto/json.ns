@@ -1,0 +1,185 @@
+func stringify(v):
+    t = type(v)
+    if t == "kosong" or t == "NoneType" or v == None:
+        return "null"
+    elif t == "boolean" or t == "bool":
+        return "true" if v else "false"
+    elif t == "angka" or t == "int" or t == "float":
+        return str(v)
+    elif t == "string" or t == "str":
+        out = "\""
+        n = len(v)
+        i = 0
+        while i < n:
+            c = v[i]
+            if c == "\"":
+                out += "\\\""
+            elif c == "\\":
+                out += "\\\\"
+            elif c == "\n":
+                out += "\\n"
+            elif c == "\r":
+                out += "\\r"
+            elif c == "\t":
+                out += "\\t"
+            else:
+                out += c
+            i += 1
+        return out + "\""
+    elif t == "larik" or t == "list":
+        parts = []
+        for x in v:
+            parts.append(stringify(x))
+        return "[" + ", ".join(parts) + "]"
+    elif t == "peta" or t == "dict":
+        parts = []
+        for k in v:
+            parts.append(stringify(k) + ": " + stringify(v[k]))
+        return "{" + ", ".join(parts) + "}"
+    return "null"
+
+class JsonParser:
+    func __init__(self, src):
+        self.src = src
+        self.pos = 0
+        self.n = len(src)
+
+    func skip_ws(self):
+        while self.pos < self.n:
+            c = self.src[self.pos]
+            if c == " " or c == "\t" or c == "\n" or c == "\r":
+                self.pos += 1
+            else:
+                break
+
+    func peek(self):
+        self.skip_ws()
+        if self.pos < self.n:
+            return self.src[self.pos]
+        return ""
+
+    func parse(self):
+        self.skip_ws()
+        res = self.parse_val()
+        self.skip_ws()
+        return res
+
+    func parse_val(self):
+        c = self.peek()
+        if c == "\"":
+            return self.parse_str()
+        if c == "{":
+            return self.parse_obj()
+        if c == "[":
+            return self.parse_arr()
+        if c == "t" or c == "f":
+            return self.parse_bool()
+        if c == "n":
+            return self.parse_null()
+        if (c >= "0" and c <= "9") or c == "-":
+            return self.parse_num()
+        return None
+
+    func parse_str(self):
+        self.pos += 1
+        out = ""
+        while self.pos < self.n and self.src[self.pos] != "\"":
+            c = self.src[self.pos]
+            self.pos += 1
+            if c == "\\" and self.pos < self.n:
+                esc = self.src[self.pos]
+                self.pos += 1
+                if esc == "n":
+                    out += "\n"
+                elif esc == "t":
+                    out += "\t"
+                elif esc == "r":
+                    out += "\r"
+                elif esc == "\"":
+                    out += "\""
+                elif esc == "\\":
+                    out += "\\"
+                else:
+                    out += esc
+            else:
+                out += c
+        if self.pos < self.n:
+            self.pos += 1
+        return out
+
+    func parse_num(self):
+        start = self.pos
+        while self.pos < self.n:
+            c = self.src[self.pos]
+            if (c >= "0" and c <= "9") or c == "." or c == "-" or c == "e" or c == "E" or c == "+":
+                self.pos += 1
+            else:
+                break
+        return ke_angka(self.src[start:self.pos])
+
+    func parse_bool(self):
+        if self.src[self.pos:self.pos + 4] == "true":
+            self.pos += 4
+            return True
+        if self.src[self.pos:self.pos + 5] == "false":
+            self.pos += 5
+            return False
+        return False
+
+    func parse_null(self):
+        if self.src[self.pos:self.pos + 4] == "null":
+            self.pos += 4
+        return None
+
+    func parse_arr(self):
+        self.pos += 1
+        arr = []
+        self.skip_ws()
+        if self.peek() == "]":
+            self.pos += 1
+            return arr
+        while True:
+            arr.append(self.parse_val())
+            self.skip_ws()
+            pk = self.peek()
+            if pk == ",":
+                self.pos += 1
+            elif pk == "]":
+                self.pos += 1
+                break
+            else:
+                break
+        return arr
+
+    func parse_obj(self):
+        self.pos += 1
+        obj = {}
+        self.skip_ws()
+        if self.peek() == "}":
+            self.pos += 1
+            return obj
+        while True:
+            self.skip_ws()
+            k = self.parse_str()
+            self.skip_ws()
+            if self.peek() == ":":
+                self.pos += 1
+            v = self.parse_val()
+            obj[k] = v
+            self.skip_ws()
+            pk = self.peek()
+            if pk == ",":
+                self.pos += 1
+            elif pk == "}":
+                self.pos += 1
+                break
+            else:
+                break
+        return obj
+
+func parse(s):
+    p = JsonParser(s)
+    return p.parse()
+
+dumps = stringify
+loads = parse
