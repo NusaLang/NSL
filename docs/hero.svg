@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 300" width="800" height="300" role="img" aria-label="nsl Nusantara">
+  <rect width="800" height="300" rx="20" fill="#fdf7f3"/>
+  <g fill="#2043a3">
+    <circle cx="310" cy="95" r="16"><animate attributeName="cy" values="95;87;95" dur="3s" begin="0s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1"/></circle>
+    <circle cx="345" cy="62" r="21"><animate attributeName="cy" values="62;54;62" dur="3s" begin="0.25s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1"/></circle>
+    <circle cx="400" cy="48" r="29"><animate attributeName="cy" values="48;39;48" dur="3s" begin="0.5s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1"/></circle>
+    <circle cx="455" cy="60" r="21"><animate attributeName="cy" values="60;52;60" dur="3s" begin="0.75s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1"/></circle>
+    <circle cx="490" cy="92" r="16"><animate attributeName="cy" values="92;84;92" dur="3s" begin="1s" repeatCount="indefinite" calcMode="spline" keySplines=".4 0 .6 1;.4 0 .6 1"/></circle>
+  </g>
+  <text x="400" y="168" text-anchor="middle" font-family="Ubuntu, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="64" font-weight="600" fill="#1c1b1a">nsl</text>
+  <text x="400" y="204" text-anchor="middle" font-family="Ubuntu, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" letter-spacing="7" fill="#6b645e">NUSANTARA</text>
+  <clipPath id="t"><rect x="190" y="228" width="0" height="40"><animate attributeName="width" values="0;430;430;0" keyTimes="0;0.55;0.9;1" dur="7s" repeatCount="indefinite"/></rect></clipPath>
+  <text x="190" y="256" font-family="'Fira Code', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="17" fill="#2043a3" clip-path="url(#t)">jika benar { cetak("halo, nusantara"); }</text>
+</svg>

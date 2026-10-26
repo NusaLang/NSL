@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.png" width="160" alt="nsl Nusantara" />
+  <img src="docs/hero.svg" width="720" alt="nsl Nusantara" />
 </p>
 
 # Nusantara
