@@ -1,19 +1,8 @@
-<div align="center">
+<p align="center">
+  <img src="docs/logo.png" width="160" alt="nsl Nusantara" />
+</p>
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:1f2937,100:dc2626&height=200&section=header&text=Nusantara&fontColor=ffffff&fontSize=60&fontAlignY=38&desc=Bahasa%20pemrograman%20dengan%20keyword%20Bahasa%20Indonesia&descSize=17&descAlignY=62&animation=fadeIn" width="100%" alt="Nusantara" />
-
-<img src="https://readme-typing-svg.herokuapp.com?font=Fira+Code&weight=600&size=20&duration=3200&pause=900&color=DC2626&center=true&vCenter=true&width=560&lines=fungsi+fib(n)+%7B+hasil+n+%3C+2+%3F+n+%3A+...+%7D;Ditulis+native+di+C%2B%2B17;Satu+binary%2C+tanpa+runtime;Goroutine%2C+channel%2C+dan+GC+sendiri" alt="Nusantara" />
-
-<br/>
-
-<img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++17" />
-<img src="https://img.shields.io/github/v/release/NusaLang/NSL?style=for-the-badge&color=dc2626&label=Rilis" alt="Rilis" />
-<img src="https://img.shields.io/badge/Platform-Linux%20%C2%B7%20Android%20%C2%B7%20Windows-1f2937?style=for-the-badge" alt="Platform" />
-<img src="https://img.shields.io/github/stars/NusaLang/NSL?style=for-the-badge&color=1f2937" alt="Bintang" />
-
-</div>
-
-<br/>
+# Nusantara
 
 Bahasa pemrograman dengan keyword Bahasa Indonesia. Ditulis native di C++17, dikompilasi jadi satu binary, dan gak perlu install runtime apa pun buat menjalankannya. Ekstensi filenya `.ns`.
 
@@ -152,9 +141,3 @@ Eksekusi lewat bytecode VM dulu (`src/vm.cpp`, dengan JIT untuk fungsi dan loop 
 ## Lisensi
 
 Apache-2.0, lihat [LICENSE](LICENSE). Kode pihak ketiga di `third_party/` memakai lisensinya masing-masing, daftarnya ada di [NOTICE](NOTICE).
-
-<div align="center">
-
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:dc2626,100:1f2937&height=90&section=footer" width="100%" alt="" />
-
-</div>
