@@ -1,6 +1,21 @@
-# 🏝️ Nusantara (`.ns`)
+<div align="center">
 
-Bahasa pemrograman dengan keyword Bahasa Indonesia. Ditulis native di C++17, compile jadi satu binary, gak perlu install runtime apa pun buat jalanin.
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:1f2937,100:dc2626&height=200&section=header&text=Nusantara&fontColor=ffffff&fontSize=60&fontAlignY=38&desc=Bahasa%20pemrograman%20dengan%20keyword%20Bahasa%20Indonesia&descSize=17&descAlignY=62&animation=fadeIn" width="100%" alt="Nusantara" />
+
+<img src="https://readme-typing-svg.herokuapp.com?font=Fira+Code&weight=600&size=20&duration=3200&pause=900&color=DC2626&center=true&vCenter=true&width=560&lines=fungsi+fib(n)+%7B+hasil+n+%3C+2+%3F+n+%3A+...+%7D;Ditulis+native+di+C%2B%2B17;Satu+binary%2C+tanpa+runtime;Goroutine%2C+channel%2C+dan+GC+sendiri" alt="Nusantara" />
+
+<br/>
+
+<img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++17" />
+<img src="https://img.shields.io/github/v/release/NusaLang/NSL?style=for-the-badge&color=dc2626&label=Rilis" alt="Rilis" />
+<img src="https://img.shields.io/badge/Platform-Linux%20%C2%B7%20Android%20%C2%B7%20Windows-1f2937?style=for-the-badge" alt="Platform" />
+<img src="https://img.shields.io/github/stars/NusaLang/NSL?style=for-the-badge&color=1f2937" alt="Bintang" />
+
+</div>
+
+<br/>
+
+Bahasa pemrograman dengan keyword Bahasa Indonesia. Ditulis native di C++17, dikompilasi jadi satu binary, dan gak perlu install runtime apa pun buat menjalankannya. Ekstensi filenya `.ns`.
 
 ```
 fungsi fib(n) {
@@ -13,33 +28,35 @@ untuk (buat i = 0; i < 10; i = i + 1) {
 }
 ```
 
-Tiap keyword ada padanan Inggrisnya (`buat`/`let`, `fungsi`/`func`, `jika`/`if`, dst) dan dua-duanya bisa dicampur bebas dalam satu file — token-nya sama persis di lexer. Daftar lengkap keyword ada di bagian "Bahasa" di bawah.
+Tiap keyword ada padanan Inggrisnya (`buat`/`let`, `fungsi`/`func`, `jika`/`if`, dan seterusnya). Dua-duanya boleh dicampur dalam satu file, karena token-nya sama persis di lexer. Daftar lengkap ada di bagian [Bahasa](#bahasa).
 
 ## Kenapa
 
-Awalnya iseng pengen bahasa yang keyword-nya Bahasa Indonesia tapi gak berasa mainan — jadi dikompilasi ke native binary beneran (bukan di-interpret sama runtime lain kayak Python), ada garbage collector sendiri, ada goroutine/channel, dan sintaksnya dijaga simpel kayak Python/JS biar gampang dipelajari.
+Awalnya iseng pengen bahasa yang keyword-nya Bahasa Indonesia tapi gak berasa mainan. Jadi dikompilasi ke native binary beneran (bukan di-interpret runtime lain seperti Python), punya garbage collector sendiri, ada goroutine dan channel, dan sintaksnya dijaga simpel kayak Python/JS biar gampang dipelajari.
 
-## Build & install
+## Pasang
 
 ```bash
 ./install.sh
 ```
 
-Ambil binary jadi (Linux x86-64/ARM64, Android/Termux) dan pasang ke `~/.local/bin` -- gak perlu compiler apa pun. Platform lain fallback build dari source (butuh `g++`).
+Skrip ini mengambil binary jadi (Linux x86-64/ARM64, Android/Termux) lalu memasangnya ke `~/.local/bin`, tanpa compiler. Platform lain build dari source (butuh `g++`).
 
 Windows: `install.sh` lewat Git Bash/MSYS, atau PowerShell native: `.\install.ps1`.
 
-Manual:
+Build manual:
 
 ```bash
 make
 ./nusantara run examples/hello.ns
 ```
 
+Dipakai begini:
+
 ```bash
-nusa run main.ns       # jalanin file
+nusa run main.ns        # jalankan file
 nusa                    # REPL
-nusa watch main.ns      # auto re-run tiap disimpen
+nusa watch main.ns      # jalankan ulang tiap file disimpan
 ```
 
 ## Bahasa
@@ -54,7 +71,7 @@ nusa watch main.ns      # auto re-run tiap disimpen
 | `hasil` | `return` | | `lempar` | `throw` |
 | `berhenti` / `lanjut` | `break` / `continue` | | `benar` / `salah` | `true` / `false` |
 
-Tipe: `angka` (double), `teks`, `boolean`, `kosong`, `larik` (array), `peta` (map). Anotasi tipe opsional gaya TypeScript, dicek sebelum program jalan:
+Tipe: `angka` (double), `teks`, `boolean`, `kosong`, `larik` (array), `peta` (map). Anotasi tipe bersifat opsional, gaya TypeScript, dan dicek sebelum program jalan:
 
 ```
 fungsi luas(p: angka, l: angka): angka {
@@ -62,7 +79,7 @@ fungsi luas(p: angka, l: angka): angka {
 }
 ```
 
-Ada OOP juga:
+OOP:
 
 ```
 kelas Hewan {
@@ -78,11 +95,11 @@ buat a = Anjing("Rex");
 a.bicara();   // "Rex menggonggong"
 ```
 
-Plus `bentuk` (struct data polos), `jenis` (enum), exception handling (`coba`/`tangkap`/`akhirnya`/`lempar` — boleh lempar nilai apa aja, bukan cuma teks), template string (`` `halo ${nama}` ``), dan fungsi anonim (`fungsi(x) { hasil x*2; }`).
+Ada juga `bentuk` (struct data polos), `jenis` (enum), exception (`coba`/`tangkap`/`akhirnya`/`lempar`, boleh melempar nilai apa saja), template string (`` `halo ${nama}` ``), dan fungsi anonim (`fungsi(x) { hasil x*2; }`).
 
 ## Concurrency
 
-Goroutine (`jalan`) dan channel (`kanal`), jalan di atas satu GIL yang otomatis lepas pas nunggu I/O — jadi beneran nyata buat kerjaan network/background, walau bukan paralel CPU murni:
+Goroutine (`jalan`) dan channel (`kanal`) berjalan di atas satu GIL yang otomatis lepas saat menunggu I/O. Jadi berguna buat kerjaan network dan background, walau bukan paralel CPU murni.
 
 ```
 buat c = kanal_baru();
@@ -96,29 +113,29 @@ untuk (buat i = 0; i < 5; i = i + 1) {
 cetak(total);   // 30
 ```
 
-Memori dikelola GC mark-sweep otomatis, gak ada alokasi/pembebasan manual.
+Memori dikelola GC mark-sweep otomatis, tanpa alokasi atau pembebasan manual.
 
-## Builtin yang lumayan lengkap
+## Builtin
 
-- `http_get`/`http_post` (HTTPS beneran, TLS lewat BearSSL divendor), `tcp_konek`/`tcp_kirim`/`tcp_terima`, `http_dengar` buat bikin server
-- `json_encode`/`json_decode`, `base64_encode`/`decode`
-- `sha256_hex`, `hmac_sha256_hex`, `jwt_buat`/`jwt_verifikasi`
-- `qr_baca` — baca QR code dari gambar (PNG/JPEG/BMP/dst)
-- `jalankan_perintah` — jalanin proses eksternal, argv-safe (gak lewat shell)
-- `impor()` buat modul lokal, `muat_plugin()` buat native plugin (`.so` lewat dlopen — ada plugin bawaan SQLite, HTTP+TLS, WebSocket, crypto lanjutan, forensik gambar BMP)
+- `http_get` / `http_post` (HTTPS sungguhan, TLS lewat BearSSL yang divendor), `tcp_konek` / `tcp_kirim` / `tcp_terima`, `http_dengar` untuk bikin server
+- `json_encode` / `json_decode`, `base64_encode` / `decode`
+- `sha256_hex`, `hmac_sha256_hex`, `jwt_buat` / `jwt_verifikasi`
+- `qr_baca`: baca QR code dari gambar (PNG, JPEG, BMP, dan lainnya)
+- `jalankan_perintah`: jalankan proses eksternal, argv-safe (tidak lewat shell)
+- `impor()` untuk modul lokal, `muat_plugin()` untuk plugin native (`.so` lewat dlopen). Plugin bawaan: SQLite, HTTP+TLS, WebSocket, crypto lanjutan, forensik gambar BMP
 
-Daftar lengkap + signature-nya ada di `src/interpreter.cpp` (cari `callBuiltin`).
+Daftar lengkap dan signature-nya ada di `src/interpreter.cpp` (cari `callBuiltin`).
 
 ## Package manager
 
-Pure git, gak ada registry terpisah — paket ya cuma repo git biasa:
+Murni git, tanpa registry terpisah. Paket cuma repo git biasa:
 
 ```bash
 nusa get github.com/user/repo
-nusa get github.com/user/repo#dev   # branch/tag spesifik
+nusa get github.com/user/repo#dev   # branch atau tag tertentu
 ```
 
-`impor("nama")` nyari `nusantara_modules/nama/index.ns` relatif ke folder kerja, sama kayak `node_modules`.
+`impor("nama")` mencari `nusantara_modules/nama/index.ns` relatif ke folder kerja, mirip `node_modules`.
 
 ## Struktur
 
@@ -126,12 +143,18 @@ nusa get github.com/user/repo#dev   # branch/tag spesifik
 include/    header (.hpp)
 src/        implementasi (.cpp) + main.cpp (CLI)
 examples/   contoh program
-plugins/    plugin native (muat_plugin, .so via dlopen)
+plugins/    plugin native (muat_plugin, .so lewat dlopen)
 tests/      regression/golden test suite
 ```
 
-Eksekusi lewat bytecode VM dulu (`src/vm.cpp`, dengan JIT buat fungsi/loop aritmatika murni di `src/jit.cpp`), fallback ke tree-walking langsung di AST (`src/interpreter.cpp`) buat konstruksi yang belum didukung VM (kelas, struct, enum, try/catch, fungsi anonim).
+Eksekusi lewat bytecode VM dulu (`src/vm.cpp`, dengan JIT untuk fungsi dan loop aritmatika murni di `src/jit.cpp`). Konstruksi yang belum didukung VM (kelas, struct, enum, try/catch, fungsi anonim) jatuh ke tree-walking langsung di AST (`src/interpreter.cpp`).
 
 ## Lisensi
 
-Lihat [NOTICE](NOTICE).
+Apache-2.0, lihat [LICENSE](LICENSE). Kode pihak ketiga di `third_party/` memakai lisensinya masing-masing, daftarnya ada di [NOTICE](NOTICE).
+
+<div align="center">
+
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:dc2626,100:1f2937&height=90&section=footer" width="100%" alt="" />
+
+</div>
