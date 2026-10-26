@@ -1,15 +1,13 @@
-Copyright (c) 2026 NusaLang. All rights reserved.
+Nusantara (NSL)
+Copyright 2026 NusaLang
 
-This is the original source of the Nusantara programming language
-(NSL). No license is granted -- copying, modifying, or redistributing
-this code, in whole or in part, requires explicit written permission
-from the copyright holder.
+Proyek ini dilisensikan di bawah Apache License, Version 2.0.
+Teks lengkapnya ada di berkas LICENSE.
 
----
+Kode pihak ketiga di third_party/ tetap memakai lisensinya sendiri
+(teks lisensi ada di folder vendor masing-masing):
 
-Hak cipta (c) 2026 NusaLang. Semua hak dilindungi.
-
-Ini source asli bahasa pemrograman Nusantara (NSL). Gak ada lisensi
-yang diberikan -- nyalin, modifikasi, atau distribusi ulang kode ini,
-sebagian atau seluruhnya, butuh izin tertulis eksplisit dari pemegang
-hak cipta.
+  BearSSL   Copyright (c) 2016 Thomas Pornin                          MIT
+  QuickJS   Copyright (c) 2017-2021 Fabrice Bellard, Charlie Gordon   MIT
+  quirc     Copyright (C) 2010-2012 Daniel Beer                       ISC
+  stb       Copyright (c) 2017 Sean Barrett                           MIT / domain publik
