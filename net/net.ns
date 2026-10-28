@@ -1,30 +1,41 @@
-class Alamat:
-    func __init__(self, host = "127.0.0.1", port = 80):
+tcpConnect = tcp_konek
+tcpSend = tcp_kirim
+tcpReceive = tcp_terima
+tcpClose = tcp_tutup
+
+class Address:
+    func constructor(self, host = "127.0.0.1", port = 80):
         self.host = host
         self.port = port
 
-    func ke_teks(self):
+    func toString(self):
         return self.host + ":" + str(self.port)
 
-class BufferJaringan:
-    func __init__(self):
+    func keTeks(self):
+        return self.toString()
+
+class NetworkBuffer:
+    func constructor(self):
         self.data = ""
 
-    func tulis(self, chunk):
+    func write(self, chunk):
         self.data += chunk
 
-    func panjang_data(self):
+    func length(self):
         return len(self.data)
 
-    func cari(self, sep):
+    func dataLength(self):
+        return len(self.data)
+
+    func find(self, sep):
         return self.data.find(sep)
 
-    func intip(self, n = 0):
+    func peek(self, n = 0):
         if n <= 0 or n >= len(self.data):
             return self.data
         return self.data[:n]
 
-    func baca(self, n):
+    func read(self, n):
         if n <= 0:
             return ""
         if n >= len(self.data):
@@ -35,7 +46,7 @@ class BufferJaringan:
         self.data = self.data[n:]
         return out
 
-    func baca_sampai(self, sep):
+    func readUntil(self, sep):
         pos = self.data.find(sep)
         if pos == -1:
             return None
@@ -44,22 +55,46 @@ class BufferJaringan:
         self.data = self.data[pos + slen:]
         return out
 
-    func kosongkan(self):
+    func clear(self):
         self.data = ""
 
-class KoneksiTCP:
-    func __init__(self, fd, host = "", port = 0):
+    func tulis(self, chunk):
+        self.write(chunk)
+
+    func panjangData(self):
+        return self.length()
+
+    func cari(self, sep):
+        return self.find(sep)
+
+    func intip(self, n = 0):
+        return self.peek(n)
+
+    func baca(self, n):
+        return self.read(n)
+
+    func bacaSampai(self, sep):
+        return self.readUntil(sep)
+
+    func kosongkan(self):
+        self.clear()
+
+class TcpConnection:
+    func constructor(self, fd, host = "", port = 0):
         self.fd = fd
         self.host = host
         self.port = port
         self.open = fd >= 0
         self.buf = ""
 
-    func apakah_terbuka(self):
+    func isOpen(self):
         return self.open and (self.fd >= 0)
 
-    func kirim(self, data):
-        if not self.apakah_terbuka():
+    func apakahTerbuka(self):
+        return self.isOpen()
+
+    func send(self, data):
+        if not self.isOpen():
             return -1
         tot = len(data)
         if tot == 0:
@@ -68,47 +103,59 @@ class KoneksiTCP:
         sent = 0
         while sent < tot:
             chunk = data[sent:]
-            n = tcp_kirim(self.fd, chunk)
+            n = tcpSend(self.fd, chunk)
             if n <= 0:
-                self.tutup()
+                self.close()
                 return -1
             sent += n
         return sent
 
-    func kirim_baris(self, line = ""):
-        return self.kirim(line + "\r\n")
+    func kirim(self, data):
+        return self.send(data)
 
-    func terima(self, maxlen = 4096):
-        if not self.apakah_terbuka():
+    func sendLine(self, line = ""):
+        return self.send(line + "\r\n")
+
+    func kirimBaris(self, line = ""):
+        return self.sendLine(line)
+
+    func receive(self, maxLen = 4096):
+        if not self.isOpen():
             return ""
-        return tcp_terima(self.fd, maxlen)
+        return tcpReceive(self.fd, maxLen)
 
-    func baca_persis(self, target_len, chunk_sz = 4096):
-        while len(self.buf) < target_len:
-            if not self.apakah_terbuka():
+    func terima(self, maxLen = 4096):
+        return self.receive(maxLen)
+
+    func readExact(self, targetLen, chunkSize = 4096):
+        while len(self.buf) < targetLen:
+            if not self.isOpen():
                 break
-            chunk = tcp_terima(self.fd, chunk_sz)
+            chunk = tcpReceive(self.fd, chunkSize)
             if chunk == "":
                 break
             self.buf += chunk
 
-        if len(self.buf) >= target_len:
-            out = self.buf[:target_len]
-            self.buf = self.buf[target_len:]
+        if len(self.buf) >= targetLen:
+            out = self.buf[:targetLen]
+            self.buf = self.buf[targetLen:]
             return out
 
         out = self.buf
         self.buf = ""
         return out
 
-    func baca_sampai(self, sep, chunk_sz = 4096, max_limit = 1048576):
+    func bacaPersis(self, targetLen, chunkSize = 4096):
+        return self.readExact(targetLen, chunkSize)
+
+    func readUntil(self, sep, chunkSize = 4096, maxLimit = 1048576):
         pos = self.buf.find(sep)
         while pos == -1:
-            if len(self.buf) > max_limit:
+            if len(self.buf) > maxLimit:
                 return None
-            if not self.apakah_terbuka():
+            if not self.isOpen():
                 break
-            chunk = tcp_terima(self.fd, chunk_sz)
+            chunk = tcpReceive(self.fd, chunkSize)
             if chunk == "":
                 break
             self.buf += chunk
@@ -122,15 +169,21 @@ class KoneksiTCP:
 
         return None
 
-    func baca_baris(self, chunk_sz = 1024):
-        line = self.baca_sampai("\r\n", chunk_sz)
+    func bacaSampai(self, sep, chunkSize = 4096, maxLimit = 1048576):
+        return self.readUntil(sep, chunkSize, maxLimit)
+
+    func readLine(self, chunkSize = 1024):
+        line = self.readUntil("\r\n", chunkSize)
         if line != None:
             return line
-        return self.baca_sampai("\n", chunk_sz)
+        return self.readUntil("\n", chunkSize)
 
-    func baca_semua(self, chunk_sz = 4096):
-        while self.apakah_terbuka():
-            chunk = tcp_terima(self.fd, chunk_sz)
+    func bacaBaris(self, chunkSize = 1024):
+        return self.readLine(chunkSize)
+
+    func readAll(self, chunkSize = 4096):
+        while self.isOpen():
+            chunk = tcpReceive(self.fd, chunkSize)
             if chunk == "":
                 break
             self.buf += chunk
@@ -138,72 +191,87 @@ class KoneksiTCP:
         self.buf = ""
         return out
 
-    func tutup(self):
+    func bacaSemua(self, chunkSize = 4096):
+        return self.readAll(chunkSize)
+
+    func close(self):
         if self.open:
             self.open = False
             if self.fd >= 0:
                 try:
-                    tcp_tutup(self.fd)
+                    tcpClose(self.fd)
                 except:
                     pass
                 self.fd = -1
 
-func konek(host, port):
+    func tutup(self):
+        self.close()
+
+func connect(host, port):
     try:
-        fd = tcp_konek(host, port)
+        fd = tcpConnect(host, port)
         if fd < 0:
             return None
-        return KoneksiTCP(fd, host, port)
+        return TcpConnection(fd, host, port)
     except:
         return None
 
-func buka_koneksi(host, port):
-    fd = tcp_konek(host, port)
-    if fd < 0:
-        lempar "Gagal terhubung ke " + host + ":" + str(port)
-    return KoneksiTCP(fd, host, port)
+konek = connect
 
-func kirim_email(host, port, dari, kepada, subjek, tubuh):
-    conn = konek(host, port)
+func openConnection(host, port):
+    fd = tcpConnect(host, port)
+    if fd < 0:
+        lempar "Failed to connect to " + host + ":" + str(port)
+    return TcpConnection(fd, host, port)
+
+bukaKoneksi = openConnection
+
+func sendEmail(host, port, fromAddr, toAddr, subject, body):
+    conn = connect(host, port)
     if conn == None:
         return False
 
-    func baca_balasan():
-        return conn.terima(4096)
+    func readReply():
+        return conn.receive(4096)
 
-    func cek_ok(resp):
+    func checkOk(resp):
         if len(resp) >= 3:
             c = resp[0]
             return (c == "2" or c == "3")
         return False
 
-    func kirim_dan_cek(cmd):
-        if conn.kirim_baris(cmd) < 0:
+    func sendAndCheck(cmd):
+        if conn.sendLine(cmd) < 0:
             return False
-        r = baca_balasan()
-        return cek_ok(r)
+        r = readReply()
+        return checkOk(r)
 
-    greeting = baca_balasan()
-    if not cek_ok(greeting):
-        conn.tutup()
-        return False
-
-    if not kirim_dan_cek("EHLO nusantara"):
-        conn.tutup()
-        return False
-    if not kirim_dan_cek("MAIL FROM:<" + dari + ">"):
-        conn.tutup()
-        return False
-    if not kirim_dan_cek("RCPT TO:<" + kepada + ">"):
-        conn.tutup()
-        return False
-    if not kirim_dan_cek("DATA"):
-        conn.tutup()
+    greeting = readReply()
+    if not checkOk(greeting):
+        conn.close()
         return False
 
-    msg = "From: " + dari + "\r\nTo: " + kepada + "\r\nSubject: " + subjek + "\r\n\r\n" + tubuh + "\r\n."
-    ok = kirim_dan_cek(msg)
+    if not sendAndCheck("EHLO nusantara"):
+        conn.close()
+        return False
+    if not sendAndCheck("MAIL FROM:<" + fromAddr + ">"):
+        conn.close()
+        return False
+    if not sendAndCheck("RCPT TO:<" + toAddr + ">"):
+        conn.close()
+        return False
+    if not sendAndCheck("DATA"):
+        conn.close()
+        return False
 
-    conn.kirim_baris("QUIT")
-    conn.tutup()
+    msg = "From: " + fromAddr + "\r\nTo: " + toAddr + "\r\nSubject: " + subject + "\r\n\r\n" + body + "\r\n."
+    ok = sendAndCheck(msg)
+
+    conn.sendLine("QUIT")
+    conn.close()
     return ok
+
+kirimEmail = sendEmail
+Alamat = Address
+BufferJaringan = NetworkBuffer
+KoneksiTCP = TcpConnection

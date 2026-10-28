@@ -1,563 +1,622 @@
-buat ast_mod = impor("ast");
-buat AngkaExpr = ast_mod.AngkaExpr;
-buat TeksExpr = ast_mod.TeksExpr;
-buat BoolExpr = ast_mod.BoolExpr;
-buat KosongExpr = ast_mod.KosongExpr;
-buat PengenalExpr = ast_mod.PengenalExpr;
-buat BinerExpr = ast_mod.BinerExpr;
-buat UnerExpr = ast_mod.UnerExpr;
-buat PanggilExpr = ast_mod.PanggilExpr;
-buat IndexExpr = ast_mod.IndexExpr;
-buat IrisanExpr = ast_mod.IrisanExpr;
-buat LarikExpr = ast_mod.LarikExpr;
-buat PetaExpr = ast_mod.PetaExpr;
-buat TugasExpr = ast_mod.TugasExpr;
-buat AksesAnggotaExpr = ast_mod.AksesAnggotaExpr;
-
-buat BlokStmt = ast_mod.BlokStmt;
-buat BuatStmt = ast_mod.BuatStmt;
-buat FungsiStmt = ast_mod.FungsiStmt;
-buat JikaStmt = ast_mod.JikaStmt;
-buat SelamaStmt = ast_mod.SelamaStmt;
-buat UntukStmt = ast_mod.UntukStmt;
-buat UntukDalamStmt = ast_mod.UntukDalamStmt;
-buat HasilStmt = ast_mod.HasilStmt;
-buat BerhentiStmt = ast_mod.BerhentiStmt;
-buat LanjutStmt = ast_mod.LanjutStmt;
-buat CobaStmt = ast_mod.CobaStmt;
-buat LemparStmt = ast_mod.LemparStmt;
-buat EkspresiStmt = ast_mod.EkspresiStmt;
-buat KelasStmt = ast_mod.KelasStmt;
-
-kelas Parser {
-    fungsi konstruktor(tokens) {
-        ini.tokens = tokens;
-        ini.pos = 0;
-        ini.n = panjang(tokens);
-    }
-
-    fungsi intip(offset) {
-        buat idx = ini.pos + offset;
-        jika idx < ini.n {
-            hasil ini.tokens[idx];
-        }
-        hasil ini.tokens[-1];
-    }
-
-    fungsi maju() {
-        buat tok = ini.intip(0);
-        jika ini.pos < ini.n {
-            ini.pos = ini.pos + 1;
-        }
-        hasil tok;
-    }
-
-    fungsi periksa(tipe) {
-        hasil ini.intip(0).tipe == tipe;
-    }
-
-    fungsi cocok(tipe) {
-        jika ini.periksa(tipe) {
-            hasil ini.maju();
-        }
-        hasil kosong;
-    }
-
-    fungsi harap(tipe, pesan) {
-        buat tok = ini.intip(0);
-        jika tok.tipe == tipe {
-            hasil ini.maju();
-        }
-        cetak("Error parser baris " + ke_teks(tok.baris) + ", kolom " + ke_teks(tok.kolom) + ": " + pesan + " (dapat '" + tok.teks + "')");
-        hasil kosong;
-    }
-
-    fungsi lewati_titik_koma() {
-        selama ini.periksa(";") {
-            ini.maju();
-        }
-    }
-
-    fungsi parse() {
-        buat program = [];
-        selama !ini.periksa("EOF") {
-            ini.lewati_titik_koma();
-            jika ini.periksa("EOF") {
-                berhenti;
-            }
-            buat stmt = ini.pernyataan();
-            jika stmt != kosong {
-                program.append(stmt);
-            }
-            ini.lewati_titik_koma();
-        }
-        hasil program;
-    }
-
-    fungsi pernyataan() {
-        buat tok = ini.intip(0);
-
-        jika tok.tipe == "FUNGSI" {
-            hasil ini.pernyataan_fungsi();
-        } lain jika tok.tipe == "BUAT" {
-            hasil ini.pernyataan_buat();
-        } lain jika tok.tipe == "KELAS" {
-            hasil ini.pernyataan_kelas();
-        } lain jika tok.tipe == "PASS" {
-            ini.maju();
-            ini.cocok(";");
-            hasil BlokStmt([]);
-        } lain jika tok.tipe == "JIKA" {
-            hasil ini.pernyataan_jika();
-        } lain jika tok.tipe == "SELAMA" {
-            hasil ini.pernyataan_selama();
-        } lain jika tok.tipe == "UNTUK" {
-            hasil ini.pernyataan_untuk();
-        } lain jika tok.tipe == "HASIL" {
-            hasil ini.pernyataan_hasil();
-        } lain jika tok.tipe == "BERHENTI" {
-            ini.maju();
-            ini.cocok(";");
-            hasil BerhentiStmt();
-        } lain jika tok.tipe == "LANJUT" {
-            ini.maju();
-            ini.cocok(";");
-            hasil LanjutStmt();
-        } lain jika tok.tipe == "COBA" {
-            hasil ini.pernyataan_coba();
-        } lain jika tok.tipe == "LEMPAR" {
-            hasil ini.pernyataan_lempar();
-        } lain jika tok.tipe == "{" {
-            hasil ini.blok();
-        } lain {
-            hasil ini.pernyataan_ekspresi();
-        }
-    }
-
-    fungsi blok() {
-        ini.cocok(":");
-        ini.harap("{", "Diharapkan '{'");
-        buat stmts = [];
-
-        selama !ini.periksa("}") dan !ini.periksa("EOF") {
-            ini.lewati_titik_koma();
-            jika ini.periksa("}") {
-                berhenti;
-            }
-            buat s = ini.pernyataan();
-            jika s != kosong {
-                stmts.append(s);
-            }
-            ini.lewati_titik_koma();
-        }
-
-        ini.harap("}", "Diharapkan '}'");
-        hasil BlokStmt(stmts);
-    }
-
-    fungsi pernyataan_fungsi() {
-        ini.maju();
-        buat nama_tok = ini.harap("IDENT", "Diharapkan nama fungsi");
-        ini.harap("(", "Diharapkan '(' setelah nama fungsi");
-
-        buat params = [];
-        jika !ini.periksa(")") {
-            selama benar {
-                buat p = ini.harap("IDENT", "Diharapkan nama parameter");
-                params.append(p.teks);
-                jika ini.cocok("=") != kosong {
-                    ini.ekspresi();
-                }
-                jika ini.cocok(",") == kosong {
-                    berhenti;
-                }
-            }
-        }
-
-        ini.harap(")", "Diharapkan ')' setelah daftar parameter");
-        ini.cocok(":");
-        buat badan = ini.blok();
-        hasil FungsiStmt(nama_tok.teks, params, badan);
-    }
-
-    fungsi pernyataan_kelas() {
-        ini.maju();
-        buat nama_tok = ini.harap("IDENT", "Diharapkan nama kelas");
-        buat induk_nama = kosong;
-        jika ini.cocok("(") != kosong {
-            buat id_tok = ini.harap("IDENT", "Diharapkan nama kelas induk");
-            induk_nama = id_tok.teks;
-            ini.harap(")", "Diharapkan ')'");
-        } lain jika ini.cocok("turunan") != kosong atau ini.cocok("extends") != kosong {
-            buat id_tok = ini.harap("IDENT", "Diharapkan nama kelas induk");
-            induk_nama = id_tok.teks;
-        }
-
-        ini.cocok(":");
-        ini.harap("{", "Diharapkan '{'");
-        buat metode = [];
-        selama !ini.periksa("}") dan !ini.periksa("EOF") {
-            ini.lewati_titik_koma();
-            jika ini.periksa("}") {
-                berhenti;
-            }
-            jika ini.periksa("FUNGSI") {
-                metode.append(ini.pernyataan_fungsi());
-            } lain jika ini.periksa("PASS") {
-                ini.maju();
-                ini.cocok(";");
-            } lain {
-                ini.maju();
-            }
-            ini.lewati_titik_koma();
-        }
-        ini.harap("}", "Diharapkan '}'");
-        hasil KelasStmt(nama_tok.teks, induk_nama, metode);
-    }
-
-    fungsi pernyataan_buat() {
-        ini.maju();
-        buat nama_tok = ini.harap("IDENT", "Diharapkan nama variabel");
-
-        buat nilai = KosongExpr();
-        jika ini.cocok("=") != kosong {
-            nilai = ini.ekspresi();
-        }
-        ini.cocok(";");
-        hasil BuatStmt(nama_tok.teks, nilai);
-    }
-
-    fungsi pernyataan_jika() {
-        ini.maju();
-        buat kondisi = ini.ekspresi();
-        ini.cocok(":");
-        buat maka_blok = ini.blok();
-
-        ini.lewati_titik_koma();
-        buat lain_blok = kosong;
-        jika ini.cocok("LAIN") != kosong {
-            ini.lewati_titik_koma();
-            ini.cocok(":");
-            ini.lewati_titik_koma();
-            jika ini.periksa("JIKA") {
-                lain_blok = ini.pernyataan_jika();
-            } lain {
-                lain_blok = ini.blok();
-            }
-        }
-        hasil JikaStmt(kondisi, maka_blok, lain_blok);
-    }
-
-    fungsi pernyataan_selama() {
-        ini.maju();
-        buat kondisi = ini.ekspresi();
-        ini.cocok(":");
-        buat badan = ini.blok();
-        hasil SelamaStmt(kondisi, badan);
-    }
-
-    fungsi pernyataan_untuk() {
-        ini.maju();
-
-        jika ini.periksa("(") {
-            ini.maju();
-            buat init = kosong;
-            jika !ini.periksa(";") {
-                init = ini.pernyataan();
-            } lain {
-                ini.maju();
-            }
-
-            buat cond = BoolExpr(benar);
-            jika !ini.periksa(";") {
-                cond = ini.ekspresi();
-            }
-            ini.harap(";", "Diharapkan ';' di dalam untuk");
-
-            buat pasca = kosong;
-            jika !ini.periksa(")") {
-                pasca = ini.ekspresi();
-            }
-            ini.harap(")", "Diharapkan ')'");
-            ini.cocok(":");
-            buat badan = ini.blok();
-            hasil UntukStmt(init, cond, pasca, badan);
-        }
-
-        buat var_tok = ini.harap("IDENT", "Diharapkan nama variabel untuk");
-        ini.harap("DALAM", "Diharapkan 'dalam' atau 'in'");
-        buat iter = ini.ekspresi();
-        ini.cocok(":");
-        buat badan = ini.blok();
-        hasil UntukDalamStmt(var_tok.teks, iter, badan);
-    }
-
-    fungsi pernyataan_hasil() {
-        ini.maju();
-        buat nilai = KosongExpr();
-        jika !ini.periksa(";") dan !ini.periksa("}") dan !ini.periksa("EOF") {
-            nilai = ini.ekspresi();
-        }
-        ini.cocok(";");
-        hasil HasilStmt(nilai);
-    }
-
-    fungsi pernyataan_coba() {
-        ini.maju();
-        ini.cocok(":");
-        buat coba_blok = ini.blok();
-
-        ini.lewati_titik_koma();
-        buat tangkap_var = "err";
-        buat tangkap_blok = kosong;
-        jika ini.cocok("TANGKAP") != kosong {
-            ini.lewati_titik_koma();
-            jika ini.cocok("(") != kosong {
-                buat v = ini.harap("IDENT", "Diharapkan nama variabel exception");
-                tangkap_var = v.teks;
-                ini.harap(")", "Diharapkan ')'");
-            } lain jika ini.periksa("IDENT") {
-                buat v = ini.maju();
-                tangkap_var = v.teks;
-            }
-            ini.lewati_titik_koma();
-            ini.cocok(":");
-            tangkap_blok = ini.blok();
-        }
-
-        ini.lewati_titik_koma();
-        buat akhirnya_blok = kosong;
-        jika ini.cocok("AKHIRNYA") != kosong {
-            ini.lewati_titik_koma();
-            ini.cocok(":");
-            akhirnya_blok = ini.blok();
-        }
-
-        hasil CobaStmt(coba_blok, tangkap_var, tangkap_blok, akhirnya_blok);
-    }
-
-    fungsi pernyataan_lempar() {
-        ini.maju();
-        buat val = ini.ekspresi();
-        ini.cocok(";");
-        hasil LemparStmt(val);
-    }
-
-    fungsi pernyataan_ekspresi() {
-        buat expr = ini.ekspresi();
-        ini.cocok(";");
-        hasil EkspresiStmt(expr);
-    }
-
-    fungsi ekspresi() {
-        hasil ini.penugasan();
-    }
-
-    fungsi penugasan() {
-        buat target = ini.logika_atau();
-
-        jika ini.periksa("=") atau ini.periksa("+=") atau ini.periksa("-=") atau ini.periksa("*=") atau ini.periksa("/=") {
-            buat op_tok = ini.maju();
-            buat nilai = ini.penugasan();
-            hasil TugasExpr(target, op_tok.teks, nilai);
-        }
-
-        hasil target;
-    }
-
-    fungsi logika_atau() {
-        buat kiri = ini.logika_dan();
-
-        selama ini.periksa("atau") {
-            buat op_tok = ini.maju();
-            buat kanan = ini.logika_dan();
-            kiri = BinerExpr(op_tok.teks, kiri, kanan);
-        }
-
-        hasil kiri;
-    }
-
-    fungsi logika_dan() {
-        buat kiri = ini.kesetaraan();
-
-        selama ini.periksa("dan") {
-            buat op_tok = ini.maju();
-            buat kanan = ini.kesetaraan();
-            kiri = BinerExpr(op_tok.teks, kiri, kanan);
-        }
-
-        hasil kiri;
-    }
-
-    fungsi kesetaraan() {
-        buat kiri = ini.perbandingan();
-
-        selama ini.periksa("==") atau ini.periksa("!=") {
-            buat op_tok = ini.maju();
-            buat kanan = ini.perbandingan();
-            kiri = BinerExpr(op_tok.teks, kiri, kanan);
-        }
-
-        hasil kiri;
-    }
-
-    fungsi perbandingan() {
-        buat kiri = ini.penjumlahan();
-
-        selama ini.periksa("<") atau ini.periksa("<=") atau ini.periksa(">") atau ini.periksa(">=") {
-            buat op_tok = ini.maju();
-            buat kanan = ini.penjumlahan();
-            kiri = BinerExpr(op_tok.teks, kiri, kanan);
-        }
-
-        hasil kiri;
-    }
-
-    fungsi penjumlahan() {
-        buat kiri = ini.perkalian();
-
-        selama ini.periksa("+") atau ini.periksa("-") {
-            buat op_tok = ini.maju();
-            buat kanan = ini.perkalian();
-            kiri = BinerExpr(op_tok.teks, kiri, kanan);
-        }
-
-        hasil kiri;
-    }
-
-    fungsi perkalian() {
-        buat kiri = ini.uner();
-
-        selama ini.periksa("*") atau ini.periksa("/") atau ini.periksa("%") {
-            buat op_tok = ini.maju();
-            buat kanan = ini.uner();
-            kiri = BinerExpr(op_tok.teks, kiri, kanan);
-        }
-
-        hasil kiri;
-    }
-
-    fungsi uner() {
-        jika ini.periksa("!") atau ini.periksa("bukan") atau ini.periksa("-") atau ini.periksa("+") {
-            buat op_tok = ini.maju();
-            buat operand = ini.uner();
-            hasil UnerExpr(op_tok.teks, operand);
-        }
-
-        hasil ini.postfix();
-    }
-
-    fungsi postfix() {
-        buat expr = ini.primer();
-
-        selama benar {
-            jika ini.cocok("(") != kosong {
-                buat args = [];
-                jika !ini.periksa(")") {
-                    selama benar {
-                        args.append(ini.ekspresi());
-                        jika ini.cocok(",") == kosong {
-                            berhenti;
-                        }
-                    }
-                }
-                ini.harap(")", "Diharapkan ')'");
-                expr = PanggilExpr(expr, args);
-            } lain jika ini.cocok("[") != kosong {
-                buat awal = kosong;
-                buat sampai = kosong;
-                buat is_irisan = salah;
-
-                jika !ini.periksa(":") {
-                    awal = ini.ekspresi();
-                }
-
-                jika ini.cocok(":") != kosong {
-                    is_irisan = benar;
-                    jika !ini.periksa("]") {
-                        sampai = ini.ekspresi();
-                    }
-                }
-
-                ini.harap("]", "Diharapkan ']'");
-
-                jika is_irisan {
-                    expr = IrisanExpr(expr, awal, sampai);
-                } lain {
-                    expr = IndexExpr(expr, awal);
-                }
-            } lain jika ini.cocok(".") != kosong {
-                buat nama_tok = ini.harap("IDENT", "Diharapkan nama anggota setelah '.'");
-                expr = AksesAnggotaExpr(expr, nama_tok.teks);
-            } lain {
-                berhenti;
-            }
-        }
-
-        hasil expr;
-    }
-
-    fungsi primer() {
-        buat tok = ini.intip(0);
-
-        jika tok.tipe == "ANGKA" {
-            ini.maju();
-            hasil AngkaExpr(tok.angka);
-        } lain jika tok.tipe == "STRING" {
-            ini.maju();
-            hasil TeksExpr(tok.teks);
-        } lain jika tok.tipe == "BENAR" {
-            ini.maju();
-            hasil BoolExpr(benar);
-        } lain jika tok.tipe == "SALAH" {
-            ini.maju();
-            hasil BoolExpr(salah);
-        } lain jika tok.tipe == "KOSONG" {
-            ini.maju();
-            hasil KosongExpr();
-        } lain jika tok.tipe == "IDENT" {
-            ini.maju();
-            hasil PengenalExpr(tok.teks);
-        } lain jika tok.tipe == "(" {
-            ini.maju();
-            buat e = ini.ekspresi();
-            ini.harap(")", "Diharapkan ')'");
-            hasil e;
-        } lain jika tok.tipe == "[" {
-            ini.maju();
-            buat elemen = [];
-            jika !ini.periksa("]") {
-                selama benar {
-                    elemen.append(ini.ekspresi());
-                    jika ini.cocok(",") == kosong {
-                        berhenti;
-                    }
-                }
-            }
-            ini.harap("]", "Diharapkan ']'");
-            hasil LarikExpr(elemen);
-        } lain jika tok.tipe == "{" {
-            ini.maju();
-            buat kunci = [];
-            buat nilai = [];
-            jika !ini.periksa("}") {
-                selama benar {
-                    buat k = ini.harap("STRING", "Kunci peta harus string");
-                    ini.harap(":", "Diharapkan ':' setelah kunci peta");
-                    buat v = ini.ekspresi();
-                    kunci.append(k.teks);
-                    nilai.append(v);
-                    jika ini.cocok(",") == kosong {
-                        berhenti;
-                    }
-                }
-            }
-            ini.harap("}", "Diharapkan '}'");
-            hasil PetaExpr(kunci, nilai);
-        }
-
-        cetak("Error parser baris " + ke_teks(tok.baris) + ": Token tidak terduga '" + tok.teks + "'");
-        ini.maju();
-        hasil KosongExpr();
-    }
-}
+func loadModule(name):
+    try:
+        return impor(name)
+    except e:
+        return impor("core/" + name)
+
+tokenModule = loadModule("token")
+astModule = loadModule("ast")
+
+TokenType = tokenModule.TokenType
+Token = tokenModule.Token
+
+NumberExpr = astModule.NumberExpr
+StringExpr = astModule.StringExpr
+BoolExpr = astModule.BoolExpr
+NullExpr = astModule.NullExpr
+IdentExpr = astModule.IdentExpr
+BinaryExpr = astModule.BinaryExpr
+UnaryExpr = astModule.UnaryExpr
+CallExpr = astModule.CallExpr
+IndexExpr = astModule.IndexExpr
+SliceExpr = astModule.SliceExpr
+ListExpr = astModule.ListExpr
+MapExpr = astModule.MapExpr
+AssignExpr = astModule.AssignExpr
+MemberExpr = astModule.MemberExpr
+TernaryExpr = astModule.TernaryExpr
+LambdaExpr = astModule.LambdaExpr
+
+BlockStmt = astModule.BlockStmt
+VarStmt = astModule.VarStmt
+FuncStmt = astModule.FuncStmt
+IfStmt = astModule.IfStmt
+WhileStmt = astModule.WhileStmt
+ForStmt = astModule.ForStmt
+ForInStmt = astModule.ForInStmt
+ReturnStmt = astModule.ReturnStmt
+BreakStmt = astModule.BreakStmt
+ContinueStmt = astModule.ContinueStmt
+TryStmt = astModule.TryStmt
+ThrowStmt = astModule.ThrowStmt
+ExprStmt = astModule.ExprStmt
+ClassStmt = astModule.ClassStmt
+
+class Parser:
+    func __init__(self, tokens):
+        self.tokens = tokens
+        self.pos = 0
+        self.length = len(tokens)
+
+    func peek(self, offset = 0):
+        idx = self.pos + offset
+        if idx < self.length:
+            return self.tokens[idx]
+        return self.tokens[-1]
+
+    func advance(self):
+        tok = self.peek(0)
+        if self.pos < self.length:
+            self.pos += 1
+        return tok
+
+    func check(self, expectedType):
+        tok = self.peek(0)
+        curType = tok.type
+        if curType == expectedType:
+            return True
+        if expectedType == TokenType.NUMBER and curType == "ANGKA":
+            return True
+        if expectedType == TokenType.VAR and curType == "BUAT":
+            return True
+        if expectedType == TokenType.FUNC and curType == "FUNGSI":
+            return True
+        if expectedType == TokenType.IF and curType == "JIKA":
+            return True
+        if expectedType == TokenType.ELSE and curType == "LAIN":
+            return True
+        if expectedType == TokenType.WHILE and curType == "SELAMA":
+            return True
+        if expectedType == TokenType.FOR and curType == "UNTUK":
+            return True
+        if expectedType == TokenType.IN and curType == "DALAM":
+            return True
+        if expectedType == TokenType.RETURN and curType == "HASIL":
+            return True
+        if expectedType == TokenType.BREAK and curType == "BERHENTI":
+            return True
+        if expectedType == TokenType.CONTINUE and curType == "LANJUT":
+            return True
+        if expectedType == TokenType.TRUE and curType == "BENAR":
+            return True
+        if expectedType == TokenType.FALSE and curType == "SALAH":
+            return True
+        if expectedType == TokenType.NULL and curType == "KOSONG":
+            return True
+        if expectedType == TokenType.CLASS and curType == "KELAS":
+            return True
+        if expectedType == TokenType.THIS and curType == "INI":
+            return True
+        if expectedType == TokenType.SUPER and curType == "INDUK":
+            return True
+        if expectedType == TokenType.TRY and curType == "COBA":
+            return True
+        if expectedType == TokenType.CATCH and curType == "TANGKAP":
+            return True
+        if expectedType == TokenType.FINALLY and curType == "AKHIRNYA":
+            return True
+        if expectedType == TokenType.THROW and curType == "LEMPAR":
+            return True
+        if expectedType == TokenType.AND and curType == "dan":
+            return True
+        if expectedType == TokenType.OR and curType == "atau":
+            return True
+        if expectedType == TokenType.NOT and curType == "bukan":
+            return True
+        return False
+
+    func match(self, expectedType):
+        if self.check(expectedType):
+            return self.advance()
+        return None
+
+    func expect(self, expectedType, message):
+        tok = self.peek(0)
+        if self.check(expectedType):
+            return self.advance()
+        print("Parser error line " + str(tok.line) + ", col " + str(tok.col) + ": " + message + " (got '" + tok.text + "')")
+        return None
+
+    func skipSemicolons(self):
+        while self.check(TokenType.SEMICOLON):
+            self.advance()
+
+    func parse(self):
+        program = []
+        while not self.check(TokenType.EOF):
+            self.skipSemicolons()
+            if self.check(TokenType.EOF):
+                break
+            stmt = self.parseStatement()
+            if stmt != None:
+                program.append(stmt)
+            self.skipSemicolons()
+        return program
+
+    func parseStatement(self):
+        if self.check(TokenType.FUNC):
+            return self.parseFunction()
+        elif self.check(TokenType.VAR):
+            return self.parseVar()
+        elif self.check(TokenType.CLASS):
+            return self.parseClass()
+        elif self.check(TokenType.PASS):
+            self.advance()
+            self.match(TokenType.SEMICOLON)
+            return BlockStmt([])
+        elif self.check(TokenType.IF):
+            return self.parseIf()
+        elif self.check(TokenType.WHILE):
+            return self.parseWhile()
+        elif self.check(TokenType.FOR):
+            return self.parseFor()
+        elif self.check(TokenType.RETURN):
+            return self.parseReturn()
+        elif self.check(TokenType.BREAK):
+            self.advance()
+            self.match(TokenType.SEMICOLON)
+            return BreakStmt()
+        elif self.check(TokenType.CONTINUE):
+            self.advance()
+            self.match(TokenType.SEMICOLON)
+            return ContinueStmt()
+        elif self.check(TokenType.TRY):
+            return self.parseTry()
+        elif self.check(TokenType.THROW):
+            return self.parseThrow()
+        elif self.check(TokenType.LBRACE):
+            return self.parseBlock()
+        else:
+            return self.parseExprStatement()
+
+    func parseBlock(self):
+        self.match(TokenType.COLON)
+        self.expect(TokenType.LBRACE, "Expected '{'")
+        stmts = []
+
+        while not self.check(TokenType.RBRACE) and not self.check(TokenType.EOF):
+            self.skipSemicolons()
+            if self.check(TokenType.RBRACE):
+                break
+            stmt = self.parseStatement()
+            if stmt != None:
+                stmts.append(stmt)
+            self.skipSemicolons()
+
+        self.expect(TokenType.RBRACE, "Expected '}'")
+        return BlockStmt(stmts)
+
+    func parseFunction(self):
+        self.advance()
+        nameTok = self.expect(TokenType.IDENT, "Expected function name")
+        self.expect(TokenType.LPAREN, "Expected '(' after function name")
+
+        params = []
+        defaults = {}
+        if not self.check(TokenType.RPAREN):
+            while True:
+                paramTok = None
+                if self.check(TokenType.IDENT) or self.check(TokenType.THIS):
+                    paramTok = self.advance()
+                else:
+                    paramTok = self.expect(TokenType.IDENT, "Expected parameter name")
+                paramName = paramTok.text if paramTok != None else ""
+                params.append(paramName)
+                if self.match(TokenType.ASSIGN) != None:
+                    defaults[paramName] = self.parseExpr()
+                if self.match(TokenType.COMMA) == None:
+                    break
+
+        self.expect(TokenType.RPAREN, "Expected ')' after parameter list")
+        self.match(TokenType.COLON)
+        body = self.parseBlock()
+        fnName = nameTok.text if nameTok != None else ""
+        return FuncStmt(fnName, params, body, defaults)
+
+    func parseClass(self):
+        self.advance()
+        nameTok = self.expect(TokenType.IDENT, "Expected class name")
+        baseName = None
+        if self.match(TokenType.LPAREN) != None:
+            idTok = self.expect(TokenType.IDENT, "Expected base class name")
+            baseName = idTok.text if idTok != None else None
+            self.expect(TokenType.RPAREN, "Expected ')'")
+        elif self.check(TokenType.IDENT) and (self.peek(0).text == "turunan" or self.peek(0).text == "extends"):
+            self.advance()
+            idTok = self.expect(TokenType.IDENT, "Expected base class name")
+            baseName = idTok.text if idTok != None else None
+
+        self.match(TokenType.COLON)
+        self.expect(TokenType.LBRACE, "Expected '{'")
+        methods = []
+        while not self.check(TokenType.RBRACE) and not self.check(TokenType.EOF):
+            self.skipSemicolons()
+            if self.check(TokenType.RBRACE):
+                break
+            if self.check(TokenType.FUNC):
+                methods.append(self.parseFunction())
+            elif self.check(TokenType.PASS):
+                self.advance()
+                self.match(TokenType.SEMICOLON)
+            else:
+                self.advance()
+            self.skipSemicolons()
+        self.expect(TokenType.RBRACE, "Expected '}'")
+        className = nameTok.text if nameTok != None else ""
+        return ClassStmt(className, baseName, methods)
+
+    func parseVar(self):
+        self.advance()
+        nameTok = self.expect(TokenType.IDENT, "Expected variable name")
+        val = NullExpr()
+        if self.match(TokenType.ASSIGN) != None:
+            val = self.parseExpr()
+        self.match(TokenType.SEMICOLON)
+        varName = nameTok.text if nameTok != None else ""
+        return VarStmt(varName, val)
+
+    func parseIf(self):
+        self.advance()
+        condition = self.parseExpr()
+        self.match(TokenType.COLON)
+        thenBranch = self.parseBlock()
+
+        self.skipSemicolons()
+        elseBranch = None
+        if self.match(TokenType.ELSE) != None:
+            self.skipSemicolons()
+            self.match(TokenType.COLON)
+            self.skipSemicolons()
+            if self.check(TokenType.IF):
+                elseBranch = self.parseIf()
+            else:
+                elseBranch = self.parseBlock()
+        return IfStmt(condition, thenBranch, elseBranch)
+
+    func parseWhile(self):
+        self.advance()
+        condition = self.parseExpr()
+        self.match(TokenType.COLON)
+        body = self.parseBlock()
+        return WhileStmt(condition, body)
+
+    func parseFor(self):
+        self.advance()
+
+        if self.check(TokenType.LPAREN):
+            self.advance()
+            init = None
+            if not self.check(TokenType.SEMICOLON):
+                init = self.parseStatement()
+            else:
+                self.advance()
+
+            cond = BoolExpr(True)
+            if not self.check(TokenType.SEMICOLON):
+                cond = self.parseExpr()
+            self.expect(TokenType.SEMICOLON, "Expected ';' in for condition")
+
+            post = None
+            if not self.check(TokenType.RPAREN):
+                post = self.parseExpr()
+            self.expect(TokenType.RPAREN, "Expected ')'")
+            self.match(TokenType.COLON)
+            body = self.parseBlock()
+            return ForStmt(init, cond, post, body)
+
+        varTok = self.expect(TokenType.IDENT, "Expected for loop variable name")
+        self.expect(TokenType.IN, "Expected 'in' in for loop")
+        iterable = self.parseExpr()
+        self.match(TokenType.COLON)
+        body = self.parseBlock()
+        varName = varTok.text if varTok != None else ""
+        return ForInStmt(varName, iterable, body)
+
+    func parseReturn(self):
+        self.advance()
+        value = NullExpr()
+        if not self.check(TokenType.SEMICOLON) and not self.check(TokenType.RBRACE) and not self.check(TokenType.EOF):
+            value = self.parseExpr()
+        self.match(TokenType.SEMICOLON)
+        return ReturnStmt(value)
+
+    func parseTry(self):
+        self.advance()
+        self.match(TokenType.COLON)
+        tryBlock = self.parseBlock()
+
+        self.skipSemicolons()
+        catchVar = "err"
+        catchBlock = None
+        if self.match(TokenType.CATCH) != None:
+            self.skipSemicolons()
+            if self.match(TokenType.LPAREN) != None:
+                v = self.expect(TokenType.IDENT, "Expected exception variable name")
+                if v != None:
+                    catchVar = v.text
+                self.expect(TokenType.RPAREN, "Expected ')'")
+            elif self.check(TokenType.IDENT):
+                v = self.advance()
+                catchVar = v.text
+            self.skipSemicolons()
+            self.match(TokenType.COLON)
+            catchBlock = self.parseBlock()
+
+        self.skipSemicolons()
+        finallyBlock = None
+        if self.match(TokenType.FINALLY) != None:
+            self.skipSemicolons()
+            self.match(TokenType.COLON)
+            finallyBlock = self.parseBlock()
+
+        return TryStmt(tryBlock, catchVar, catchBlock, finallyBlock)
+
+    func parseThrow(self):
+        self.advance()
+        val = self.parseExpr()
+        self.match(TokenType.SEMICOLON)
+        return ThrowStmt(val)
+
+    func parseExprStatement(self):
+        expr = self.parseExpr()
+        self.match(TokenType.SEMICOLON)
+        return ExprStmt(expr)
+
+    func parseExpr(self):
+        return self.parseAssign()
+
+    func parseAssign(self):
+        target = self.parseTernary()
+
+        if self.check(TokenType.ASSIGN) or self.check("+=") or self.check("-=") or self.check("*=") or self.check("/="):
+            opTok = self.advance()
+            val = self.parseAssign()
+            return AssignExpr(target, opTok.text, val)
+
+        return target
+
+    func parseTernary(self):
+        thenVal = self.parseOr()
+        if self.check(TokenType.IF):
+            self.advance()
+            cond = self.parseOr()
+            self.expect(TokenType.ELSE, "Expected 'else' in conditional expression")
+            elseVal = self.parseTernary()
+            return TernaryExpr(cond, thenVal, elseVal)
+        return thenVal
+
+    func parseOr(self):
+        left = self.parseAnd()
+
+        while self.check(TokenType.OR):
+            opTok = self.advance()
+            right = self.parseAnd()
+            left = BinaryExpr(opTok.text, left, right)
+
+        return left
+
+    func parseAnd(self):
+        left = self.parseEquality()
+
+        while self.check(TokenType.AND):
+            opTok = self.advance()
+            right = self.parseEquality()
+            left = BinaryExpr(opTok.text, left, right)
+
+        return left
+
+    func parseEquality(self):
+        left = self.parseComparison()
+
+        while self.check(TokenType.EQ) or self.check(TokenType.NEQ):
+            opTok = self.advance()
+            right = self.parseComparison()
+            left = BinaryExpr(opTok.text, left, right)
+
+        return left
+
+    func parseComparison(self):
+        left = self.parseBitOr()
+
+        while self.check(TokenType.LT) or self.check(TokenType.LTE) or self.check(TokenType.GT) or self.check(TokenType.GTE) or self.check(TokenType.IN):
+            opTok = self.advance()
+            right = self.parseBitOr()
+            left = BinaryExpr(opTok.text, left, right)
+
+        return left
+
+    func parseBitOr(self):
+        left = self.parseBitXor()
+
+        while self.check(TokenType.PIPE):
+            opTok = self.advance()
+            right = self.parseBitXor()
+            left = BinaryExpr(opTok.text, left, right)
+
+        return left
+
+    func parseBitXor(self):
+        left = self.parseBitAnd()
+
+        while self.check(TokenType.CARET):
+            opTok = self.advance()
+            right = self.parseBitAnd()
+            left = BinaryExpr(opTok.text, left, right)
+
+        return left
+
+    func parseBitAnd(self):
+        left = self.parseShift()
+
+        while self.check(TokenType.AMP):
+            opTok = self.advance()
+            right = self.parseShift()
+            left = BinaryExpr(opTok.text, left, right)
+
+        return left
+
+    func parseShift(self):
+        left = self.parseTerm()
+
+        while self.check(TokenType.SHL) or self.check(TokenType.SHR):
+            opTok = self.advance()
+            right = self.parseTerm()
+            left = BinaryExpr(opTok.text, left, right)
+
+        return left
+
+    func parseTerm(self):
+        left = self.parseFactor()
+
+        while self.check(TokenType.PLUS) or self.check(TokenType.MINUS):
+            opTok = self.advance()
+            right = self.parseFactor()
+            left = BinaryExpr(opTok.text, left, right)
+
+        return left
+
+    func parseFactor(self):
+        left = self.parseUnary()
+
+        while self.check(TokenType.STAR) or self.check(TokenType.SLASH) or self.check(TokenType.PERCENT):
+            opTok = self.advance()
+            right = self.parseUnary()
+            left = BinaryExpr(opTok.text, left, right)
+
+        return left
+
+    func parseUnary(self):
+        if self.check("!") or self.check(TokenType.NOT) or self.check(TokenType.MINUS) or self.check(TokenType.PLUS) or self.check(TokenType.TILDE):
+            opTok = self.advance()
+            operand = self.parseUnary()
+            return UnaryExpr(opTok.text, operand)
+
+        return self.parsePostfix()
+
+    func parsePostfix(self):
+        expr = self.parsePrimary()
+
+        while True:
+            if self.match(TokenType.LPAREN) != None:
+                args = []
+                if not self.check(TokenType.RPAREN):
+                    while True:
+                        args.append(self.parseExpr())
+                        if self.match(TokenType.COMMA) == None:
+                            break
+                self.expect(TokenType.RPAREN, "Expected ')'")
+                expr = CallExpr(expr, args)
+            elif self.match(TokenType.LBRACKET) != None:
+                start = None
+                stop = None
+                isSlice = False
+
+                if not self.check(TokenType.COLON):
+                    start = self.parseExpr()
+
+                if self.match(TokenType.COLON) != None:
+                    isSlice = True
+                    if not self.check(TokenType.RBRACKET):
+                        stop = self.parseExpr()
+
+                self.expect(TokenType.RBRACKET, "Expected ']'")
+
+                if isSlice:
+                    expr = SliceExpr(expr, start, stop)
+                else:
+                    expr = IndexExpr(expr, start)
+            elif self.match(TokenType.DOT) != None:
+                tok = self.peek(0)
+                if tok.type != TokenType.EOF and tok.type != TokenType.SEMICOLON and tok.type != "\n":
+                    self.advance()
+                    expr = MemberExpr(expr, tok.text)
+                else:
+                    nameTok = self.expect(TokenType.IDENT, "Expected member name after '.'")
+                    memberName = nameTok.text if nameTok != None else ""
+                    expr = MemberExpr(expr, memberName)
+            else:
+                break
+
+        return expr
+
+    func parsePrimary(self):
+        if self.check(TokenType.NUMBER):
+            tok = self.advance()
+            return NumberExpr(tok.number)
+        elif self.check(TokenType.STRING):
+            tok = self.advance()
+            return StringExpr(tok.text)
+        elif self.check(TokenType.TRUE):
+            self.advance()
+            return BoolExpr(True)
+        elif self.check(TokenType.FALSE):
+            self.advance()
+            return BoolExpr(False)
+        elif self.check(TokenType.NULL):
+            self.advance()
+            return NullExpr()
+        elif self.check(TokenType.IDENT) and self.peek(0).text == "lambda":
+            self.advance()
+            params = []
+            while not self.check(TokenType.COLON) and not self.check(TokenType.LBRACE) and not self.check(TokenType.EOF):
+                p = self.expect(TokenType.IDENT, "Expected lambda parameter name")
+                if p != None:
+                    params.append(p.text)
+                if self.match(TokenType.COMMA) == None:
+                    break
+            matchedBrace = False
+            if self.match(TokenType.COLON) == None:
+                if self.match(TokenType.LBRACE) != None:
+                    matchedBrace = True
+                else:
+                    self.expect(TokenType.COLON, "Expected ':' in lambda")
+            body = self.parseExpr()
+            if matchedBrace:
+                self.match(TokenType.RBRACE)
+            return LambdaExpr(params, ReturnStmt(body))
+        elif self.check(TokenType.IDENT) or self.check(TokenType.THIS) or self.check(TokenType.SUPER):
+            tok = self.advance()
+            return IdentExpr(tok.text)
+        elif self.match(TokenType.LPAREN) != None:
+            expr = self.parseExpr()
+            self.expect(TokenType.RPAREN, "Expected ')'")
+            return expr
+        elif self.match(TokenType.LBRACKET) != None:
+            elements = []
+            if not self.check(TokenType.RBRACKET):
+                while True:
+                    elements.append(self.parseExpr())
+                    if self.match(TokenType.COMMA) == None:
+                        break
+            self.expect(TokenType.RBRACKET, "Expected ']'")
+            return ListExpr(elements)
+        elif self.match(TokenType.LBRACE) != None:
+            keys = []
+            values = []
+            if not self.check(TokenType.RBRACE):
+                while True:
+                    keyTok = self.expect(TokenType.STRING, "Map key must be string")
+                    self.expect(TokenType.COLON, "Expected ':' after map key")
+                    val = self.parseExpr()
+                    keyText = keyTok.text if keyTok != None else ""
+                    keys.append(keyText)
+                    values.append(val)
+                    if self.match(TokenType.COMMA) == None:
+                        break
+            self.expect(TokenType.RBRACE, "Expected '}'")
+            return MapExpr(keys, values)
+
+        tok = self.peek(0)
+        print("Parser error line " + str(tok.line) + ": Unexpected token '" + tok.text + "'")
+        self.advance()
+        return NullExpr()

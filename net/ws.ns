@@ -1,26 +1,31 @@
-WS_OP_LANJUT = 0
-WS_OP_TEKS   = 1
-WS_OP_BINER  = 2
-WS_OP_TUTUP  = 8
-WS_OP_PING   = 9
-WS_OP_PONG   = 10
+tcpConnect = tcp_konek
+tcpSend = tcp_kirim
+tcpReceive = tcp_terima
+tcpClose = tcp_tutup
 
-func _to_hex_byte(b):
-    hex_chars = "0123456789abcdef"
-    return hex_chars[(b >> 4) & 15] + hex_chars[b & 15]
+wsOpCont = 0
+wsOpText = 1
+wsOpBinary = 2
+wsOpClose = 8
+wsOpPing = 9
+wsOpPong = 10
 
-func _pack_u16_be(val):
+func toHexByte(b):
+    hexChars = "0123456789abcdef"
+    return hexChars[(b >> 4) & 15] + hexChars[b & 15]
+
+func packU16Be(val):
     return chr((val >> 8) & 255) + chr(val & 255)
 
-func ws_buat_frame(payload, opcode = 1, is_client = True):
+func wsMakeFrame(payload, opcode = 1, isClient = True):
     n = len(payload)
     hdr = chr(128 | (opcode & 15))
-    mbit = 128 if is_client else 0
+    mbit = 128 if isClient else 0
 
     if n < 126:
         hdr += chr(mbit | n)
     elif n < 65536:
-        hdr += chr(mbit | 126) + _pack_u16_be(n)
+        hdr += chr(mbit | 126) + packU16Be(n)
     else:
         hdr += chr(mbit | 127)
         i = 7
@@ -28,7 +33,7 @@ func ws_buat_frame(payload, opcode = 1, is_client = True):
             hdr += chr((n >> (i * 8)) & 255)
             i -= 1
 
-    if is_client:
+    if isClient:
         m0 = 18
         m1 = 52
         m2 = 86
@@ -45,7 +50,9 @@ func ws_buat_frame(payload, opcode = 1, is_client = True):
 
     return hdr + payload
 
-func ws_urai_frame(data):
+wsBuatFrame = wsMakeFrame
+
+func wsParseFrame(data):
     res = {
         "ok": False,
         "fin": False,
@@ -95,15 +102,15 @@ func ws_urai_frame(data):
     if n < pos + plen:
         return res
 
-    raw_payload = data[pos:pos + plen]
+    rawPayload = data[pos:pos + plen]
     payload = ""
     if masked:
         i = 0
         while i < plen:
-            payload += chr(ord(raw_payload[i]) ^ mask[i % 4])
+            payload += chr(ord(rawPayload[i]) ^ mask[i % 4])
             i += 1
     else:
-        payload = raw_payload
+        payload = rawPayload
 
     res["ok"] = True
     res["fin"] = fin
@@ -112,11 +119,13 @@ func ws_urai_frame(data):
     res["consumed"] = pos + plen
     return res
 
-_WS_SESI = {}
-_WS_NEXT_ID = 1
+wsUraiFrame = wsParseFrame
 
-func ws_buka(url, headers_json = "{}"):
-    global _WS_NEXT_ID, _WS_SESI
+wsSessions = {}
+wsNextId = 1
+
+func wsOpen(url, headersJson = "{}"):
+    global wsNextId, wsSessions
     schema = "ws"
     rem = url
     if url.startswith("ws://"):
@@ -127,16 +136,16 @@ func ws_buka(url, headers_json = "{}"):
         rem = url[6:]
 
     spos = rem.find("/")
-    host_port = rem if spos == -1 else rem[:spos]
+    hostPort = rem if spos == -1 else rem[:spos]
     path = "/" if spos == -1 else rem[spos:]
 
-    cpos = host_port.find(":")
-    host = host_port if cpos == -1 else host_port[:cpos]
-    port = (80 if schema == "ws" else 443) if cpos == -1 else ke_angka(host_port[cpos + 1:])
+    cpos = hostPort.find(":")
+    host = hostPort if cpos == -1 else hostPort[:cpos]
+    port = (80 if schema == "ws" else 443) if cpos == -1 else float(hostPort[cpos + 1:])
 
-    fd = tcp_konek(host, port)
+    fd = tcpConnect(host, port)
     if fd < 0:
-        return "{\"ok\": false, \"error\": \"gagal konek ke " + host + "\"}"
+        return "{\"ok\": false, \"error\": \"failed to connect to " + host + "\"}"
 
     key = "dGhlIHNhbXBsZSBub25jZQ=="
 
@@ -149,85 +158,95 @@ func ws_buka(url, headers_json = "{}"):
         "Sec-WebSocket-Version: 13\r\n\r\n"
     )
 
-    tcp_kirim(fd, req)
+    tcpSend(fd, req)
 
     resp = ""
     while resp.find("\r\n\r\n") == -1:
-        chunk = tcp_terima(fd, 1024)
+        chunk = tcpReceive(fd, 1024)
         if chunk == "":
             break
         resp += chunk
 
     if resp.find("101 Switching Protocols") == -1 and resp.find("101") == -1:
-        tcp_tutup(fd)
-        return "{\"ok\": false, \"error\": \"handshake ditolak: respon bukan 101\"}"
+        tcpClose(fd)
+        return "{\"ok\": false, \"error\": \"handshake rejected: response not 101\"}"
 
-    id = _WS_NEXT_ID
-    _WS_NEXT_ID += 1
-    _WS_SESI[id] = {
+    id = wsNextId
+    wsNextId += 1
+    wsSessions[id] = {
         "fd": fd,
         "buffer": ""
     }
 
     return "{\"ok\": true, \"id\": " + str(id) + "}"
 
-func ws_kirim(id, msg):
-    if not (id in _WS_SESI):
+wsBuka = wsOpen
+
+func wsSend(id, msg):
+    if not (id in wsSessions):
         return False
-    s = _WS_SESI[id]
-    frame = ws_buat_frame(msg, WS_OP_TEKS, True)
-    res = tcp_kirim(s["fd"], frame)
+    s = wsSessions[id]
+    frame = wsMakeFrame(msg, wsOpText, True)
+    res = tcpSend(s["fd"], frame)
     return res > 0
 
-func ws_kirim_biner(id, hex_data):
-    if not (id in _WS_SESI):
+wsKirim = wsSend
+
+func wsSendBinary(id, hexData):
+    if not (id in wsSessions):
         return False
-    s = _WS_SESI[id]
-    bin_str = ""
-    n = len(hex_data)
+    s = wsSessions[id]
+    binStr = ""
+    n = len(hexData)
     i = 0
     while i < n:
-        hi = ord(hex_data[i])
-        lo = ord(hex_data[i + 1])
+        hi = ord(hexData[i])
+        lo = ord(hexData[i + 1])
         vhi = (hi - 48) if (hi >= 48 and hi <= 57) else ((hi - 87) if hi >= 97 else (hi - 55))
         vlo = (lo - 48) if (lo >= 48 and lo <= 57) else ((lo - 87) if lo >= 97 else (lo - 55))
-        bin_str += chr((vhi << 4) | vlo)
+        binStr += chr((vhi << 4) | vlo)
         i += 2
-    frame = ws_buat_frame(bin_str, WS_OP_BINER, True)
-    res = tcp_kirim(s["fd"], frame)
+    frame = wsMakeFrame(binStr, wsOpBinary, True)
+    res = tcpSend(s["fd"], frame)
     return res > 0
 
-func ws_terima(id, timeout_ms = 1000):
-    if not (id in _WS_SESI):
-        return "{\"ok\": false, \"error\": \"sesi tidak ditemukan\"}"
-    s = _WS_SESI[id]
+wsKirimBiner = wsSendBinary
+
+func wsReceive(id, timeoutMs = 1000):
+    if not (id in wsSessions):
+        return "{\"ok\": false, \"error\": \"session not found\"}"
+    s = wsSessions[id]
 
     while True:
-        parsed = ws_urai_frame(s["buffer"])
+        parsed = wsParseFrame(s["buffer"])
         if parsed["ok"]:
             s["buffer"] = s["buffer"][parsed["consumed"]:]
-            if parsed["opcode"] == WS_OP_PING:
-                pong = ws_buat_frame(parsed["payload"], WS_OP_PONG, True)
-                tcp_kirim(s["fd"], pong)
+            if parsed["opcode"] == wsOpPing:
+                pong = wsMakeFrame(parsed["payload"], wsOpPong, True)
+                tcpSend(s["fd"], pong)
                 continue
-            elif parsed["opcode"] == WS_OP_TUTUP:
-                ws_tutup(id)
-                return "{\"ok\": false, \"error\": \"koneksi ditutup oleh server\"}"
+            elif parsed["opcode"] == wsOpClose:
+                wsClose(id)
+                return "{\"ok\": false, \"error\": \"connection closed by server\"}"
             return "{\"ok\": true, \"pesan\": \"" + parsed["payload"] + "\", \"opcode\": " + str(parsed["opcode"]) + "}"
 
-        chunk = tcp_terima(s["fd"], 4096)
+        chunk = tcpReceive(s["fd"], 4096)
         if chunk == "":
             break
         s["buffer"] += chunk
 
-    return "{\"ok\": false, \"error\": \"timeout / koneksi terputus\"}"
+    return "{\"ok\": false, \"error\": \"timeout / connection closed\"}"
 
-func ws_tutup(id):
-    if not (id in _WS_SESI):
+wsTerima = wsReceive
+
+func wsClose(id):
+    if not (id in wsSessions):
         return False
-    s = _WS_SESI[id]
-    close_frame = ws_buat_frame("", WS_OP_TUTUP, True)
-    tcp_kirim(s["fd"], close_frame)
-    tcp_tutup(s["fd"])
-    hapus _WS_SESI[id]
+    s = wsSessions[id]
+    closeFrame = wsMakeFrame("", wsOpClose, True)
+    tcpSend(s["fd"], closeFrame)
+    tcpClose(s["fd"])
+    hapus wsSessions[id]
     return True
+
+wsTutup = wsClose

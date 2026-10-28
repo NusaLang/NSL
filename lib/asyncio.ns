@@ -1,5 +1,3 @@
-# async def f(): ... becomes  def f(): return _mkco(lambda: ...)  -- a coroutine, started by await / run / create_task.
-# Tasks run on goroutines, so gather() and create_task() really overlap while they sleep or wait.
 import time
 
 class CancelledError(Exception):

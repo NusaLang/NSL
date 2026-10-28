@@ -1,4 +1,4 @@
-sys = impor("sys")
+import sys
 
 Op = {
     "CONST": 1,
@@ -23,80 +23,104 @@ Op = {
 
     "POP": 18,
 
-    "GET_LOCAL": 19,
-    "SET_LOCAL": 20,
-    "DEFINE_LOCAL": 21,
+    "GETLOCAL": 19,
+    "SETLOCAL": 20,
+    "DEFINELOCAL": 21,
 
-    "GET_GLOBAL": 22,
-    "SET_GLOBAL": 23,
-    "DEFINE_GLOBAL": 24,
+    "GETGLOBAL": 22,
+    "SETGLOBAL": 23,
+    "DEFINEGLOBAL": 24,
 
-    "JUMP_IF_FALSE": 25,
+    "JUMPIFFALSE": 25,
     "JUMP": 26,
-    "JUMP_IF_FALSE_KEEP": 27,
-    "JUMP_IF_TRUE_KEEP": 28,
+    "JUMPIFFALSEKEEP": 27,
+    "JUMPIFTRUEKEEP": 28,
     "LOOP": 29,
 
     "CALL": 30,
-    "MAKE_CLOSURE": 31,
+    "MAKECLOSURE": 31,
     "RETURN": 32,
-    "RETURN_NULL": 33,
+    "RETURNNULL": 33,
 
     "PRINT": 34,
     "LENGTH": 35,
     "PUSH": 36,
 
-    "NEW_ARRAY": 37,
-    "NEW_MAP": 38,
-    "GET_INDEX": 39,
-    "SET_INDEX": 40,
-    "GET_FIELD": 41,
-    "SET_FIELD": 42,
+    "NEWARRAY": 37,
+    "NEWMAP": 38,
+    "GETINDEX": 39,
+    "SETINDEX": 40,
+    "GETFIELD": 41,
+    "SETFIELD": 42,
 
-    "CALL_METHOD": 43,
-    "MAKE_CLASS": 44,
+    "CALLMETHOD": 43,
+    "MAKECLASS": 44,
 
-    "THROW": 45
+    "THROW": 45,
+    "IN": 46,
+    "SLICE": 47,
+    "INCLOCAL": 48,
+    "DECLOCAL": 49,
+    "ADDLOCAL": 50,
+    "TOSTRING": 51,
+
+    "BITAND": 52,
+    "BITOR": 53,
+    "BITXOR": 54,
+    "SHL": 55,
+    "SHR": 56,
+    "BITNOT": 57,
+    "GETARGCOUNT": 58
 }
 
-OP_NAMES = {}
+opNames = {}
 for k in Op:
-    OP_NAMES[Op[k]] = k
+    opNames[Op[k]] = k
 
 class VmFunction:
     func __init__(self, name, params):
+        self.isFunction = True
+        self.name = name
         self.nama = name
         self.params = params
         self.arity = len(params)
         self.code = []
         self.constants = []
-        self.num_locals = self.arity
+        self.numLocals = self.arity
 
-    func tambah_konstanta(self, val):
+    func addConstant(self, val):
         self.constants.append(val)
         return len(self.constants) - 1
 
+    func tambahKonstanta(self, val):
+        return self.addConstant(val)
+
     func disassemble(self):
         lines = []
-        lines.append("=== Disassembly: " + self.nama + " (arity=" + str(self.arity) + ", locals=" + str(self.num_locals) + ") ===")
+        lines.append("Disassembly: " + self.name + " (arity=" + str(self.arity) + ", locals=" + str(self.numLocals) + ")")
         i = 0
         n = len(self.code)
         while i < n:
             offset = i
             op = self.code[i]
             i += 1
-            op_name = OP_NAMES[op] if op in OP_NAMES else ("OP_" + str(op))
+            opName = opNames[op] if op in opNames else ("OP" + str(op))
             detail = ""
 
-            if op == Op.CONST or op == Op.GET_GLOBAL or op == Op.SET_GLOBAL or op == Op.DEFINE_GLOBAL or op == Op.GET_FIELD or op == Op.SET_FIELD:
+            if op == Op.CONST or op == Op.GETGLOBAL or op == Op.SETGLOBAL or op == Op.DEFINEGLOBAL or op == Op.GETFIELD or op == Op.SETFIELD:
                 idx = self.code[i] | (self.code[i + 1] << 8)
                 i += 2
                 detail = str(idx) + " ('" + str(self.constants[idx]) + "')"
-            elif op == Op.GET_LOCAL or op == Op.SET_LOCAL or op == Op.DEFINE_LOCAL:
+            elif op == Op.GETLOCAL or op == Op.SETLOCAL or op == Op.DEFINELOCAL or op == Op.INCLOCAL or op == Op.DECLOCAL:
                 slot = self.code[i] | (self.code[i + 1] << 8)
                 i += 2
                 detail = "slot " + str(slot)
-            elif op == Op.JUMP or op == Op.JUMP_IF_FALSE or op == Op.JUMP_IF_FALSE_KEEP or op == Op.JUMP_IF_TRUE_KEEP:
+            elif op == Op.ADDLOCAL:
+                slot = self.code[i] | (self.code[i + 1] << 8)
+                idx = self.code[i + 2] | (self.code[i + 3] << 8)
+                i += 4
+                detail = "slot " + str(slot) + " const " + str(idx)
+            elif op == Op.JUMP or op == Op.JUMPIFFALSE or op == Op.JUMPIFFALSEKEEP or op == Op.JUMPIFTRUEKEEP:
                 off = self.code[i] | (self.code[i + 1] << 8)
                 i += 2
                 detail = "+" + str(off) + " -> " + str(i + off)
@@ -108,538 +132,792 @@ class VmFunction:
                 argc = self.code[i]
                 i += 1
                 detail = "argc=" + str(argc)
-            elif op == Op.NEW_ARRAY or op == Op.NEW_MAP:
+            elif op == Op.NEWARRAY or op == Op.NEWMAP:
                 cnt = self.code[i] | (self.code[i + 1] << 8)
                 i += 2
                 detail = "count=" + str(cnt)
 
-            lines.append(str(offset) + ": " + op_name + " " + detail)
+            lines.append(str(offset) + ": " + opName + " " + detail)
         return "\n".join(lines)
 
 class CallFrame:
     func __init__(self, fn, args):
         self.fn = fn
         self.ip = 0
-        self.locals = []
-        max_loc = fn.num_locals
-        if len(args) > max_loc:
-            max_loc = len(args)
-        i = 0
-        while i < max_loc:
-            if i < len(args):
-                self.locals.append(args[i])
-            else:
-                self.locals.append(None)
-            i += 1
+        self.providedCount = len(args)
+        maxLoc = fn.numLocals if hasattr(fn, "numLocals") else fn.arity
+        diff = maxLoc - len(args)
+        if diff <= 0:
+            self.locals = args[:]
+        else:
+            self.locals = args[:] + [None] * diff
 
 class VmClass:
-    func __init__(self, name, base_class):
-        self.is_kelas = True
+    func __init__(self, name, baseClass):
+        self.isClass = True
+        self.isKelas = True
+        self.name = name
         self.nama = name
-        self.induk_kelas = base_class
-        self.metode = {}
+        self.baseClass = baseClass
+        self.methods = {}
+        self.metode = self.methods
 
 class VmInstance:
-    func __init__(self, cls_obj):
-        self.is_instans = True
-        self.kelas = cls_obj
-        self.bidang = {}
+    func __init__(self, clsObj):
+        self.isInstance = True
+        self.isInstans = True
+        self.cls = clsObj
+        self.kelas = clsObj
+        self.fields = {}
+        self.bidang = self.fields
 
 class VmCompiler:
     func __init__(self):
-        self.current_fn = None
-        self.fn_stack = []
-        self.scope_depth = 0
+        self.currentFn = None
+        self.fnStack = []
+        self.scopeDepth = 0
         self.locals = []
-        self.loop_stack = []
-        self.program_functions = []
+        self.loopStack = []
+        self.programFunctions = []
 
-    func begin_scope(self):
-        self.scope_depth += 1
+    func beginScope(self):
+        self.scopeDepth += 1
 
-    func end_scope(self):
-        self.scope_depth -= 1
-        while len(self.locals) > 0 and self.locals[-1]["depth"] > self.scope_depth:
+    func endScope(self):
+        self.scopeDepth -= 1
+        while len(self.locals) > 0 and self.locals[-1]["depth"] > self.scopeDepth:
             self.locals.pop()
 
-    func add_local(self, name):
+    func addLocal(self, name):
         slot = len(self.locals)
-        self.locals.append({"nama": name, "depth": self.scope_depth, "slot": slot})
-        if slot + 1 > self.current_fn.num_locals:
-            self.current_fn.num_locals = slot + 1
+        self.locals.append({"name": name, "depth": self.scopeDepth, "slot": slot})
+        if slot + 1 > self.currentFn.numLocals:
+            self.currentFn.numLocals = slot + 1
         return slot
 
-    func resolve_local(self, name):
+    func resolveLocal(self, name):
         i = len(self.locals) - 1
         while i >= 0:
-            if self.locals[i]["nama"] == name:
+            if self.locals[i]["name"] == name:
                 return self.locals[i]["slot"]
             i -= 1
         return -1
 
-    func emit_byte(self, b):
-        self.current_fn.code.append(b)
+    func emitByte(self, b):
+        self.currentFn.code.append(b)
 
-    func emit_op(self, op):
-        self.emit_byte(op)
+    func emitOp(self, op):
+        self.emitByte(op)
 
-    func emit_u16(self, v):
-        self.emit_byte(v & 255)
-        self.emit_byte((v >> 8) & 255)
+    func emitU16(self, v):
+        self.emitByte(v & 255)
+        self.emitByte((v >> 8) & 255)
 
-    func add_constant(self, val):
-        return self.current_fn.tambah_konstanta(val)
+    func addConstant(self, val):
+        return self.currentFn.addConstant(val)
 
-    func emit_constant(self, val):
-        idx = self.add_constant(val)
-        self.emit_op(Op.CONST)
-        self.emit_u16(idx)
+    func emitConstant(self, val):
+        idx = self.addConstant(val)
+        self.emitOp(Op.CONST)
+        self.emitU16(idx)
 
-    func emit_jump(self, op):
-        self.emit_op(op)
-        self.emit_u16(65535)
-        return len(self.current_fn.code) - 2
+    func emitJump(self, op):
+        self.emitOp(op)
+        self.emitU16(65535)
+        return len(self.currentFn.code) - 2
 
-    func patch_jump(self, offset):
-        jump = len(self.current_fn.code) - offset - 2
-        self.current_fn.code[offset] = jump & 255
-        self.current_fn.code[offset + 1] = (jump >> 8) & 255
+    func patchJump(self, offset):
+        jump = len(self.currentFn.code) - offset - 2
+        self.currentFn.code[offset] = jump & 255
+        self.currentFn.code[offset + 1] = (jump >> 8) & 255
 
-    func emit_loop(self, loop_start):
-        self.emit_op(Op.LOOP)
-        off = len(self.current_fn.code) - loop_start + 2
-        self.emit_u16(off)
+    func emitLoop(self, loopStart):
+        self.emitOp(Op.LOOP)
+        off = len(self.currentFn.code) - loopStart + 2
+        self.emitU16(off)
 
-    func compile(self, prog_ast):
-        top_fn = VmFunction("<script>", [])
-        self.current_fn = top_fn
-        self.program_functions = [top_fn]
+    func nodeType(self, node):
+        if node == None:
+            return ""
+        if hasattr(node, "type"):
+            return node.type
+        if hasattr(node, "jenis"):
+            return node.jenis
+        return ""
+
+    func compile(self, progAst):
+        topFn = VmFunction("<script>", [])
+        self.currentFn = topFn
+        self.programFunctions = [topFn]
         self.locals = []
-        self.scope_depth = 0
-        self.loop_stack = []
+        self.scopeDepth = 0
+        self.loopStack = []
 
-        stmts = prog_ast
-        if hasattr(prog_ast, "stmts"):
-            stmts = prog_ast.stmts
-        elif hasattr(prog_ast, "statements"):
-            stmts = prog_ast.statements
+        stmts = progAst
+        if hasattr(progAst, "stmts"):
+            stmts = progAst.stmts
+        elif hasattr(progAst, "statements"):
+            stmts = progAst.statements
 
         for stmt in stmts:
-            self.compile_stmt(stmt, True)
+            self.compileStmt(stmt, True)
 
-        self.emit_op(Op.RETURN_NULL)
-        return top_fn
+        self.emitOp(Op.RETURNNULL)
+        return topFn
 
-    func compile_block(self, stmts):
-        self.begin_scope()
+    func compileBlock(self, stmts):
+        self.beginScope()
         for s in stmts:
-            self.compile_stmt(s, False)
-        self.end_scope()
+            self.compileStmt(s, False)
+        self.endScope()
 
-    func compile_stmt(self, stmt, is_top_level):
+    func compileStmt(self, stmt, isTopLevel):
         if stmt == None:
             return None
 
-        j = stmt.jenis
+        t = self.nodeType(stmt)
 
-        if j == "BLOK":
-            self.compile_block(stmt.stmts)
-        elif j == "BUAT":
-            self.compile_expr(stmt.nilai)
-            if is_top_level and len(self.fn_stack) == 0 and self.scope_depth == 0:
-                c_idx = self.add_constant(stmt.nama)
-                self.emit_op(Op.DEFINE_GLOBAL)
-                self.emit_u16(c_idx)
+        if t == "BLOCK" or t == "BLOK":
+            stmts = stmt.stmts if hasattr(stmt, "stmts") else []
+            self.compileBlock(stmts)
+        elif t == "VAR" or t == "BUAT":
+            name = stmt.name if hasattr(stmt, "name") else stmt.nama
+            valExpr = stmt.value if hasattr(stmt, "value") else stmt.nilai
+            self.compileExpr(valExpr)
+            if isTopLevel and len(self.fnStack) == 0 and self.scopeDepth == 0:
+                constIdx = self.addConstant(name)
+                self.emitOp(Op.DEFINEGLOBAL)
+                self.emitU16(constIdx)
             else:
-                slot = self.add_local(stmt.nama)
-                self.emit_op(Op.DEFINE_LOCAL)
-                self.emit_u16(slot)
-
-        elif j == "FUNGSI":
-            self.compile_fn(stmt, is_top_level)
-        elif j == "JIKA":
-            self.compile_expr(stmt.kondisi)
-            else_jump = self.emit_jump(Op.JUMP_IF_FALSE)
-
-            self.compile_stmt(stmt.maka, False)
-
-            end_jump = self.emit_jump(Op.JUMP)
-            self.patch_jump(else_jump)
-
-            if stmt.lain != None:
-                self.compile_stmt(stmt.lain, False)
-
-            self.patch_jump(end_jump)
-
-        elif j == "SELAMA":
-            loop_start = len(self.current_fn.code)
-            self.compile_expr(stmt.kondisi)
-            exit_jump = self.emit_jump(Op.JUMP_IF_FALSE)
-
-            self.loop_stack.append({"break_jumps": [], "continue_jumps": []})
-
-            self.compile_stmt(stmt.badan, False)
-
-            cur_loop = self.loop_stack.pop()
-            for cj in cur_loop["continue_jumps"]:
-                self.patch_jump(cj)
-
-            self.emit_loop(loop_start)
-            self.patch_jump(exit_jump)
-
-            for bj in cur_loop["break_jumps"]:
-                self.patch_jump(bj)
-
-        elif j == "UNTUK":
-            self.begin_scope()
-            if stmt.inisialisasi != None:
-                self.compile_stmt(stmt.inisialisasi, False)
-
-            loop_start = len(self.current_fn.code)
-            exit_jump = -1
-            if stmt.kondisi != None:
-                self.compile_expr(stmt.kondisi)
-                exit_jump = self.emit_jump(Op.JUMP_IF_FALSE)
-
-            self.loop_stack.append({"break_jumps": [], "continue_jumps": []})
-
-            self.compile_stmt(stmt.badan, False)
-
-            cur_loop = self.loop_stack.pop()
-            for cj in cur_loop["continue_jumps"]:
-                self.patch_jump(cj)
-
-            if stmt.pasca != None:
-                self.compile_expr(stmt.pasca)
-                self.emit_op(Op.POP)
-
-            self.emit_loop(loop_start)
-
-            if exit_jump != -1:
-                self.patch_jump(exit_jump)
-
-            for bj in cur_loop["break_jumps"]:
-                self.patch_jump(bj)
-
-            self.end_scope()
-
-        elif j == "UNTUK_DALAM":
-            self.begin_scope()
-            self.compile_expr(stmt.iter)
-            iter_slot = self.add_local("$iter")
-            self.emit_op(Op.DEFINE_LOCAL)
-            self.emit_u16(iter_slot)
-
-            self.emit_constant(0)
-            idx_slot = self.add_local("$idx")
-            self.emit_op(Op.DEFINE_LOCAL)
-            self.emit_u16(idx_slot)
-
-            var_slot = self.add_local(stmt.variabel)
-            self.emit_op(Op.NULL)
-            self.emit_op(Op.DEFINE_LOCAL)
-            self.emit_u16(var_slot)
-
-            loop_start = len(self.current_fn.code)
-
-            self.emit_op(Op.GET_LOCAL)
-            self.emit_u16(idx_slot)
-            self.emit_op(Op.GET_LOCAL)
-            self.emit_u16(iter_slot)
-            self.emit_op(Op.LENGTH)
-            self.emit_op(Op.LT)
-
-            exit_jump = self.emit_jump(Op.JUMP_IF_FALSE)
-
-            self.emit_op(Op.GET_LOCAL)
-            self.emit_u16(iter_slot)
-            self.emit_op(Op.GET_LOCAL)
-            self.emit_u16(idx_slot)
-            self.emit_op(Op.GET_INDEX)
-            self.emit_op(Op.SET_LOCAL)
-            self.emit_u16(var_slot)
-            self.emit_op(Op.POP)
-
-            self.loop_stack.append({"break_jumps": [], "continue_jumps": []})
-
-            self.compile_stmt(stmt.badan, False)
-
-            cur_loop = self.loop_stack.pop()
-            for cj in cur_loop["continue_jumps"]:
-                self.patch_jump(cj)
-
-            self.emit_op(Op.GET_LOCAL)
-            self.emit_u16(idx_slot)
-            self.emit_constant(1)
-            self.emit_op(Op.ADD)
-            self.emit_op(Op.SET_LOCAL)
-            self.emit_u16(idx_slot)
-            self.emit_op(Op.POP)
-
-            self.emit_loop(loop_start)
-            self.patch_jump(exit_jump)
-
-            for bj in cur_loop["break_jumps"]:
-                self.patch_jump(bj)
-
-            self.end_scope()
-
-        elif j == "HASIL":
-            if stmt.nilai != None:
-                self.compile_expr(stmt.nilai)
-                self.emit_op(Op.RETURN)
-            else:
-                self.emit_op(Op.RETURN_NULL)
-
-        elif j == "BERHENTI":
-            if len(self.loop_stack) == 0:
-                cetak("CompileError: 'berhenti' di luar loop")
+                slot = self.addLocal(name)
+                self.emitOp(Op.DEFINELOCAL)
+                self.emitU16(slot)
+        elif t == "FUNC" or t == "FUNGSI":
+            self.compileFn(stmt, isTopLevel)
+        elif t == "IF" or t == "JIKA":
+            cond = stmt.condition if hasattr(stmt, "condition") else stmt.kondisi
+            thenBranch = stmt.thenBranch if hasattr(stmt, "thenBranch") else stmt.maka
+            elseBranch = stmt.elseBranch if hasattr(stmt, "elseBranch") else stmt.lain
+            condType = self.nodeType(cond)
+            if condType == "BOOL":
+                cVal = cond.value if hasattr(cond, "value") else cond.nilai
+                if cVal:
+                    self.compileStmt(thenBranch, False)
+                elif elseBranch != None:
+                    self.compileStmt(elseBranch, False)
                 return None
-            jmp = self.emit_jump(Op.JUMP)
-            self.loop_stack[-1]["break_jumps"].append(jmp)
-
-        elif j == "LANJUT":
-            if len(self.loop_stack) == 0:
-                cetak("CompileError: 'lanjut' di luar loop")
-                return None
-            jmp = self.emit_jump(Op.JUMP)
-            self.loop_stack[-1]["continue_jumps"].append(jmp)
-
-        elif j == "EKSPRESI":
-            self.compile_expr(stmt.expr)
-            self.emit_op(Op.POP)
-
-        elif j == "LEMPAR":
-            self.compile_expr(stmt.nilai)
-            self.emit_op(Op.THROW)
-
-        elif j == "KELAS":
-            cls_fn_map = {}
-            if hasattr(stmt, "metode"):
-                for m in stmt.metode:
-                    m_fn = VmFunction(stmt.nama + "." + m.nama, m.params)
-                    self.fn_stack.append(self.current_fn)
-                    self.current_fn = m_fn
-                    self.begin_scope()
-                    for p in m.params:
-                        self.add_local(p)
-                    self.compile_block(m.badan.stmts if hasattr(m.badan, "stmts") else [m.badan])
-                    self.end_scope()
-                    self.emit_op(Op.RETURN_NULL)
-                    self.current_fn = self.fn_stack.pop()
-                    cls_fn_map[m.nama] = m_fn
-
-            base_val = stmt.induk_kelas if hasattr(stmt, "induk_kelas") else None
-            c = VmClass(stmt.nama, base_val)
-            c.metode = cls_fn_map
-            self.emit_constant(c)
-            if is_top_level and len(self.fn_stack) == 0:
-                c_idx = self.add_constant(stmt.nama)
-                self.emit_op(Op.DEFINE_GLOBAL)
-                self.emit_u16(c_idx)
+            self.compileExpr(cond)
+            elseJump = self.emitJump(Op.JUMPIFFALSE)
+            self.compileStmt(thenBranch, False)
+            endJump = self.emitJump(Op.JUMP)
+            self.patchJump(elseJump)
+            if elseBranch != None:
+                self.compileStmt(elseBranch, False)
+            self.patchJump(endJump)
+        elif t == "WHILE" or t == "SELAMA":
+            cond = stmt.condition if hasattr(stmt, "condition") else stmt.kondisi
+            body = stmt.body if hasattr(stmt, "body") else stmt.badan
+            loopStart = len(self.currentFn.code)
+            self.compileExpr(cond)
+            exitJump = self.emitJump(Op.JUMPIFFALSE)
+            self.loopStack.append({"breakJumps": [], "continueJumps": []})
+            self.compileStmt(body, False)
+            curLoop = self.loopStack.pop()
+            for cj in curLoop["continueJumps"]:
+                self.patchJump(cj)
+            self.emitLoop(loopStart)
+            self.patchJump(exitJump)
+            for bj in curLoop["breakJumps"]:
+                self.patchJump(bj)
+        elif t == "FOR" or t == "UNTUK":
+            initStmt = stmt.init if hasattr(stmt, "init") else stmt.inisialisasi
+            cond = stmt.condition if hasattr(stmt, "condition") else stmt.kondisi
+            postExpr = stmt.post if hasattr(stmt, "post") else stmt.pasca
+            body = stmt.body if hasattr(stmt, "body") else stmt.badan
+            self.beginScope()
+            if initStmt != None:
+                self.compileStmt(initStmt, False)
+            loopStart = len(self.currentFn.code)
+            exitJump = -1
+            if cond != None:
+                self.compileExpr(cond)
+                exitJump = self.emitJump(Op.JUMPIFFALSE)
+            self.loopStack.append({"breakJumps": [], "continueJumps": []})
+            self.compileStmt(body, False)
+            curLoop = self.loopStack.pop()
+            for cj in curLoop["continueJumps"]:
+                self.patchJump(cj)
+            if postExpr != None:
+                self.compileExpr(postExpr)
+                self.emitOp(Op.POP)
+            self.emitLoop(loopStart)
+            if exitJump != -1:
+                self.patchJump(exitJump)
+            for bj in curLoop["breakJumps"]:
+                self.patchJump(bj)
+            self.endScope()
+        elif t == "FOR_IN" or t == "UNTUK_DALAM":
+            iterExpr = stmt.iterable if hasattr(stmt, "iterable") else stmt.iter
+            varName = stmt.variable if hasattr(stmt, "variable") else stmt.variabel
+            body = stmt.body if hasattr(stmt, "body") else stmt.badan
+            self.beginScope()
+            self.compileExpr(iterExpr)
+            iterSlot = self.addLocal("$iter")
+            self.emitOp(Op.DEFINELOCAL)
+            self.emitU16(iterSlot)
+            self.emitOp(Op.GETLOCAL)
+            self.emitU16(iterSlot)
+            self.emitOp(Op.LENGTH)
+            lenSlot = self.addLocal("$len")
+            self.emitOp(Op.DEFINELOCAL)
+            self.emitU16(lenSlot)
+            self.emitConstant(0)
+            idxSlot = self.addLocal("$idx")
+            self.emitOp(Op.DEFINELOCAL)
+            self.emitU16(idxSlot)
+            varSlot = self.addLocal(varName)
+            self.emitOp(Op.NULL)
+            self.emitOp(Op.DEFINELOCAL)
+            self.emitU16(varSlot)
+            loopStart = len(self.currentFn.code)
+            self.emitOp(Op.GETLOCAL)
+            self.emitU16(idxSlot)
+            self.emitOp(Op.GETLOCAL)
+            self.emitU16(lenSlot)
+            self.emitOp(Op.LT)
+            exitJump = self.emitJump(Op.JUMPIFFALSE)
+            self.emitOp(Op.GETLOCAL)
+            self.emitU16(iterSlot)
+            self.emitOp(Op.GETLOCAL)
+            self.emitU16(idxSlot)
+            self.emitOp(Op.GETINDEX)
+            self.emitOp(Op.SETLOCAL)
+            self.emitU16(varSlot)
+            self.emitOp(Op.POP)
+            self.loopStack.append({"breakJumps": [], "continueJumps": []})
+            self.compileStmt(body, False)
+            curLoop = self.loopStack.pop()
+            for cj in curLoop["continueJumps"]:
+                self.patchJump(cj)
+            self.emitOp(Op.INCLOCAL)
+            self.emitU16(idxSlot)
+            self.emitLoop(loopStart)
+            self.patchJump(exitJump)
+            for bj in curLoop["breakJumps"]:
+                self.patchJump(bj)
+            self.endScope()
+        elif t == "RETURN" or t == "HASIL":
+            valExpr = stmt.value if hasattr(stmt, "value") else stmt.nilai
+            if valExpr != None:
+                self.compileExpr(valExpr)
+                self.emitOp(Op.RETURN)
             else:
-                slot = self.add_local(stmt.nama)
-                self.emit_op(Op.DEFINE_LOCAL)
-                self.emit_u16(slot)
+                self.emitOp(Op.RETURNNULL)
+        elif t == "BREAK" or t == "BERHENTI":
+            if len(self.loopStack) == 0:
+                print("CompileError: break outside loop")
+                return None
+            jmp = self.emitJump(Op.JUMP)
+            self.loopStack[-1]["breakJumps"].append(jmp)
+        elif t == "CONTINUE" or t == "LANJUT":
+            if len(self.loopStack) == 0:
+                print("CompileError: continue outside loop")
+                return None
+            jmp = self.emitJump(Op.JUMP)
+            self.loopStack[-1]["continueJumps"].append(jmp)
+        elif t == "EXPR" or t == "EKSPRESI":
+            exprInner = stmt.expr if hasattr(stmt, "expr") else stmt.expr
+            innerType = self.nodeType(exprInner)
+            fused = False
+            if innerType == "ASSIGN" or innerType == "TUGAS":
+                target = exprInner.target if hasattr(exprInner, "target") else exprInner.target
+                val = exprInner.value if hasattr(exprInner, "value") else exprInner.nilai
+                targetType = self.nodeType(target)
+                if targetType == "IDENT" or targetType == "PENGENAL":
+                    name = target.name if hasattr(target, "name") else target.nama
+                    slot = self.resolveLocal(name)
+                    if slot != -1:
+                        valType = self.nodeType(val)
+                        if exprInner.op == "+=" and (valType == "NUMBER" or valType == "ANGKA"):
+                            v = val.value if hasattr(val, "value") else val.nilai
+                            if v == 1:
+                                self.emitOp(Op.INCLOCAL)
+                                self.emitU16(slot)
+                                fused = True
+                            elif v == -1:
+                                self.emitOp(Op.DECLOCAL)
+                                self.emitU16(slot)
+                                fused = True
+                            else:
+                                cIdx = self.addConstant(v)
+                                self.emitOp(Op.ADDLOCAL)
+                                self.emitU16(slot)
+                                self.emitU16(cIdx)
+                                fused = True
+                        elif exprInner.op == "-=" and (valType == "NUMBER" or valType == "ANGKA"):
+                            v = val.value if hasattr(val, "value") else val.nilai
+                            if v == 1:
+                                self.emitOp(Op.DECLOCAL)
+                                self.emitU16(slot)
+                                fused = True
+                            elif v == -1:
+                                self.emitOp(Op.INCLOCAL)
+                                self.emitU16(slot)
+                                fused = True
+                            else:
+                                cIdx = self.addConstant(-v)
+                                self.emitOp(Op.ADDLOCAL)
+                                self.emitU16(slot)
+                                self.emitU16(cIdx)
+                                fused = True
+                        elif exprInner.op == "=" and (valType == "BINARY" or valType == "BINER"):
+                            bLeft = val.left if hasattr(val, "left") else val.kiri
+                            bRight = val.right if hasattr(val, "right") else val.kanan
+                            bLeftType = self.nodeType(bLeft)
+                            bRightType = self.nodeType(bRight)
+                            bLeftName = bLeft.name if hasattr(bLeft, "name") else (bLeft.nama if hasattr(bLeft, "nama") else "")
+                            if val.op == "+" and (bLeftType == "IDENT" or bLeftType == "PENGENAL") and bLeftName == name and (bRightType == "NUMBER" or bRightType == "ANGKA"):
+                                v = bRight.value if hasattr(bRight, "value") else bRight.nilai
+                                if v == 1:
+                                    self.emitOp(Op.INCLOCAL)
+                                    self.emitU16(slot)
+                                    fused = True
+                                elif v == -1:
+                                    self.emitOp(Op.DECLOCAL)
+                                    self.emitU16(slot)
+                                    fused = True
+                                else:
+                                    cIdx = self.addConstant(v)
+                                    self.emitOp(Op.ADDLOCAL)
+                                    self.emitU16(slot)
+                                    self.emitU16(cIdx)
+                                    fused = True
+                            elif val.op == "-" and (bLeftType == "IDENT" or bLeftType == "PENGENAL") and bLeftName == name and (bRightType == "NUMBER" or bRightType == "ANGKA"):
+                                v = bRight.value if hasattr(bRight, "value") else bRight.nilai
+                                if v == 1:
+                                    self.emitOp(Op.DECLOCAL)
+                                    self.emitU16(slot)
+                                    fused = True
+                                elif v == -1:
+                                    self.emitOp(Op.INCLOCAL)
+                                    self.emitU16(slot)
+                                    fused = True
+                                else:
+                                    cIdx = self.addConstant(-v)
+                                    self.emitOp(Op.ADDLOCAL)
+                                    self.emitU16(slot)
+                                    self.emitU16(cIdx)
+                                    fused = True
+            if not fused:
+                self.compileExpr(stmt.expr)
+                self.emitOp(Op.POP)
+        elif t == "THROW" or t == "LEMPAR":
+            valExpr = stmt.value if hasattr(stmt, "value") else stmt.nilai
+            self.compileExpr(valExpr)
+            self.emitOp(Op.THROW)
+        elif t == "CLASS" or t == "KELAS":
+            name = stmt.name if hasattr(stmt, "name") else stmt.nama
+            baseClass = stmt.baseClass if hasattr(stmt, "baseClass") else (stmt.induk if hasattr(stmt, "induk") else None)
+            methods = stmt.methods if hasattr(stmt, "methods") else stmt.metode
+            clsFnMap = {}
+            if methods != None:
+                for m in methods:
+                    mName = m.name if hasattr(m, "name") else m.nama
+                    mBody = m.body if hasattr(m, "body") else m.badan
+                    hasSelf = len(m.params) > 0 and (m.params[0] == "self" or m.params[0] == "this" or m.params[0] == "ini")
+                    mParams = m.params if hasSelf else (["self"] + m.params)
+                    mFn = VmFunction(name + "." + mName, mParams)
+                    self.fnStack.append(self.currentFn)
+                    self.currentFn = mFn
+                    self.beginScope()
+                    mDefaults = m.defaults if hasattr(m, "defaults") else {}
+                    i = 0
+                    for p in mParams:
+                        slot = self.addLocal(p)
+                        if p in mDefaults:
+                            self.emitOp(Op.GETARGCOUNT)
+                            self.emitConstant(i)
+                            self.emitOp(Op.LTE)
+                            skipJump = self.emitJump(Op.JUMPIFFALSE)
+                            self.compileExpr(mDefaults[p])
+                            self.emitOp(Op.SETLOCAL)
+                            self.emitU16(slot)
+                            self.emitOp(Op.POP)
+                            self.patchJump(skipJump)
+                        i += 1
+                    for alias in ["ini", "this", "self"]:
+                        if alias not in mParams:
+                            aSlot = self.addLocal(alias)
+                            self.emitOp(Op.GETLOCAL)
+                            self.emitU16(0)
+                            self.emitOp(Op.SETLOCAL)
+                            self.emitU16(aSlot)
+                            self.emitOp(Op.POP)
+                    bodyStmts = mBody.stmts if hasattr(mBody, "stmts") else [mBody]
+                    self.compileBlock(bodyStmts)
+                    self.endScope()
+                    self.emitOp(Op.RETURNNULL)
+                    self.currentFn = self.fnStack.pop()
+                    clsFnMap[mName] = mFn
+            c = VmClass(name, baseClass)
+            c.methods = clsFnMap
+            c.metode = clsFnMap
+            self.emitConstant(c)
+            if isTopLevel and len(self.fnStack) == 0 and self.scopeDepth == 0:
+                constIdx = self.addConstant(name)
+                self.emitOp(Op.DEFINEGLOBAL)
+                self.emitU16(constIdx)
+            else:
+                slot = self.addLocal(name)
+                self.emitOp(Op.DEFINELOCAL)
+                self.emitU16(slot)
 
-    func compile_fn(self, stmt, is_top_level):
-        sub_fn = VmFunction(stmt.nama, stmt.params)
-        self.program_functions.append(sub_fn)
+    func compileFn(self, stmt, isTopLevel):
+        name = stmt.name if hasattr(stmt, "name") else stmt.nama
+        body = stmt.body if hasattr(stmt, "body") else stmt.badan
+        subFn = VmFunction(name, stmt.params)
+        self.programFunctions.append(subFn)
 
-        self.fn_stack.append(self.current_fn)
-        self.current_fn = sub_fn
+        self.fnStack.append(self.currentFn)
+        self.currentFn = subFn
 
-        self.begin_scope()
+        self.beginScope()
+        defaults = stmt.defaults if hasattr(stmt, "defaults") else {}
+        i = 0
         for p in stmt.params:
-            self.add_local(p)
+            slot = self.addLocal(p)
+            if p in defaults:
+                self.emitOp(Op.GETARGCOUNT)
+                self.emitConstant(i)
+                self.emitOp(Op.LTE)
+                skipJump = self.emitJump(Op.JUMPIFFALSE)
+                self.compileExpr(defaults[p])
+                self.emitOp(Op.SETLOCAL)
+                self.emitU16(slot)
+                self.emitOp(Op.POP)
+                self.patchJump(skipJump)
+            i += 1
 
-        body_stmts = stmt.badan.stmts if hasattr(stmt.badan, "stmts") else [stmt.badan]
-        self.compile_block(body_stmts)
-        self.end_scope()
+        bodyStmts = body.stmts if hasattr(body, "stmts") else [body]
+        self.compileBlock(bodyStmts)
+        self.endScope()
 
-        self.emit_op(Op.RETURN_NULL)
+        self.emitOp(Op.RETURNNULL)
 
-        self.current_fn = self.fn_stack.pop()
+        self.currentFn = self.fnStack.pop()
 
-        self.emit_constant(sub_fn)
+        self.emitConstant(subFn)
 
-        if is_top_level and len(self.fn_stack) == 0 and self.scope_depth == 0:
-            c_idx = self.add_constant(stmt.nama)
-            self.emit_op(Op.DEFINE_GLOBAL)
-            self.emit_u16(c_idx)
+        if isTopLevel and len(self.fnStack) == 0 and self.scopeDepth == 0:
+            constIdx = self.addConstant(name)
+            self.emitOp(Op.DEFINEGLOBAL)
+            self.emitU16(constIdx)
         else:
-            slot = self.add_local(stmt.nama)
-            self.emit_op(Op.DEFINE_LOCAL)
-            self.emit_u16(slot)
+            slot = self.addLocal(name)
+            self.emitOp(Op.DEFINELOCAL)
+            self.emitU16(slot)
 
-    func compile_expr(self, expr):
+    func compileExpr(self, expr):
         if expr == None:
-            self.emit_op(Op.NULL)
+            self.emitOp(Op.NULL)
             return None
 
-        j = expr.jenis
+        t = self.nodeType(expr)
 
-        if j == "ANGKA":
-            self.emit_constant(expr.nilai)
-        elif j == "TEKS":
-            self.emit_constant(expr.nilai)
-        elif j == "BOOL":
-            self.emit_op(Op.TRUE if expr.nilai else Op.FALSE)
-        elif j == "KOSONG":
-            self.emit_op(Op.NULL)
-        elif j == "PENGENAL":
-            self.compile_identifier_get(expr.nama)
-        elif j == "BINER":
+        if t == "NUMBER" or t == "ANGKA":
+            val = expr.value if hasattr(expr, "value") else expr.nilai
+            self.emitConstant(val)
+        elif t == "STRING" or t == "TEKS":
+            val = expr.value if hasattr(expr, "value") else expr.nilai
+            self.emitConstant(val)
+        elif t == "BOOL":
+            val = expr.value if hasattr(expr, "value") else expr.nilai
+            self.emitOp(Op.TRUE if val else Op.FALSE)
+        elif t == "NULL" or t == "KOSONG":
+            self.emitOp(Op.NULL)
+        elif t == "IDENT" or t == "PENGENAL":
+            name = expr.name if hasattr(expr, "name") else expr.nama
+            self.compileIdentGet(name)
+        elif t == "BINARY" or t == "BINER":
+            left = expr.left if hasattr(expr, "left") else expr.kiri
+            right = expr.right if hasattr(expr, "right") else expr.kanan
             op = expr.op
-            if op == "dan" or op == "&&":
-                self.compile_expr(expr.kiri)
-                j_keep = self.emit_jump(Op.JUMP_IF_FALSE_KEEP)
-                self.emit_op(Op.POP)
-                self.compile_expr(expr.kanan)
-                self.patch_jump(j_keep)
-            elif op == "atau" or op == "||":
-                self.compile_expr(expr.kiri)
-                j_keep = self.emit_jump(Op.JUMP_IF_TRUE_KEEP)
-                self.emit_op(Op.POP)
-                self.compile_expr(expr.kanan)
-                self.patch_jump(j_keep)
-            else:
-                self.compile_expr(expr.kiri)
-                self.compile_expr(expr.kanan)
+
+            leftType = self.nodeType(left)
+            rightType = self.nodeType(right)
+            if (leftType == "NUMBER" or leftType == "ANGKA") and (rightType == "NUMBER" or rightType == "ANGKA"):
+                v1 = left.value if hasattr(left, "value") else left.nilai
+                v2 = right.value if hasattr(right, "value") else right.nilai
                 if op == "+":
-                    self.emit_op(Op.ADD)
+                    self.emitConstant(v1 + v2)
+                    return None
                 elif op == "-":
-                    self.emit_op(Op.SUB)
+                    self.emitConstant(v1 - v2)
+                    return None
                 elif op == "*":
-                    self.emit_op(Op.MUL)
-                elif op == "/":
-                    self.emit_op(Op.DIV)
-                elif op == "%":
-                    self.emit_op(Op.MOD)
+                    self.emitConstant(v1 * v2)
+                    return None
+                elif op == "/" and v2 != 0:
+                    self.emitConstant(v1 / v2)
+                    return None
+                elif op == "%" and v2 != 0:
+                    self.emitConstant(v1 % v2)
+                    return None
+                elif op == "&":
+                    self.emitConstant(v1 & v2)
+                    return None
+                elif op == "|":
+                    self.emitConstant(v1 | v2)
+                    return None
+                elif op == "^":
+                    self.emitConstant(v1 ^ v2)
+                    return None
+                elif op == "<<":
+                    self.emitConstant(v1 << v2)
+                    return None
+                elif op == ">>":
+                    self.emitConstant(v1 >> v2)
+                    return None
                 elif op == "==":
-                    self.emit_op(Op.EQ)
+                    self.emitOp(Op.TRUE if v1 == v2 else Op.FALSE)
+                    return None
                 elif op == "!=":
-                    self.emit_op(Op.NEQ)
+                    self.emitOp(Op.TRUE if v1 != v2 else Op.FALSE)
+                    return None
                 elif op == "<":
-                    self.emit_op(Op.LT)
+                    self.emitOp(Op.TRUE if v1 < v2 else Op.FALSE)
+                    return None
                 elif op == "<=":
-                    self.emit_op(Op.LTE)
+                    self.emitOp(Op.TRUE if v1 <= v2 else Op.FALSE)
+                    return None
                 elif op == ">":
-                    self.emit_op(Op.GT)
+                    self.emitOp(Op.TRUE if v1 > v2 else Op.FALSE)
+                    return None
                 elif op == ">=":
-                    self.emit_op(Op.GTE)
+                    self.emitOp(Op.TRUE if v1 >= v2 else Op.FALSE)
+                    return None
+            elif (leftType == "STRING" or leftType == "TEKS") and (rightType == "STRING" or rightType == "TEKS") and op == "+":
+                v1 = left.value if hasattr(left, "value") else left.nilai
+                v2 = right.value if hasattr(right, "value") else right.nilai
+                self.emitConstant(v1 + v2)
+                return None
 
-        elif j == "UNER":
-            self.compile_expr(expr.operand)
-            if expr.op == "-":
-                self.emit_op(Op.NEG)
-            elif expr.op == "!" or expr.op == "bukan":
-                self.emit_op(Op.NOT)
-
-        elif j == "PANGGIL":
-            if expr.callee.jenis == "PENGENAL" and (expr.callee.nama == "cetak" or expr.callee.nama == "print"):
-                for a in expr.args:
-                    self.compile_expr(a)
-                self.emit_op(Op.PRINT)
-                self.emit_byte(len(expr.args))
-            elif expr.callee.jenis == "PENGENAL" and (expr.callee.nama == "panjang" or expr.callee.nama == "len"):
-                if len(expr.args) > 0:
-                    self.compile_expr(expr.args[0])
-                else:
-                    self.emit_op(Op.NULL)
-                self.emit_op(Op.LENGTH)
-            elif expr.callee.jenis == "MEMBER":
-                self.compile_expr(expr.callee.target)
-                for a in expr.args:
-                    self.compile_expr(a)
-                m_idx = self.add_constant(expr.callee.nama)
-                self.emit_op(Op.CALL_METHOD)
-                self.emit_u16(m_idx)
-                self.emit_byte(len(expr.args))
+            if op == "dan" or op == "&&" or op == "and":
+                self.compileExpr(left)
+                jumpKeep = self.emitJump(Op.JUMPIFFALSEKEEP)
+                self.emitOp(Op.POP)
+                self.compileExpr(right)
+                self.patchJump(jumpKeep)
+            elif op == "atau" or op == "||" or op == "or":
+                self.compileExpr(left)
+                jumpKeep = self.emitJump(Op.JUMPIFTRUEKEEP)
+                self.emitOp(Op.POP)
+                self.compileExpr(right)
+                self.patchJump(jumpKeep)
             else:
-                self.compile_expr(expr.callee)
-                for a in expr.args:
-                    self.compile_expr(a)
-                self.emit_op(Op.CALL)
-                self.emit_byte(len(expr.args))
-
-        elif j == "LARIK":
-            for el in expr.elemen:
-                self.compile_expr(el)
-            self.emit_op(Op.NEW_ARRAY)
-            self.emit_u16(len(expr.elemen))
-
-        elif j == "PETA":
-            m = len(expr.kunci)
+                self.compileExpr(left)
+                self.compileExpr(right)
+                if op == "+":
+                    self.emitOp(Op.ADD)
+                elif op == "-":
+                    self.emitOp(Op.SUB)
+                elif op == "*":
+                    self.emitOp(Op.MUL)
+                elif op == "/":
+                    self.emitOp(Op.DIV)
+                elif op == "%":
+                    self.emitOp(Op.MOD)
+                elif op == "==":
+                    self.emitOp(Op.EQ)
+                elif op == "!=":
+                    self.emitOp(Op.NEQ)
+                elif op == "<":
+                    self.emitOp(Op.LT)
+                elif op == "<=":
+                    self.emitOp(Op.LTE)
+                elif op == ">":
+                    self.emitOp(Op.GT)
+                elif op == ">=":
+                    self.emitOp(Op.GTE)
+                elif op == "in" or op == "dalam":
+                    self.emitOp(Op.IN)
+                elif op == "&":
+                    self.emitOp(Op.BITAND)
+                elif op == "|":
+                    self.emitOp(Op.BITOR)
+                elif op == "^":
+                    self.emitOp(Op.BITXOR)
+                elif op == "<<":
+                    self.emitOp(Op.SHL)
+                elif op == ">>":
+                    self.emitOp(Op.SHR)
+        elif t == "UNARY" or t == "UNER":
+            operand = expr.operand if hasattr(expr, "operand") else expr.operand
+            self.compileExpr(operand)
+            if expr.op == "-":
+                self.emitOp(Op.NEG)
+            elif expr.op == "!" or expr.op == "not" or expr.op == "bukan":
+                self.emitOp(Op.NOT)
+            elif expr.op == "~":
+                self.emitOp(Op.BITNOT)
+        elif t == "CALL" or t == "PANGGIL":
+            callee = expr.callee if hasattr(expr, "callee") else expr.callee
+            args = expr.args if hasattr(expr, "args") else expr.args
+            calleeType = self.nodeType(callee)
+            calleeName = callee.name if hasattr(callee, "name") else (callee.nama if hasattr(callee, "nama") else "")
+            if (calleeType == "IDENT" or calleeType == "PENGENAL") and (calleeName == "cetak" or calleeName == "print"):
+                for a in args:
+                    self.compileExpr(a)
+                self.emitOp(Op.PRINT)
+                self.emitByte(len(args))
+            elif (calleeType == "IDENT" or calleeType == "PENGENAL") and (calleeName == "panjang" or calleeName == "len"):
+                if len(args) > 0:
+                    self.compileExpr(args[0])
+                else:
+                    self.emitOp(Op.NULL)
+                self.emitOp(Op.LENGTH)
+            elif (calleeType == "IDENT" or calleeType == "PENGENAL") and (calleeName == "push" or calleeName == "tambah") and len(args) == 2:
+                self.compileExpr(args[0])
+                self.compileExpr(args[1])
+                self.emitOp(Op.PUSH)
+            elif (calleeType == "IDENT" or calleeType == "PENGENAL") and (calleeName == "str" or calleeName == "ke_teks") and len(args) == 1:
+                self.compileExpr(args[0])
+                self.emitOp(Op.TOSTRING)
+            elif calleeType == "MEMBER" or calleeType == "AKSES_ANGGOTA":
+                target = callee.target if hasattr(callee, "target") else callee.target
+                memberName = callee.name if hasattr(callee, "name") else (callee.nama if hasattr(callee, "nama") else "")
+                self.compileExpr(target)
+                for a in args:
+                    self.compileExpr(a)
+                mIdx = self.addConstant(memberName)
+                self.emitOp(Op.CALLMETHOD)
+                self.emitU16(mIdx)
+                self.emitByte(len(args))
+            else:
+                self.compileExpr(callee)
+                for a in args:
+                    self.compileExpr(a)
+                self.emitOp(Op.CALL)
+                self.emitByte(len(args))
+        elif t == "TERNARY" or t == "TERNER":
+            cond = expr.condition if hasattr(expr, "condition") else expr.kondisi
+            self.compileExpr(cond)
+            elseJump = self.emitJump(Op.JUMPIFFALSE)
+            self.compileExpr(expr.thenVal)
+            endJump = self.emitJump(Op.JUMP)
+            self.patchJump(elseJump)
+            self.compileExpr(expr.elseVal)
+            self.patchJump(endJump)
+        elif t == "LAMBDA":
+            body = expr.body if hasattr(expr, "body") else expr.badan
+            lambdaFn = VmFunction("<lambda>", expr.params)
+            self.programFunctions.append(lambdaFn)
+            self.fnStack.append(self.currentFn)
+            self.currentFn = lambdaFn
+            self.beginScope()
+            for p in expr.params:
+                self.addLocal(p)
+            if hasattr(body, "stmts"):
+                self.compileBlock(body.stmts)
+                self.emitOp(Op.RETURNNULL)
+            elif hasattr(body, "type") or hasattr(body, "jenis"):
+                self.compileExpr(body)
+                self.emitOp(Op.RETURN)
+            else:
+                self.emitOp(Op.RETURNNULL)
+            self.endScope()
+            self.currentFn = self.fnStack.pop()
+            self.emitConstant(lambdaFn)
+        elif t == "LIST" or t == "LARIK":
+            elements = expr.elements if hasattr(expr, "elements") else expr.elemen
+            for el in elements:
+                self.compileExpr(el)
+            self.emitOp(Op.NEWARRAY)
+            self.emitU16(len(elements))
+        elif t == "MAP" or t == "PETA":
+            keys = expr.keys if hasattr(expr, "keys") else expr.kunci
+            values = expr.values if hasattr(expr, "values") else expr.nilai
+            m = len(keys)
             k = 0
             while k < m:
-                self.emit_constant(expr.kunci[k])
-                self.compile_expr(expr.nilai[k])
+                self.emitConstant(keys[k])
+                self.compileExpr(values[k])
                 k += 1
-            self.emit_op(Op.NEW_MAP)
-            self.emit_u16(m)
-
-        elif j == "INDEX":
-            self.compile_expr(expr.target)
-            self.compile_expr(expr.index)
-            self.emit_op(Op.GET_INDEX)
-
-        elif j == "MEMBER":
-            self.compile_expr(expr.target)
-            f_idx = self.add_constant(expr.nama)
-            self.emit_op(Op.GET_FIELD)
-            self.emit_u16(f_idx)
-
-        elif j == "TUGAS":
-            if expr.target.jenis == "PENGENAL":
-                name = expr.target.nama
+            self.emitOp(Op.NEWMAP)
+            self.emitU16(m)
+        elif t == "INDEX":
+            self.compileExpr(expr.target)
+            self.compileExpr(expr.index)
+            self.emitOp(Op.GETINDEX)
+        elif t == "SLICE" or t == "IRISAN":
+            self.compileExpr(expr.target)
+            start = expr.start if hasattr(expr, "start") else expr.awal
+            stop = expr.stop if hasattr(expr, "stop") else expr.sampai
+            self.compileExpr(start)
+            self.compileExpr(stop)
+            self.emitOp(Op.SLICE)
+        elif t == "MEMBER" or t == "AKSES_ANGGOTA":
+            target = expr.target if hasattr(expr, "target") else expr.target
+            name = expr.name if hasattr(expr, "name") else expr.nama
+            self.compileExpr(target)
+            fIdx = self.addConstant(name)
+            self.emitOp(Op.GETFIELD)
+            self.emitU16(fIdx)
+        elif t == "ASSIGN" or t == "TUGAS":
+            target = expr.target if hasattr(expr, "target") else expr.target
+            val = expr.value if hasattr(expr, "value") else expr.nilai
+            targetType = self.nodeType(target)
+            if targetType == "IDENT" or targetType == "PENGENAL":
+                name = target.name if hasattr(target, "name") else target.nama
                 if expr.op == "=":
-                    self.compile_expr(expr.nilai)
-                    self.compile_identifier_set(name)
+                    self.compileExpr(val)
+                    self.compileIdentSet(name)
                 else:
-                    self.compile_identifier_get(name)
-                    self.compile_expr(expr.nilai)
+                    self.compileIdentGet(name)
+                    self.compileExpr(val)
                     bop = expr.op[0]
                     if bop == "+":
-                        self.emit_op(Op.ADD)
+                        self.emitOp(Op.ADD)
                     elif bop == "-":
-                        self.emit_op(Op.SUB)
+                        self.emitOp(Op.SUB)
                     elif bop == "*":
-                        self.emit_op(Op.MUL)
+                        self.emitOp(Op.MUL)
                     elif bop == "/":
-                        self.emit_op(Op.DIV)
-                    self.compile_identifier_set(name)
-            elif expr.target.jenis == "INDEX":
-                self.compile_expr(expr.target.target)
-                self.compile_expr(expr.target.index)
-                self.compile_expr(expr.nilai)
-                self.emit_op(Op.SET_INDEX)
-            elif expr.target.jenis == "MEMBER":
-                self.compile_expr(expr.target.target)
-                self.compile_expr(expr.nilai)
-                f_idx = self.add_constant(expr.target.nama)
-                self.emit_op(Op.SET_FIELD)
-                self.emit_u16(f_idx)
+                        self.emitOp(Op.DIV)
+                    self.compileIdentSet(name)
+            elif targetType == "INDEX":
+                self.compileExpr(target.target)
+                self.compileExpr(target.index)
+                self.compileExpr(val)
+                self.emitOp(Op.SETINDEX)
+            elif targetType == "MEMBER" or targetType == "AKSES_ANGGOTA":
+                mTarget = target.target if hasattr(target, "target") else target.target
+                mName = target.name if hasattr(target, "name") else target.nama
+                self.compileExpr(mTarget)
+                self.compileExpr(val)
+                fIdx = self.addConstant(mName)
+                self.emitOp(Op.SETFIELD)
+                self.emitU16(fIdx)
 
-    func compile_identifier_get(self, name):
-        slot = self.resolve_local(name)
+    func compileIdentGet(self, name):
+        slot = self.resolveLocal(name)
         if slot != -1:
-            self.emit_op(Op.GET_LOCAL)
-            self.emit_u16(slot)
+            self.emitOp(Op.GETLOCAL)
+            self.emitU16(slot)
         else:
-            c_idx = self.add_constant(name)
-            self.emit_op(Op.GET_GLOBAL)
-            self.emit_u16(c_idx)
+            cIdx = self.addConstant(name)
+            self.emitOp(Op.GETGLOBAL)
+            self.emitU16(cIdx)
 
-    func compile_identifier_set(self, name):
-        slot = self.resolve_local(name)
+    func compileIdentSet(self, name):
+        slot = self.resolveLocal(name)
         if slot != -1:
-            self.emit_op(Op.SET_LOCAL)
-            self.emit_u16(slot)
+            self.emitOp(Op.SETLOCAL)
+            self.emitU16(slot)
         else:
-            c_idx = self.add_constant(name)
-            self.emit_op(Op.SET_GLOBAL)
-            self.emit_u16(c_idx)
+            cIdx = self.addConstant(name)
+            self.emitOp(Op.SETGLOBAL)
+            self.emitU16(cIdx)
 
 class VmRunner:
     func __init__(self):
@@ -647,85 +925,64 @@ class VmRunner:
         self.frames = []
         self.frame = None
         self.globals = {}
-        self.daftarkan_bawaan()
+        self.registerBuiltins()
 
-    func daftarkan_bawaan(self):
-        self.globals["cetak"] = {"is_bawaan": True, "nama": "cetak"}
-        self.globals["print"] = {"is_bawaan": True, "nama": "cetak"}
-        self.globals["panjang"] = {"is_bawaan": True, "nama": "panjang"}
-        self.globals["len"] = {"is_bawaan": True, "nama": "panjang"}
-        self.globals["ke_teks"] = {"is_bawaan": True, "nama": "ke_teks"}
-        self.globals["str"] = {"is_bawaan": True, "nama": "ke_teks"}
-        self.globals["ke_angka"] = {"is_bawaan": True, "nama": "ke_angka"}
-        self.globals["int"] = {"is_bawaan": True, "nama": "ke_angka"}
-        self.globals["float"] = {"is_bawaan": True, "nama": "ke_angka"}
-        self.globals["tipe"] = {"is_bawaan": True, "nama": "tipe"}
-        self.globals["type"] = {"is_bawaan": True, "nama": "tipe"}
-        self.globals["range"] = {"is_bawaan": True, "nama": "range"}
-        self.globals["larik"] = {"is_bawaan": True, "nama": "larik"}
-        self.globals["peta"] = {"is_bawaan": True, "nama": "peta"}
+    func registerBuiltins(self):
+        self.globals["print"] = print
+        self.globals["cetak"] = cetak
+        self.globals["len"] = len
+        self.globals["panjang"] = panjang
+        self.globals["str"] = str
+        self.globals["ke_teks"] = ke_teks
+        self.globals["int"] = int
+        self.globals["float"] = float
+        self.globals["ke_angka"] = ke_angka
+        self.globals["type"] = type
+        self.globals["tipe"] = tipe
+        self.globals["range"] = range
+        self.globals["rentang"] = range
+        self.globals["list"] = lambda: []
+        self.globals["larik"] = lambda: []
+        self.globals["map"] = lambda: {}
+        self.globals["peta"] = lambda: {}
+        self.globals["peta_baru"] = peta_baru
+        self.globals["newMap"] = peta_baru
+        self.globals["readFile"] = baca_file
+        self.globals["baca_file"] = baca_file
+        self.globals["writeFile"] = tulis_file
+        self.globals["tulis_file"] = tulis_file
+        self.globals["fileExists"] = file_ada
+        self.globals["file_ada"] = file_ada
+        self.globals["import"] = impor
+        self.globals["impor"] = impor
+        self.globals["time"] = waktu
+        self.globals["waktu"] = waktu
+        self.globals["gcInfo"] = gc_info
+        self.globals["gc_info"] = gc_info
+        self.globals["gcForce"] = gc_paksa
+        self.globals["gc_paksa"] = gc_paksa
+        self.globals["env"] = ambil_env
+        self.globals["ambil_env"] = ambil_env
+        self.globals["push"] = tambah
+        self.globals["tambah"] = tambah
+        self.globals["pop"] = hapus_akhir
+        self.globals["hapus_akhir"] = hapus_akhir
+        self.globals["split"] = pisah
+        self.globals["pisah"] = pisah
+        self.globals["join"] = gabung
+        self.globals["gabung"] = gabung
+        self.globals["runCommand"] = jalankan_perintah
+        self.globals["JalankanPerintah"] = jalankan_perintah
+        self.globals["jalankanPerintah"] = jalankan_perintah
+        self.globals["callable"] = callable
+        self.globals["input"] = input
         self.globals["sys"] = sys
-        self.globals["baca_file"] = {"is_bawaan": True, "nama": "baca_file"}
-        self.globals["tulis_file"] = {"is_bawaan": True, "nama": "tulis_file"}
-        self.globals["impor"] = {"is_bawaan": True, "nama": "impor"}
 
-    func panggil_bawaan(self, name, args):
-        if name == "cetak":
-            text_args = []
-            for a in args:
-                text_args.append(str(a))
-            cetak(" ".join(text_args))
-            return None
-        elif name == "panjang":
-            if len(args) > 0:
-                return len(args[0])
-            return 0
-        elif name == "ke_teks":
-            if len(args) > 0:
-                return str(args[0])
-            return ""
-        elif name == "ke_angka":
-            if len(args) > 0:
-                return ke_angka(args[0])
-            return 0
-        elif name == "tipe":
-            if len(args) > 0:
-                return type(args[0])
-            return "kosong"
-        elif name == "range":
-            start = 0
-            stop = 0
-            step = 1
-            if len(args) == 1:
-                stop = ke_angka(args[0])
-            elif len(args) >= 2:
-                start = ke_angka(args[0])
-                stop = ke_angka(args[1])
-                if len(args) >= 3:
-                    step = ke_angka(args[2])
-            res = []
-            cur = start
-            while cur < stop:
-                res.append(cur)
-                cur += step
-            return res
-        elif name == "larik":
-            return args
-        elif name == "peta":
-            return {}
-        elif name == "baca_file":
-            if len(args) > 0:
-                return baca_file(args[0])
-            return ""
-        elif name == "tulis_file":
-            if len(args) >= 2:
-                tulis_file(args[0], args[1])
-            return None
-        elif name == "impor":
-            if len(args) > 0:
-                return impor(args[0])
-            return None
-        return None
+    func callBuiltin(self, fn, args):
+        return fn(*args)
+
+    func panggilBawaan(self, fn, args):
+        return self.callBuiltin(fn, args)
 
     func push(self, val):
         self.stack.append(val)
@@ -735,12 +992,12 @@ class VmRunner:
             return None
         return self.stack.pop()
 
-    func read_byte(self):
+    func readByte(self):
         b = self.frame.fn.code[self.frame.ip]
         self.frame.ip += 1
         return b
 
-    func read_u16(self):
+    func readU16(self):
         b1 = self.frame.fn.code[self.frame.ip]
         b2 = self.frame.fn.code[self.frame.ip + 1]
         self.frame.ip += 2
@@ -751,24 +1008,160 @@ class VmRunner:
             return False
         return True
 
-    func jalankan(self, top_fn):
-        init_frame = CallFrame(top_fn, [])
-        self.frames = [init_frame]
-        self.frame = init_frame
+    func run(self, topFn):
+        initFrame = CallFrame(topFn, [])
+        self.frames = [initFrame]
+        self.frame = initFrame
         self.stack = []
 
+        opConst = Op.CONST
+        opAdd = Op.ADD
+        opSub = Op.SUB
+        opEq = Op.EQ
+        opLt = Op.LT
+        opLte = Op.LTE
+        opGt = Op.GT
+        opGte = Op.GTE
+        opPop = Op.POP
+        opGetLocal = Op.GETLOCAL
+        opSetLocal = Op.SETLOCAL
+        opDefineLocal = Op.DEFINELOCAL
+        opGetGlobal = Op.GETGLOBAL
+        opSetGlobal = Op.SETGLOBAL
+        opJump = Op.JUMP
+        opJumpIfFalse = Op.JUMPIFFALSE
+        opLoop = Op.LOOP
+        opGetIndex = Op.GETINDEX
+        opIncLocal = Op.INCLOCAL
+        globalVars = self.globals
+
         while len(self.frames) > 0:
-            if self.frame.ip >= len(self.frame.fn.code):
+            frame = self.frame
+            fnObj = frame.fn
+            code = fnObj.code
+            consts = fnObj.constants
+            slots = frame.locals
+            stack = self.stack
+            ip = frame.ip
+            codeLen = len(code)
+            op = -1
+            cold = False
+
+            while ip < codeLen:
+                op = code[ip]
+                ip += 1
+                if op == opGetLocal:
+                    stack.append(slots[code[ip] | (code[ip + 1] << 8)])
+                    ip += 2
+                elif op == opConst:
+                    stack.append(consts[code[ip] | (code[ip + 1] << 8)])
+                    ip += 2
+                elif op == opSetLocal:
+                    if len(stack) > 0:
+                        slots[code[ip] | (code[ip + 1] << 8)] = stack[-1]
+                    ip += 2
+                elif op == opAdd:
+                    if len(stack) < 2:
+                        cold = True
+                        break
+                    b = stack.pop()
+                    stack[-1] = stack[-1] + b
+                elif op == opSub:
+                    if len(stack) < 2:
+                        cold = True
+                        break
+                    b = stack.pop()
+                    stack[-1] = stack[-1] - b
+                elif op == opLt:
+                    if len(stack) < 2:
+                        cold = True
+                        break
+                    b = stack.pop()
+                    stack[-1] = stack[-1] < b
+                elif op == opLte:
+                    if len(stack) < 2:
+                        cold = True
+                        break
+                    b = stack.pop()
+                    stack[-1] = stack[-1] <= b
+                elif op == opGt:
+                    if len(stack) < 2:
+                        cold = True
+                        break
+                    b = stack.pop()
+                    stack[-1] = stack[-1] > b
+                elif op == opGte:
+                    if len(stack) < 2:
+                        cold = True
+                        break
+                    b = stack.pop()
+                    stack[-1] = stack[-1] >= b
+                elif op == opEq:
+                    if len(stack) < 2:
+                        cold = True
+                        break
+                    b = stack.pop()
+                    stack[-1] = stack[-1] == b
+                elif op == opJumpIfFalse:
+                    if len(stack) == 0:
+                        cold = True
+                        break
+                    val = stack.pop()
+                    if val == None or val == False or val == 0 or val == "":
+                        ip += 2 + (code[ip] | (code[ip + 1] << 8))
+                    else:
+                        ip += 2
+                elif op == opLoop:
+                    ip -= (code[ip] | (code[ip + 1] << 8)) - 2
+                elif op == opJump:
+                    ip += 2 + (code[ip] | (code[ip + 1] << 8))
+                elif op == opIncLocal:
+                    slot = code[ip] | (code[ip + 1] << 8)
+                    slots[slot] = slots[slot] + 1
+                    ip += 2
+                elif op == opPop:
+                    if len(stack) > 0:
+                        stack.pop()
+                elif op == opDefineLocal:
+                    slots[code[ip] | (code[ip + 1] << 8)] = stack.pop() if len(stack) > 0 else None
+                    ip += 2
+                elif op == opGetIndex:
+                    if len(stack) < 2:
+                        cold = True
+                        break
+                    idx = stack.pop()
+                    stack[-1] = stack[-1][idx]
+                elif op == opGetGlobal:
+                    name = consts[code[ip] | (code[ip + 1] << 8)]
+                    ip += 2
+                    if name in globalVars:
+                        stack.append(globalVars[name])
+                    else:
+                        print("RuntimeError: Undefined variable '" + name + "'")
+                        stack.append(None)
+                elif op == opSetGlobal:
+                    if len(stack) > 0:
+                        globalVars[consts[code[ip] | (code[ip + 1] << 8)]] = stack[-1]
+                    ip += 2
+                else:
+                    cold = True
+                    break
+
+            frame.ip = ip
+            if not cold:
+                op = -1
+
+            if op == -1 and ip >= codeLen:
+                isInit = hasattr(self.frame, "isInit") and self.frame.isInit
+                retVal = self.frame.initInstance if isInit else None
                 self.frames.pop()
                 if len(self.frames) > 0:
                     self.frame = self.frames[-1]
-                    self.push(None)
+                    self.push(retVal)
                 continue
 
-            op = self.read_byte()
-
             if op == Op.CONST:
-                idx = self.read_u16()
+                idx = self.readU16()
                 self.push(self.frame.fn.constants[idx])
             elif op == Op.NULL:
                 self.push(None)
@@ -799,7 +1192,7 @@ class VmRunner:
                 a = self.pop()
                 if (type(a) == "string" or type(a) == "str" or type(a) == "teks") and (type(b) == "angka" or type(b) == "int"):
                     s = ""
-                    cnt = ke_angka(b)
+                    cnt = int(b)
                     while cnt > 0:
                         s += a
                         cnt -= 1
@@ -810,7 +1203,7 @@ class VmRunner:
                 b = self.pop()
                 a = self.pop()
                 if b == 0:
-                    cetak("RuntimeError: Pembagian dengan nol")
+                    print("RuntimeError: Division by zero")
                     self.push(0)
                 else:
                     self.push(a / b)
@@ -848,63 +1241,101 @@ class VmRunner:
                 b = self.pop()
                 a = self.pop()
                 self.push(a >= b)
-            elif op == Op.GET_LOCAL:
-                slot = self.read_u16()
+            elif op == Op.IN:
+                b = self.pop()
+                a = self.pop()
+                self.push(a in b)
+            elif op == Op.BITAND:
+                b = self.pop()
+                a = self.pop()
+                self.push(a & b)
+            elif op == Op.BITOR:
+                b = self.pop()
+                a = self.pop()
+                self.push(a | b)
+            elif op == Op.BITXOR:
+                b = self.pop()
+                a = self.pop()
+                self.push(a ^ b)
+            elif op == Op.SHL:
+                b = self.pop()
+                a = self.pop()
+                self.push(a << b)
+            elif op == Op.SHR:
+                b = self.pop()
+                a = self.pop()
+                self.push(a >> b)
+            elif op == Op.BITNOT:
+                a = self.pop()
+                self.push(~a)
+            elif op == Op.GETARGCOUNT:
+                self.push(self.frame.providedCount)
+            elif op == Op.GETLOCAL:
+                slot = self.readU16()
                 self.push(self.frame.locals[slot])
-            elif op == Op.SET_LOCAL:
-                slot = self.read_u16()
+            elif op == Op.SETLOCAL:
+                slot = self.readU16()
                 self.frame.locals[slot] = self.stack[-1]
-            elif op == Op.DEFINE_LOCAL:
-                slot = self.read_u16()
+            elif op == Op.DEFINELOCAL:
+                slot = self.readU16()
                 self.frame.locals[slot] = self.pop()
-            elif op == Op.GET_GLOBAL:
-                idx = self.read_u16()
+            elif op == Op.INCLOCAL:
+                slot = self.readU16()
+                self.frame.locals[slot] = self.frame.locals[slot] + 1
+            elif op == Op.DECLOCAL:
+                slot = self.readU16()
+                self.frame.locals[slot] = self.frame.locals[slot] - 1
+            elif op == Op.ADDLOCAL:
+                slot = self.readU16()
+                cIdx = self.readU16()
+                self.frame.locals[slot] = self.frame.locals[slot] + self.frame.fn.constants[cIdx]
+            elif op == Op.TOSTRING:
+                val = self.pop()
+                self.push(str(val))
+            elif op == Op.GETGLOBAL:
+                idx = self.readU16()
                 name = self.frame.fn.constants[idx]
                 if name in self.globals:
                     self.push(self.globals[name])
                 else:
-                    cetak("RuntimeError: Variabel global tidak dikenal '" + name + "'")
+                    print("RuntimeError: Undefined variable '" + name + "'")
                     self.push(None)
-            elif op == Op.SET_GLOBAL:
-                idx = self.read_u16()
+            elif op == Op.SETGLOBAL:
+                idx = self.readU16()
                 name = self.frame.fn.constants[idx]
                 self.globals[name] = self.stack[-1]
-            elif op == Op.DEFINE_GLOBAL:
-                idx = self.read_u16()
+            elif op == Op.DEFINEGLOBAL:
+                idx = self.readU16()
                 name = self.frame.fn.constants[idx]
                 self.globals[name] = self.pop()
             elif op == Op.JUMP:
-                off = self.read_u16()
+                off = self.readU16()
                 self.frame.ip += off
-            elif op == Op.JUMP_IF_FALSE:
-                off = self.read_u16()
+            elif op == Op.JUMPIFFALSE:
+                off = self.readU16()
                 val = self.pop()
                 if not self.truthy(val):
                     self.frame.ip += off
-            elif op == Op.JUMP_IF_FALSE_KEEP:
-                off = self.read_u16()
+            elif op == Op.JUMPIFFALSEKEEP:
+                off = self.readU16()
                 if not self.truthy(self.stack[-1]):
                     self.frame.ip += off
-            elif op == Op.JUMP_IF_TRUE_KEEP:
-                off = self.read_u16()
+            elif op == Op.JUMPIFTRUEKEEP:
+                off = self.readU16()
                 if self.truthy(self.stack[-1]):
                     self.frame.ip += off
             elif op == Op.LOOP:
-                off = self.read_u16()
+                off = self.readU16()
                 self.frame.ip -= off
             elif op == Op.PRINT:
-                arg_count = self.read_byte()
+                argCount = self.readByte()
                 args = []
                 k = 0
-                while k < arg_count:
+                while k < argCount:
                     args.append(self.pop())
                     k += 1
-                pr_args = []
-                k = arg_count - 1
-                while k >= 0:
-                    pr_args.append(str(args[k]))
-                    k -= 1
-                cetak(" ".join(pr_args))
+                args.reverse()
+                print(*args)
                 self.push(None)
             elif op == Op.LENGTH:
                 val = self.pop()
@@ -914,164 +1345,184 @@ class VmRunner:
                 target = self.pop()
                 target.append(val)
                 self.push(len(target))
-            elif op == Op.NEW_ARRAY:
-                cnt = self.read_u16()
-                elems = []
-                k = 0
-                while k < cnt:
-                    elems.append(self.pop())
-                    k += 1
-                arr = []
-                k = cnt - 1
-                while k >= 0:
-                    arr.append(elems[k])
-                    k -= 1
-                self.push(arr)
-            elif op == Op.NEW_MAP:
-                cnt = self.read_u16()
-                pairs = []
+            elif op == Op.NEWARRAY:
+                cnt = self.readU16()
+                if cnt == 0:
+                    self.push([])
+                else:
+                    elems = self.stack[-cnt:]
+                    self.stack = self.stack[:-cnt]
+                    self.push(elems)
+            elif op == Op.NEWMAP:
+                cnt = self.readU16()
+                m = {}
                 k = 0
                 while k < cnt:
                     v = self.pop()
-                    k_key = self.pop()
-                    pairs.append([k_key, v])
+                    kKey = self.pop()
+                    m[kKey] = v
                     k += 1
-                m = {}
-                k = cnt - 1
-                while k >= 0:
-                    m[pairs[k][0]] = pairs[k][1]
-                    k -= 1
                 self.push(m)
-            elif op == Op.GET_INDEX:
+            elif op == Op.GETINDEX:
                 idx = self.pop()
                 target = self.pop()
                 self.push(target[idx])
-            elif op == Op.SET_INDEX:
+            elif op == Op.SETINDEX:
                 val = self.pop()
                 idx = self.pop()
                 target = self.pop()
                 target[idx] = val
                 self.push(val)
-            elif op == Op.GET_FIELD:
-                name_idx = self.read_u16()
-                name = self.frame.fn.constants[name_idx]
+            elif op == Op.SLICE:
+                stop = self.pop()
+                start = self.pop()
                 target = self.pop()
-                if (type(target) == "peta" or type(target) == "dict") and name in target:
+                if start == None:
+                    start = 0
+                if stop == None:
+                    stop = len(target)
+                self.push(target[start:stop])
+            elif op == Op.GETFIELD:
+                nameIdx = self.readU16()
+                name = self.frame.fn.constants[nameIdx]
+                target = self.pop()
+                if hasattr(target, "fields"):
+                    f = target.fields
+                    if name in f:
+                        self.push(f[name])
+                    elif hasattr(target, "cls") and name in target.cls.methods:
+                        self.push({"isMethod": True, "instance": target, "method": target.cls.methods[name]})
+                    elif hasattr(target, "bidang") and name in target.bidang:
+                        self.push(target.bidang[name])
+                    elif hasattr(target, "kelas") and hasattr(target.kelas, "metode") and name in target.kelas.metode:
+                        self.push({"isMethod": True, "instance": target, "method": target.kelas.metode[name]})
+                    else:
+                        print("RuntimeError: Field '" + name + "' not found")
+                        self.push(None)
+                elif (type(target) == "peta" or type(target) == "dict") and name in target:
                     self.push(target[name])
-                elif hasattr(target, "bidang") and name in target.bidang:
-                    self.push(target.bidang[name])
-                elif hasattr(target, "kelas") and name in target.kelas.metode:
-                    self.push({"is_metode": True, "instans": target, "fungsi": target.kelas.metode[name]})
                 elif hasattr(target, name):
                     self.push(getattr(target, name))
                 else:
-                    cetak("RuntimeError: Field '" + name + "' tidak ditemukan")
+                    print("RuntimeError: Field '" + name + "' not found")
                     self.push(None)
-            elif op == Op.SET_FIELD:
-                name_idx = self.read_u16()
-                name = self.frame.fn.constants[name_idx]
+            elif op == Op.SETFIELD:
+                nameIdx = self.readU16()
+                name = self.frame.fn.constants[nameIdx]
                 val = self.pop()
                 target = self.pop()
-                if type(target) == "peta" or type(target) == "dict":
+                if hasattr(target, "fields"):
+                    target.fields[name] = val
+                elif type(target) == "peta" or type(target) == "dict":
                     target[name] = val
                 elif hasattr(target, "bidang"):
                     target.bidang[name] = val
                 elif hasattr(target, name):
                     setattr(target, name, val)
                 self.push(val)
-            elif op == Op.CALL_METHOD:
-                name_idx = self.read_u16()
-                name = self.frame.fn.constants[name_idx]
-                arg_count = self.read_byte()
-                args = []
-                k = 0
-                while k < arg_count:
-                    args.append(self.pop())
-                    k += 1
-                call_args = []
-                k = arg_count - 1
-                while k >= 0:
-                    call_args.append(args[k])
-                    k -= 1
+            elif op == Op.CALLMETHOD:
+                nameIdx = self.readU16()
+                name = self.frame.fn.constants[nameIdx]
+                argCount = self.readByte()
+                if argCount == 0:
+                    callArgs = []
+                else:
+                    callArgs = self.stack[-argCount:]
+                    self.stack = self.stack[:-argCount]
                 target = self.pop()
 
-                if hasattr(target, "kelas") and name in target.kelas.metode:
-                    meth = target.kelas.metode[name]
-                    call_args.insert(0, target)
-                    new_frame = CallFrame(meth, call_args)
-                    self.frames.append(new_frame)
-                    self.frame = new_frame
-                elif hasattr(target, name):
-                    fn_target = getattr(target, name)
-                    res = fn_target(*call_args)
+                if hasattr(target, "cls"):
+                    mMap = target.cls.methods
+                    if name in mMap:
+                        newFrame = CallFrame(mMap[name], [target] + callArgs)
+                        self.frames.append(newFrame)
+                        self.frame = newFrame
+                        continue
+                if hasattr(target, "kelas"):
+                    mMap = target.kelas.metode
+                    if name in mMap:
+                        newFrame = CallFrame(mMap[name], [target] + callArgs)
+                        self.frames.append(newFrame)
+                        self.frame = newFrame
+                        continue
+                if hasattr(target, name):
+                    fnTarget = getattr(target, name)
+                    res = fnTarget(*callArgs)
                     self.push(res)
                 else:
-                    cetak("RuntimeError: Metode '" + name + "' tidak ditemukan")
+                    print("RuntimeError: Method '" + name + "' not found")
                     self.push(None)
             elif op == Op.CALL:
-                arg_count = self.read_byte()
-                args = []
-                k = 0
-                while k < arg_count:
-                    args.append(self.pop())
-                    k += 1
-                call_args = []
-                k = arg_count - 1
-                while k >= 0:
-                    call_args.append(args[k])
-                    k -= 1
+                argCount = self.readByte()
+                if argCount == 0:
+                    callArgs = []
+                else:
+                    callArgs = self.stack[-argCount:]
+                    self.stack = self.stack[:-argCount]
                 callee = self.pop()
 
                 if hasattr(callee, "code"):
-                    new_frame = CallFrame(callee, call_args)
-                    self.frames.append(new_frame)
-                    self.frame = new_frame
-                elif (type(callee) == "peta" or type(callee) == "dict") and "is_bawaan" in callee:
-                    res = self.panggil_bawaan(callee["nama"], call_args)
-                    self.push(res)
-                elif (type(callee) == "peta" or type(callee) == "dict") and "is_metode" in callee:
-                    call_args.insert(0, callee["instans"])
-                    new_frame = CallFrame(callee["fungsi"], call_args)
-                    self.frames.append(new_frame)
-                    self.frame = new_frame
-                elif hasattr(callee, "is_kelas"):
-                    instans = VmInstance(callee)
-                    init_fn = None
-                    if "__init__" in callee.metode:
-                        init_fn = callee.metode["__init__"]
-                    elif "konstruktor" in callee.metode:
-                        init_fn = callee.metode["konstruktor"]
-                    if init_fn != None:
-                        init_args = [instans]
-                        for a in call_args:
-                            init_args.append(a)
-                        new_frame = CallFrame(init_fn, init_args)
-                        self.frames.append(new_frame)
-                        self.frame = new_frame
-                    self.push(instans)
-                elif type(callee) == "fungsi" or type(callee) == "kelas":
-                    res = callee(*call_args)
+                    newFrame = CallFrame(callee, callArgs)
+                    self.frames.append(newFrame)
+                    self.frame = newFrame
+                elif isinstance(callee, dict) and "isMethod" in callee:
+                    inst = callee["instance"]
+                    mFn = callee["method"]
+                    callArgs.insert(0, inst)
+                    newFrame = CallFrame(mFn, callArgs)
+                    self.frames.append(newFrame)
+                    self.frame = newFrame
+                elif hasattr(callee, "isClass") or hasattr(callee, "isKelas"):
+                    inst = VmInstance(callee)
+                    initFn = None
+                    methMap = callee.methods if hasattr(callee, "methods") else callee.metode
+                    if "__init__" in methMap:
+                        initFn = methMap["__init__"]
+                    elif "constructor" in methMap:
+                        initFn = methMap["constructor"]
+                    elif "konstruktor" in methMap:
+                        initFn = methMap["konstruktor"]
+                    if initFn != None:
+                        initArgs = [inst]
+                        for a in callArgs:
+                            initArgs.append(a)
+                        newFrame = CallFrame(initFn, initArgs)
+                        newFrame.isInit = True
+                        newFrame.initInstance = inst
+                        self.frames.append(newFrame)
+                        self.frame = newFrame
+                    else:
+                        self.push(inst)
+                elif callable(callee):
+                    res = callee(*callArgs)
                     self.push(res)
                 else:
-                    cetak("RuntimeError: Objek tidak dapat dipanggil sebagai fungsi:", callee)
+                    print("RuntimeError: Object is not callable:", callee)
                     self.push(None)
             elif op == Op.RETURN:
                 val = self.pop()
+                isInit = hasattr(self.frame, "isInit") and self.frame.isInit
+                retVal = self.frame.initInstance if isInit else val
                 self.frames.pop()
                 if len(self.frames) == 0:
-                    return val
+                    return retVal
                 self.frame = self.frames[-1]
-                self.push(val)
-            elif op == Op.RETURN_NULL:
+                self.push(retVal)
+            elif op == Op.RETURNNULL:
+                isInit = hasattr(self.frame, "isInit") and self.frame.isInit
+                retVal = self.frame.initInstance if isInit else None
                 self.frames.pop()
                 if len(self.frames) == 0:
-                    return None
+                    return retVal
                 self.frame = self.frames[-1]
-                self.push(None)
+                self.push(retVal)
             elif op == Op.THROW:
                 val = self.pop()
-                lempar val
+                raise val
 
         if len(self.stack) > 0:
             return self.pop()
         return None
+
+    func jalankan(self, topFn):
+        return self.run(topFn)

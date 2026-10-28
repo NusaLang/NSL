@@ -1,19 +1,23 @@
-BAHASA_SAAT_INI = "id"
+currentLang = "id"
 
-func atur_bahasa(b):
-    global BAHASA_SAAT_INI
-    if b == "en" or b == "EN":
-        BAHASA_SAAT_INI = "en"
+func setLang(lang):
+    global currentLang
+    if lang == "en" or lang == "EN":
+        currentLang = "en"
     else:
-        BAHASA_SAAT_INI = "id"
+        currentLang = "id"
 
-func ambil_bahasa():
-    return BAHASA_SAAT_INI
+func getLang():
+    return currentLang
 
-func apakah_en():
-    return BAHASA_SAAT_INI == "en"
+func isEn():
+    return currentLang == "en"
 
-func tr(teks_id, teks_en):
-    if apakah_en():
-        return teks_en
-    return teks_id
+func tr(textId, textEn):
+    if isEn():
+        return textEn
+    return textId
+
+aturBahasa = setLang
+ambilBahasa = getLang
+apakahEn = isEn

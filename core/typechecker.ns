@@ -1,60 +1,67 @@
-func normalisasi_tipe(raw):
+func normalizeType(raw):
     if raw == None or raw == "" or raw == "any" or raw == "apa":
         return ""
     alias = {
-        "num": "angka", "int": "angka", "float": "angka",
-        "str": "teks", "string": "teks",
-        "bool": "boolean",
-        "array": "larik", "list": "larik",
-        "map": "peta", "dict": "peta",
-        "func": "fungsi", "function": "fungsi",
-        "class": "kelas", "objek": "kelas", "object": "kelas",
-        "null": "kosong", "None": "kosong", "nil": "kosong"
-    }
+        "num": "number", "int": "number", "float": "number", "angka": "number", "number": "number",
+        "str": "string", "string": "string", "teks": "string",
+        "bool": "bool", "boolean": "bool",
+        "array": "list", "list": "list", "larik": "list",
+        "map": "map", "dict": "map", "peta": "map",
+        "func": "func", "function": "func", "fungsi": "func",
+        "class": "class", "objek": "class", "object": "class", "kelas": "class",
+        "null": "null", "None": "null", "nil": "null", "kosong": "null"
+    };
     if raw in alias:
         return alias[raw]
     return raw
 
 class StaticType:
     func __init__(self, name):
+        self.name = name
         self.nama = name
-        self.is_fungsi = False
-        self.param_types = []
-        self.return_type = ""
+        self.isFunc = False
+        self.paramTypes = []
+        self.returnType = ""
         self.variadic = False
-        self.required_args = -1
+        self.requiredArgs = -1
 
-    func sama(self, other):
+    func equals(self, other):
         if other == None:
             return False
-        if self.nama == "" or other.nama == "":
+        if self.name == "" or other.name == "":
             return True
-        return self.nama == other.nama
+        return self.name == other.name
+
+    func sama(self, other):
+        return self.equals(other)
 
 class TypeError:
     func __init__(self, msg, line, col):
-        self.pesan = msg
-        self.baris = line
-        self.kolom = col
+        self.message = msg
+        self.line = line
+        self.col = col
+
+    func toString(self):
+        if self.line != None and self.line > 0:
+            return self.message + " (line " + str(self.line) + ", col " + str(self.col) + ")"
+        return self.message
 
     func teks(self):
-        if self.baris != None and self.baris > 0:
-            return self.pesan + " (baris " + str(self.baris) + ", kolom " + str(self.kolom) + ")"
-        return self.pesan
+        return self.toString()
 
 class TypeChecker:
     func __init__(self):
         self.scopes = []
-        self.return_type_stack = []
+        self.returnTypeStack = []
         self.errors = []
 
-    func canonicalize_type(self, raw):
-        return normalisasi_tipe(raw)
+    func canonicalizeType(self, raw):
+        return normalizeType(raw)
 
-    func push_scope(self):
+    func pushScope(self):
         self.scopes.append({})
 
-    func pop_scope(self):
+    func popScope(self):
         self.scopes.pop()
 
     func define(self, name, stype):
@@ -73,377 +80,463 @@ class TypeChecker:
         line = None
         col = None
         if node != None:
-            if hasattr(node, "baris"):
+            if hasattr(node, "line"):
+                line = node.line
+            elif hasattr(node, "baris"):
                 line = node.baris
-            if hasattr(node, "kolom"):
+            if hasattr(node, "col"):
+                col = node.col
+            elif hasattr(node, "kolom"):
                 col = node.kolom
             if hasattr(node, "span") and node.span != None:
                 line = node.span.line if hasattr(node.span, "line") else node.span.baris
                 col = node.span.column if hasattr(node.span, "column") else node.span.kolom
         err = TypeError(msg, line, col)
-        self.errors.append(err.teks())
+        self.errors.append(err.toString())
 
-    func primitive_type(self, name):
-        return name == "angka" or name == "teks" or name == "boolean"
+    func primitiveType(self, name):
+        return name == "number" or name == "string" or name == "bool" or name == "angka" or name == "teks" or name == "boolean"
 
-    func check_comparable(self, l, r, op, node):
-        if l.nama == "" or r.nama == "":
+    func checkComparable(self, l, r, op, node):
+        if l.name == "" or r.name == "":
             return None
-        if not self.primitive_type(l.nama) or not self.primitive_type(r.nama):
+        if not self.primitiveType(l.name) or not self.primitiveType(r.name):
             return None
-        both_num = (l.nama == "angka" and r.nama == "angka")
-        both_str = (l.nama == "teks" and r.nama == "teks")
-        if not both_num and not both_str:
-            self.error("operator '" + op + "' butuh dua angka atau dua teks, dapat " + l.nama + " dan " + r.nama, node)
+        bothNum = (l.name == "number" or l.name == "angka") and (r.name == "number" or r.name == "angka")
+        bothStr = (l.name == "string" or l.name == "teks") and (r.name == "string" or r.name == "teks")
+        if not bothNum and not bothStr:
+            self.error("operator '" + op + "' requires two numbers or two strings, got " + l.name + " and " + r.name, node)
 
-    func infer_expr(self, expr):
+    func nodeType(self, node):
+        if node == None:
+            return ""
+        if hasattr(node, "type"):
+            return node.type
+        if hasattr(node, "jenis"):
+            return node.jenis
+        return ""
+
+    func inferExpr(self, expr):
         if expr == None:
             return StaticType("")
 
-        j = expr.jenis
+        t = self.nodeType(expr)
 
-        if j == "ANGKA":
-            return StaticType("angka")
-        elif j == "TEKS":
-            return StaticType("teks")
-        elif j == "BOOL":
-            return StaticType("boolean")
-        elif j == "KOSONG":
-            return StaticType("kosong")
-        elif j == "PENGENAL":
-            t = self.lookup(expr.nama)
-            if t != None:
-                return t
+        if t == "NUMBER" or t == "ANGKA":
+            return StaticType("number")
+        elif t == "STRING" or t == "TEKS":
+            return StaticType("string")
+        elif t == "BOOL":
+            return StaticType("bool")
+        elif t == "NULL" or t == "KOSONG":
+            return StaticType("null")
+        elif t == "IDENT" or t == "PENGENAL":
+            name = expr.name if hasattr(expr, "name") else expr.nama
+            st = self.lookup(name)
+            if st != None:
+                return st
             return StaticType("")
-        elif j == "UNER":
-            operand_t = self.infer_expr(expr.operand)
+        elif t == "UNARY" or t == "UNER":
+            operandType = self.inferExpr(expr.operand)
             if expr.op == "-":
-                if operand_t.nama != "" and operand_t.nama != "angka":
-                    self.error("operator unary '-' butuh angka, dapat " + operand_t.nama, expr)
-                return StaticType("angka")
-            return StaticType("boolean")
-        elif j == "BINER":
-            l = self.infer_expr(expr.kiri)
-            r = self.infer_expr(expr.kanan)
+                if operandType.name != "" and operandType.name != "number" and operandType.name != "angka":
+                    self.error("unary operator '-' requires number, got " + operandType.name, expr)
+                return StaticType("number")
+            return StaticType("bool")
+        elif t == "BINARY" or t == "BINER":
+            leftExpr = expr.left if hasattr(expr, "left") else expr.kiri
+            rightExpr = expr.right if hasattr(expr, "right") else expr.kanan
+            l = self.inferExpr(leftExpr)
+            r = self.inferExpr(rightExpr)
             op = expr.op
 
-            if op == "dan" or op == "atau" or op == "&&" or op == "||" or op == "?" or op == ":":
+            if op == "and" or op == "or" or op == "dan" or op == "atau" or op == "&&" or op == "||" or op == "?" or op == ":":
                 return StaticType("")
             if op == "==" or op == "!=":
-                return StaticType("boolean")
+                return StaticType("bool")
             if op == "<" or op == "<=" or op == ">" or op == ">=":
-                self.check_comparable(l, r, op, expr)
-                return StaticType("boolean")
+                self.checkComparable(l, r, op, expr)
+                return StaticType("bool")
             if op == "+":
-                if l.nama == "" or r.nama == "":
+                if l.name == "" or r.name == "":
                     return StaticType("")
-                if l.nama == "larik" and r.nama == "larik":
-                    return StaticType("larik")
-                if not self.primitive_type(l.nama) or not self.primitive_type(r.nama):
+                if (l.name == "list" or l.name == "larik") and (r.name == "list" or r.name == "larik"):
+                    return StaticType("list")
+                if not self.primitiveType(l.name) or not self.primitiveType(r.name):
                     return StaticType("")
-                both_num = (l.nama == "angka" and r.nama == "angka")
-                both_str = (l.nama == "teks" and r.nama == "teks")
-                if not both_num and not both_str:
-                    self.error("operator '+' butuh dua angka atau dua teks, dapat " + l.nama + " dan " + r.nama, expr)
+                bothNum = (l.name == "number" or l.name == "angka") and (r.name == "number" or r.name == "angka")
+                bothStr = (l.name == "string" or l.name == "teks") and (r.name == "string" or r.name == "teks")
+                if not bothNum and not bothStr:
+                    self.error("operator '+' requires two numbers or two strings, got " + l.name + " and " + r.name, expr)
                     return StaticType("")
-                return StaticType("angka" if both_num else "teks")
+                return StaticType("number" if bothNum else "string")
 
-            if op == "%" and l.nama == "teks":
-                return StaticType("teks")
-            if op == "-" and l.nama == "larik" and r.nama == "larik":
-                return StaticType("larik")
+            if op == "%" and (l.name == "string" or l.name == "teks"):
+                return StaticType("string")
+            if op == "-" and (l.name == "list" or l.name == "larik") and (r.name == "list" or r.name == "larik"):
+                return StaticType("list")
             if op == "*":
-                if (l.nama == "teks" and (r.nama == "angka" or r.nama == "")) or (r.nama == "teks" and (l.nama == "angka" or l.nama == "")):
-                    return StaticType("teks")
-                if l.nama == "larik" or r.nama == "larik":
-                    return StaticType("larik")
+                isLeftStr = (l.name == "string" or l.name == "teks")
+                isRightStr = (r.name == "string" or r.name == "teks")
+                isLeftNum = (l.name == "number" or l.name == "angka" or l.name == "")
+                isRightNum = (r.name == "number" or r.name == "angka" or r.name == "")
+                if (isLeftStr and isRightNum) or (isRightStr and isLeftNum):
+                    return StaticType("string")
+                if l.name == "list" or l.name == "larik" or r.name == "list" or r.name == "larik":
+                    return StaticType("list")
 
-            if l.nama == "" or r.nama == "":
+            if l.name == "" or r.name == "":
                 return StaticType("")
 
-            if l.nama != "" and l.nama != "angka":
-                self.error("operator '" + op + "' butuh angka, dapat " + l.nama + " di sisi kiri", expr)
-            if r.nama != "" and r.nama != "angka":
-                self.error("operator '" + op + "' butuh angka, dapat " + r.nama + " di sisi kanan", expr)
-            return StaticType("angka")
+            if l.name != "" and l.name != "number" and l.name != "angka":
+                self.error("operator '" + op + "' requires number, got " + l.name + " on left side", expr)
+            if r.name != "" and r.name != "number" and r.name != "angka":
+                self.error("operator '" + op + "' requires number, got " + r.name + " on right side", expr)
+            return StaticType("number")
 
-        elif j == "LARIK":
-            for el in expr.elemen:
-                self.infer_expr(el)
-            return StaticType("larik")
+        elif t == "LIST" or t == "LARIK":
+            elements = expr.elements if hasattr(expr, "elements") else expr.elemen
+            for el in elements:
+                self.inferExpr(el)
+            return StaticType("list")
 
-        elif j == "PETA":
-            m = len(expr.kunci)
+        elif t == "MAP" or t == "PETA":
+            keys = expr.keys if hasattr(expr, "keys") else expr.kunci
+            values = expr.values if hasattr(expr, "values") else expr.nilai
+            m = len(keys)
             i = 0
             while i < m:
-                self.infer_expr(expr.nilai[i])
+                self.inferExpr(values[i])
                 i += 1
-            return StaticType("peta")
+            return StaticType("map")
 
-        elif j == "PANGGIL":
-            if expr.callee.jenis == "PENGENAL":
-                fn_name = expr.callee.nama
-                fn_type = self.lookup(fn_name)
-                if fn_type != None and fn_type.is_fungsi:
-                    min_args = fn_type.required_args if fn_type.required_args >= 0 else len(fn_type.param_types)
-                    n_args = len(expr.args)
-                    max_args = len(fn_type.param_types)
+        elif t == "CALL" or t == "PANGGIL":
+            calleeType = self.nodeType(expr.callee)
+            if calleeType == "IDENT" or calleeType == "PENGENAL":
+                fnName = expr.callee.name if hasattr(expr.callee, "name") else expr.callee.nama
+                fnType = self.lookup(fnName)
+                if fnType != None and fnType.isFunc:
+                    minArgs = fnType.requiredArgs if fnType.requiredArgs >= 0 else len(fnType.paramTypes)
+                    nArgs = len(expr.args)
+                    maxArgs = len(fnType.paramTypes)
 
-                    if n_args < min_args or (not fn_type.variadic and n_args > max_args):
-                        self.error("fungsi '" + fn_name + "' butuh " + str(min_args) + " argumen, dipanggil dengan " + str(n_args), expr)
+                    if nArgs < minArgs or (not fnType.variadic and nArgs > maxArgs):
+                        self.error("function '" + fnName + "' requires " + str(minArgs) + " arguments, called with " + str(nArgs), expr)
 
                     i = 0
-                    while i < n_args:
-                        arg_t = self.infer_expr(expr.args[i])
-                        if i < max_args:
-                            want = fn_type.param_types[i]
-                            if want != "" and arg_t.nama != "" and want != arg_t.nama:
-                                self.error("fungsi '" + fn_name + "' argumen ke-" + str(i + 1) + " diharap tipe " + want + ", dapat " + arg_t.nama, expr.args[i])
+                    while i < nArgs:
+                        argType = self.inferExpr(expr.args[i])
+                        if i < maxArgs:
+                            want = fnType.paramTypes[i]
+                            canonWant = self.canonicalizeType(want)
+                            canonArg = self.canonicalizeType(argType.name)
+                            if canonWant != "" and canonArg != "" and canonWant != canonArg:
+                                self.error("function '" + fnName + "' argument " + str(i + 1) + " expected type " + want + ", got " + argType.name, expr.args[i])
                         i += 1
-                    return StaticType(fn_type.return_type)
+                    return StaticType(fnType.returnType)
 
-            self.infer_expr(expr.callee)
+            self.inferExpr(expr.callee)
             for a in expr.args:
-                self.infer_expr(a)
+                self.inferExpr(a)
             return StaticType("")
 
-        elif j == "INDEX":
-            self.infer_expr(expr.target)
-            self.infer_expr(expr.index)
+        elif t == "INDEX":
+            self.inferExpr(expr.target)
+            self.inferExpr(expr.index)
             return StaticType("")
 
-        elif j == "MEMBER":
-            self.infer_expr(expr.target)
+        elif t == "SLICE" or t == "IRISAN":
+            self.inferExpr(expr.target)
+            startExpr = expr.start if hasattr(expr, "start") else expr.awal
+            stopExpr = expr.stop if hasattr(expr, "stop") else expr.sampai
+            if startExpr != None:
+                self.inferExpr(startExpr)
+            if stopExpr != None:
+                self.inferExpr(stopExpr)
             return StaticType("")
 
-        elif j == "TUGAS":
-            val_t = self.infer_expr(expr.nilai)
-            if expr.target.jenis == "PENGENAL":
-                var_t = self.lookup(expr.target.nama)
-                if var_t != None and var_t.nama != "" and val_t.nama != "" and var_t.nama != val_t.nama:
-                    self.error("nggak bisa isi variabel '" + expr.target.nama + "' (tipe " + var_t.nama + ") dengan nilai bertipe " + val_t.nama, expr)
-                return var_t if var_t != None else val_t
-            elif expr.target.jenis == "INDEX":
-                self.infer_expr(expr.target.target)
-                self.infer_expr(expr.target.index)
-                return val_t
-            elif expr.target.jenis == "MEMBER":
-                self.infer_expr(expr.target.target)
-                return val_t
-            return val_t
+        elif t == "MEMBER":
+            self.inferExpr(expr.target)
+            return StaticType("")
+
+        elif t == "TERNARY" or t == "TERNER":
+            condExpr = expr.condition if hasattr(expr, "condition") else expr.kondisi
+            self.inferExpr(condExpr)
+            thenVal = expr.thenVal if hasattr(expr, "thenVal") else expr.nilaiJika
+            elseVal = expr.elseVal if hasattr(expr, "elseVal") else expr.nilaiLain
+            thenType = self.inferExpr(thenVal)
+            elseType = self.inferExpr(elseVal)
+            if thenType.name != "" and thenType.name == elseType.name:
+                return thenType
+            return StaticType("")
+
+        elif t == "LAMBDA":
+            return StaticType("func")
+
+        elif t == "ASSIGN" or t == "TUGAS":
+            valExpr = expr.value if hasattr(expr, "value") else expr.nilai
+            valType = self.inferExpr(valExpr)
+            targetType = self.nodeType(expr.target)
+            if targetType == "IDENT" or targetType == "PENGENAL":
+                targetName = expr.target.name if hasattr(expr.target, "name") else expr.target.nama
+                varType = self.lookup(targetName)
+                if varType != None and varType.name != "" and valType.name != "" and varType.name != valType.name:
+                    self.error("cannot assign variable '" + targetName + "' (type " + varType.name + ") with value of type " + valType.name, expr)
+                return varType if varType != None else valType
+            elif targetType == "INDEX":
+                self.inferExpr(expr.target.target)
+                self.inferExpr(expr.target.index)
+                return valType
+            elif targetType == "MEMBER":
+                self.inferExpr(expr.target.target)
+                return valType
+            return valType
 
         return StaticType("")
 
-    func check_stmt(self, stmt):
+    func checkStmt(self, stmt):
         if stmt == None:
             return None
 
-        j = stmt.jenis
+        t = self.nodeType(stmt)
 
-        if j == "BUAT":
-            val_type = self.infer_expr(stmt.nilai)
+        if t == "VAR" or t == "BUAT":
+            valExpr = stmt.value if hasattr(stmt, "value") else stmt.nilai
+            valType = self.inferExpr(valExpr)
             tracked = StaticType("")
 
-            raw_annot = ""
-            if hasattr(stmt, "tipe") and stmt.tipe != None:
-                raw_annot = stmt.tipe
-            elif hasattr(stmt, "type_annotation") and stmt.type_annotation != None:
-                raw_annot = stmt.type_annotation
+            rawAnnot = ""
+            if hasattr(stmt, "typeAnnotation") and stmt.typeAnnotation != None:
+                rawAnnot = stmt.typeAnnotation
+            elif hasattr(stmt, "tipe") and stmt.tipe != None:
+                rawAnnot = stmt.tipe
 
-            if raw_annot != "":
-                canon = self.canonicalize_type(raw_annot)
-                if canon != "" and val_type.nama != "" and canon != val_type.nama:
-                    self.error("variabel '" + stmt.nama + "' dianotasi tipe " + canon + ", tapi diisi nilai bertipe " + val_type.nama, stmt)
-                tracked.nama = canon
+            stmtName = stmt.name if hasattr(stmt, "name") else stmt.nama
+            if rawAnnot != "":
+                canon = self.canonicalizeType(rawAnnot)
+                if canon != "" and valType.name != "" and canon != valType.name:
+                    self.error("variable '" + stmtName + "' annotated with type " + canon + ", but initialized with type " + valType.name, stmt)
+                tracked.name = canon
 
-            self.define(stmt.nama, tracked)
+            self.define(stmtName, tracked)
 
-        elif j == "FUNGSI":
-            sig = StaticType("fungsi")
-            sig.is_fungsi = True
-            n_params = len(stmt.params)
+        elif t == "FUNC" or t == "FUNGSI":
+            sig = StaticType("func")
+            sig.isFunc = True
+            nParams = len(stmt.params)
 
-            param_types = []
+            paramTypes = []
             i = 0
-            while i < n_params:
-                raw_p = ""
-                if hasattr(stmt, "param_types") and i < len(stmt.param_types):
-                    raw_p = stmt.param_types[i]
-                param_types.append(self.canonicalize_type(raw_p))
+            while i < nParams:
+                rawP = ""
+                if hasattr(stmt, "paramTypes") and i < len(stmt.paramTypes):
+                    rawP = stmt.paramTypes[i]
+                paramTypes.append(self.canonicalizeType(rawP))
                 i += 1
-            sig.param_types = param_types
+            sig.paramTypes = paramTypes
 
-            raw_ret = ""
-            if hasattr(stmt, "return_type") and stmt.return_type != None:
-                raw_ret = stmt.return_type
-            elif hasattr(stmt, "tipe_hasil") and stmt.tipe_hasil != None:
-                raw_ret = stmt.tipe_hasil
-            sig.return_type = self.canonicalize_type(raw_ret)
+            rawRet = ""
+            if hasattr(stmt, "returnType") and stmt.returnType != None:
+                rawRet = stmt.returnType
+            elif hasattr(stmt, "tipeHasil") and stmt.tipeHasil != None:
+                rawRet = stmt.tipeHasil
+            sig.returnType = self.canonicalizeType(rawRet)
 
-            self.define(stmt.nama, sig)
+            stmtName = stmt.name if hasattr(stmt, "name") else stmt.nama
+            self.define(stmtName, sig)
 
-            self.push_scope()
+            self.pushScope()
             i = 0
-            while i < n_params:
-                self.define(stmt.params[i], StaticType(sig.param_types[i]))
+            while i < nParams:
+                self.define(stmt.params[i], StaticType(sig.paramTypes[i]))
                 i += 1
 
-            self.return_type_stack.append(sig.return_type)
+            self.returnTypeStack.append(sig.returnType)
 
-            body_stmts = stmt.badan.stmts if hasattr(stmt.badan, "stmts") else [stmt.badan]
-            for s in body_stmts:
-                self.check_stmt(s)
+            bodyNode = stmt.body if hasattr(stmt, "body") else stmt.badan
+            bodyStmts = bodyNode.stmts if hasattr(bodyNode, "stmts") else [bodyNode]
+            for s in bodyStmts:
+                self.checkStmt(s)
 
-            self.return_type_stack.pop()
-            self.pop_scope()
+            self.returnTypeStack.pop()
+            self.popScope()
 
-        elif j == "BLOK":
-            self.push_scope()
+        elif t == "BLOCK" or t == "BLOK":
+            self.pushScope()
             stmts = stmt.stmts if hasattr(stmt, "stmts") else []
             for s in stmts:
-                self.check_stmt(s)
-            self.pop_scope()
+                self.checkStmt(s)
+            self.popScope()
 
-        elif j == "JIKA":
-            self.infer_expr(stmt.kondisi)
-            self.push_scope()
-            maka_stmts = stmt.maka.stmts if hasattr(stmt.maka, "stmts") else [stmt.maka]
-            for s in maka_stmts:
-                self.check_stmt(s)
-            self.pop_scope()
+        elif t == "IF" or t == "JIKA":
+            condExpr = stmt.condition if hasattr(stmt, "condition") else stmt.kondisi
+            self.inferExpr(condExpr)
+            self.pushScope()
+            thenBranch = stmt.thenBranch if hasattr(stmt, "thenBranch") else stmt.maka
+            thenStmts = thenBranch.stmts if hasattr(thenBranch, "stmts") else [thenBranch]
+            for s in thenStmts:
+                self.checkStmt(s)
+            self.popScope()
 
-            if stmt.lain != None:
-                self.push_scope()
-                lain_stmts = stmt.lain.stmts if hasattr(stmt.lain, "stmts") else [stmt.lain]
-                for s in lain_stmts:
-                    self.check_stmt(s)
-                self.pop_scope()
+            elseBranch = stmt.elseBranch if hasattr(stmt, "elseBranch") else stmt.lain
+            if elseBranch != None:
+                self.pushScope()
+                elseStmts = elseBranch.stmts if hasattr(elseBranch, "stmts") else [elseBranch]
+                for s in elseStmts:
+                    self.checkStmt(s)
+                self.popScope()
 
-        elif j == "SELAMA":
-            self.infer_expr(stmt.kondisi)
-            self.push_scope()
-            body_stmts = stmt.badan.stmts if hasattr(stmt.badan, "stmts") else [stmt.badan]
-            for s in body_stmts:
-                self.check_stmt(s)
-            self.pop_scope()
+        elif t == "WHILE" or t == "SELAMA":
+            condExpr = stmt.condition if hasattr(stmt, "condition") else stmt.kondisi
+            self.inferExpr(condExpr)
+            self.pushScope()
+            bodyNode = stmt.body if hasattr(stmt, "body") else stmt.badan
+            bodyStmts = bodyNode.stmts if hasattr(bodyNode, "stmts") else [bodyNode]
+            for s in bodyStmts:
+                self.checkStmt(s)
+            self.popScope()
 
-        elif j == "UNTUK":
-            self.push_scope()
-            if stmt.inisialisasi != None:
-                self.check_stmt(stmt.inisialisasi)
-            if stmt.kondisi != None:
-                self.infer_expr(stmt.kondisi)
-            self.push_scope()
-            body_stmts = stmt.badan.stmts if hasattr(stmt.badan, "stmts") else [stmt.badan]
-            for s in body_stmts:
-                self.check_stmt(s)
-            self.pop_scope()
-            if stmt.pasca != None:
-                self.infer_expr(stmt.pasca)
-            self.pop_scope()
+        elif t == "FOR" or t == "UNTUK":
+            self.pushScope()
+            initStmt = stmt.init if hasattr(stmt, "init") else stmt.inisialisasi
+            if initStmt != None:
+                self.checkStmt(initStmt)
+            condExpr = stmt.condition if hasattr(stmt, "condition") else stmt.kondisi
+            if condExpr != None:
+                self.inferExpr(condExpr)
+            self.pushScope()
+            bodyNode = stmt.body if hasattr(stmt, "body") else stmt.badan
+            bodyStmts = bodyNode.stmts if hasattr(bodyNode, "stmts") else [bodyNode]
+            for s in bodyStmts:
+                self.checkStmt(s)
+            self.popScope()
+            postExpr = stmt.post if hasattr(stmt, "post") else stmt.pasca
+            if postExpr != None:
+                self.inferExpr(postExpr)
+            self.popScope()
 
-        elif j == "UNTUK_DALAM":
-            self.infer_expr(stmt.iter)
-            self.push_scope()
-            self.define(stmt.variabel, StaticType(""))
-            body_stmts = stmt.badan.stmts if hasattr(stmt.badan, "stmts") else [stmt.badan]
-            for s in body_stmts:
-                self.check_stmt(s)
-            self.pop_scope()
+        elif t == "FOR_IN" or t == "UNTUK_DALAM":
+            iterExpr = stmt.iterable if hasattr(stmt, "iterable") else stmt.iter
+            varName = stmt.variable if hasattr(stmt, "variable") else stmt.variabel
+            self.inferExpr(iterExpr)
+            self.pushScope()
+            self.define(varName, StaticType(""))
+            bodyNode = stmt.body if hasattr(stmt, "body") else stmt.badan
+            bodyStmts = bodyNode.stmts if hasattr(bodyNode, "stmts") else [bodyNode]
+            for s in bodyStmts:
+                self.checkStmt(s)
+            self.popScope()
 
-        elif j == "HASIL":
-            val_type = self.infer_expr(stmt.nilai) if stmt.nilai != None else StaticType("kosong")
-            if len(self.return_type_stack) > 0:
-                want = self.return_type_stack[-1]
-                if want != "" and val_type.nama != "" and want != val_type.nama:
-                    self.error("hasil bertipe " + val_type.nama + ", tapi fungsi ini dianotasi hasil " + want, stmt)
+        elif t == "RETURN" or t == "HASIL":
+            valExpr = stmt.value if hasattr(stmt, "value") else stmt.nilai
+            valType = self.inferExpr(valExpr) if valExpr != None else StaticType("null")
+            if len(self.returnTypeStack) > 0:
+                want = self.returnTypeStack[-1]
+                canonWant = self.canonicalizeType(want)
+                canonVal = self.canonicalizeType(valType.name)
+                if canonWant != "" and canonVal != "" and canonWant != canonVal:
+                    self.error("return value of type " + valType.name + ", but function annotated with return type " + want, stmt)
 
-        elif j == "COBA":
-            self.push_scope()
-            coba_stmts = stmt.coba_blok.stmts if hasattr(stmt.coba_blok, "stmts") else [stmt.coba_blok]
-            for s in coba_stmts:
-                self.check_stmt(s)
-            self.pop_scope()
+        elif t == "TRY" or t == "COBA":
+            self.pushScope()
+            tryBlock = stmt.tryBlock if hasattr(stmt, "tryBlock") else (stmt.cobaBlok if hasattr(stmt, "cobaBlok") else None)
+            tryStmts = tryBlock.stmts if hasattr(tryBlock, "stmts") else [tryBlock]
+            for s in tryStmts:
+                self.checkStmt(s)
+            self.popScope()
 
-            if stmt.tangkap_blok != None:
-                self.push_scope()
-                if stmt.tangkap_var != None:
-                    self.define(stmt.tangkap_var, StaticType(""))
-                catch_stmts = stmt.tangkap_blok.stmts if hasattr(stmt.tangkap_blok, "stmts") else [stmt.tangkap_blok]
-                for s in catch_stmts:
-                    self.check_stmt(s)
-                self.pop_scope()
+            catchBlock = stmt.catchBlock if hasattr(stmt, "catchBlock") else (stmt.tangkapBlok if hasattr(stmt, "tangkapBlok") else None)
+            catchVar = stmt.catchVar if hasattr(stmt, "catchVar") else (stmt.tangkapVar if hasattr(stmt, "tangkapVar") else None)
+            if catchBlock != None:
+                self.pushScope()
+                if catchVar != None:
+                    self.define(catchVar, StaticType(""))
+                catchStmts = catchBlock.stmts if hasattr(catchBlock, "stmts") else [catchBlock]
+                for s in catchStmts:
+                    self.checkStmt(s)
+                self.popScope()
 
-            if hasattr(stmt, "akhirnya_blok") and stmt.akhirnya_blok != None:
-                self.push_scope()
-                fin_stmts = stmt.akhirnya_blok.stmts if hasattr(stmt.akhirnya_blok, "stmts") else [stmt.akhirnya_blok]
-                for s in fin_stmts:
-                    self.check_stmt(s)
-                self.pop_scope()
+            finallyBlock = stmt.finallyBlock if hasattr(stmt, "finallyBlock") else (stmt.akhirnyaBlok if hasattr(stmt, "akhirnyaBlok") else None)
+            if finallyBlock != None:
+                self.pushScope()
+                finStmts = finallyBlock.stmts if hasattr(finallyBlock, "stmts") else [finallyBlock]
+                for s in finStmts:
+                    self.checkStmt(s)
+                self.popScope()
 
-        elif j == "LEMPAR":
-            self.infer_expr(stmt.nilai)
-        elif j == "EKSPRESI":
-            self.infer_expr(stmt.expr)
-        elif j == "KELAS":
-            self.define(stmt.nama, StaticType("kelas"))
-            if hasattr(stmt, "metode"):
-                self.push_scope()
-                for m in stmt.metode:
-                    self.check_stmt(m)
-                self.pop_scope()
+        elif t == "THROW" or t == "LEMPAR":
+            valExpr = stmt.value if hasattr(stmt, "value") else stmt.nilai
+            self.inferExpr(valExpr)
+        elif t == "EXPR" or t == "EKSPRESI":
+            self.inferExpr(stmt.expr)
+        elif t == "CLASS" or t == "KELAS":
+            className = stmt.name if hasattr(stmt, "name") else stmt.nama
+            self.define(className, StaticType("class"))
+            methods = stmt.methods if hasattr(stmt, "methods") else (stmt.metode if hasattr(stmt, "metode") else [])
+            self.pushScope()
+            for m in methods:
+                self.checkStmt(m)
+            self.popScope()
 
-    func check(self, prog_ast):
+    func check(self, progAst):
         self.scopes = []
-        self.return_type_stack = []
+        self.returnTypeStack = []
         self.errors = []
 
-        self.push_scope()
+        self.pushScope()
 
-        stmts = prog_ast
-        if hasattr(prog_ast, "stmts"):
-            stmts = prog_ast.stmts
-        elif hasattr(prog_ast, "statements"):
-            stmts = prog_ast.statements
+        stmts = progAst
+        if hasattr(progAst, "stmts"):
+            stmts = progAst.stmts
+        elif hasattr(progAst, "statements"):
+            stmts = progAst.statements
 
         for stmt in stmts:
-            self.check_stmt(stmt)
+            self.checkStmt(stmt)
 
-        self.pop_scope()
+        self.popScope()
 
         return len(self.errors) == 0
 
-    func daftar_error(self):
+    func getErrors(self):
         return self.errors
 
-func validasi_tipe(val, expected):
-    target = normalisasi_tipe(expected)
+    func daftarError(self):
+        return self.getErrors()
+
+func validateType(val, expected):
+    target = normalizeType(expected)
     if target == "":
         return True
 
     t = type(val)
-    if target == "angka":
-        return t == "angka" or t == "int" or t == "float"
-    elif target == "teks":
+    if target == "number":
+        return t == "angka" or t == "number" or t == "int" or t == "float"
+    elif target == "string":
         return t == "teks" or t == "string" or t == "str"
-    elif target == "boolean":
+    elif target == "bool":
         return t == "boolean" or t == "bool"
-    elif target == "larik":
-        return t == "larik" or t == "list"
-    elif target == "peta":
-        return t == "peta" or t == "dict"
-    elif target == "fungsi":
-        return t == "fungsi" or (type(val) == "peta" and "is_bawaan" in val) or hasattr(val, "code")
-    elif target == "kelas":
-        return t == "kelas" or hasattr(val, "is_kelas") or hasattr(val, "is_instans")
-    elif target == "kosong":
+    elif target == "list":
+        return t == "larik" or t == "list" or t == "array"
+    elif target == "map":
+        return t == "peta" or t == "map" or t == "dict"
+    elif target == "func":
+        return t == "fungsi" or t == "func" or t == "function" or callable(val) or hasattr(val, "isFunction") or (type(val) == "map" and "isBuiltin" in val) or (type(val) == "peta" and "isBuiltin" in val) or (hasattr(val, "code") and hasattr(val, "constants"))
+    elif target == "class":
+        return t == "kelas" or t == "class" or hasattr(val, "isClass") or hasattr(val, "isInstance")
+    elif target == "null":
         return val == None
 
     return t == target
 
-func pastikan_tipe(var_name, val, expected):
-    if not validasi_tipe(val, expected):
+func assertType(varName, val, expected):
+    if not validateType(val, expected):
         act = type(val)
-        cetak("TypeError: Variabel '" + var_name + "' diharapkan bertipe '" + expected + "', tetapi mendapat '" + str(act) + "'")
+        print("TypeError: variable '" + varName + "' expected type '" + expected + "', got '" + str(act) + "'")
         return False
     return True
+
+normalize = normalizeType
+normalisasiTipe = normalizeType
+validasiTipe = validateType
+pastikanTipe = assertType

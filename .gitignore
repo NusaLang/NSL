@@ -1,10 +1,42 @@
-plugins/*/*.so
-plugins/*/vendor/*.o
+# Build outputs & binaries
+/nusa
+/nusantara
+bin/
+/bin/
+nusantara.js
+nusantara.wasm
+a.out
+*.o
+*.s
+*.bin
+
+# Shared libraries & objects
+plugins/**/*.so
+plugins/**/vendor/**/*.o
+
+# Caches & temporary files
 .nusa-cache/
-/nusantara-plugins/
+**/.nusa-cache/
 /.nusa_lang
 /build-opt/
 /dist/
-nusantara.js
-nusantara.wasm
-/nusantara
+/nusantara-plugins/
+*.log
+*.tmp
+*.debug
+*.dSYM/
+
+# Benchmark artifacts & comparison
+bench/
+/bench/
+RESULTS.md
+**/RESULTS.md
+*.result
+
+# Examples, auxiliary tools & tests
+examples/
+/examples/
+tools/
+/tools/
+tests/
+/tests/

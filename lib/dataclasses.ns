@@ -1,4 +1,3 @@
-# @dataclass itself is expanded by the parser; this module has the helpers around it.
 def dataclass(cls=None, **kw):
     if cls is None:
         return lambda c: c

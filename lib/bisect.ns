@@ -2,7 +2,7 @@ def bisect_left(a, x, lo=0, hi=None):
     if hi is None:
         hi = len(a)
     while lo < hi:
-        mid = (lo + hi) // 2
+        mid = (lo + hi)
         if a[mid] < x:
             lo = mid + 1
         else:
@@ -13,7 +13,7 @@ def bisect_right(a, x, lo=0, hi=None):
     if hi is None:
         hi = len(a)
     while lo < hi:
-        mid = (lo + hi) // 2
+        mid = (lo + hi)
         if x < a[mid]:
             hi = mid
         else:

@@ -1,3 +1,0 @@
-cetak(1 / 0);
-cetak(0 / 0);
-cetak(1 % 0);

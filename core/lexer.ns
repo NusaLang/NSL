@@ -1,303 +1,453 @@
-import token
+func loadModule(name):
+    try:
+        return impor(name)
+    except e:
+        return impor("core/" + name)
 
-Token = token.Token
+tokenModule = loadModule("token")
+Token = tokenModule.Token
+TokenType = tokenModule.TokenType
 
-KataKunci = {
-    "buat": "BUAT", "fungsi": "FUNGSI", "fung": "FUNGSI",
-    "jika": "JIKA", "kalau": "JIKA", "jk": "JIKA",
-    "lain": "LAIN",
-    "selama": "SELAMA", "slm": "SELAMA",
-    "untuk": "UNTUK", "dalam": "DALAM",
-    "hasil": "HASIL", "kem": "HASIL",
-    "berhenti": "BERHENTI", "henti": "BERHENTI",
-    "lanjut": "LANJUT",
-    "benar": "BENAR", "Benar": "BENAR",
-    "salah": "SALAH", "Salah": "SALAH",
-    "kosong": "KOSONG", "Kosong": "KOSONG",
-    "kelas": "KELAS", "ini": "INI", "induk": "INDUK",
-    "coba": "COBA", "tangkap": "TANGKAP", "akhirnya": "AKHIRNYA", "akhir": "AKHIRNYA",
-    "lempar": "LEMPAR",
-    "dan": "dan", "atau": "atau", "bukan": "bukan",
-    "pass": "PASS",
-
-    "let": "BUAT", "var": "BUAT",
-    "fun": "FUNGSI", "func": "FUNGSI", "function": "FUNGSI", "def": "FUNGSI",
-    "if": "JIKA", "elif": "ELIF", "else": "LAIN",
-    "while": "SELAMA",
-    "for": "UNTUK", "in": "DALAM",
-    "return": "HASIL",
-    "break": "BERHENTI", "continue": "LANJUT",
-    "true": "BENAR", "True": "BENAR",
-    "false": "SALAH", "False": "SALAH",
-    "null": "KOSONG", "nil": "KOSONG", "None": "KOSONG",
-    "class": "KELAS", "this": "INI", "self": "INI", "super": "INDUK",
-    "try": "COBA", "catch": "TANGKAP", "except": "TANGKAP", "finally": "AKHIRNYA",
-    "throw": "LEMPAR", "raise": "LEMPAR",
-    "and": "dan", "or": "atau", "not": "bukan"
+keywords = {
+    "let": TokenType.VAR,
+    "var": TokenType.VAR,
+    "buat": TokenType.VAR,
+    "fun": TokenType.FUNC,
+    "func": TokenType.FUNC,
+    "function": TokenType.FUNC,
+    "def": TokenType.FUNC,
+    "fungsi": TokenType.FUNC,
+    "fung": TokenType.FUNC,
+    "if": TokenType.IF,
+    "jika": TokenType.IF,
+    "kalau": TokenType.IF,
+    "jk": TokenType.IF,
+    "elif": "ELIF",
+    "else": TokenType.ELSE,
+    "lain": TokenType.ELSE,
+    "while": TokenType.WHILE,
+    "selama": TokenType.WHILE,
+    "slm": TokenType.WHILE,
+    "for": TokenType.FOR,
+    "untuk": TokenType.FOR,
+    "in": TokenType.IN,
+    "dalam": TokenType.IN,
+    "return": TokenType.RETURN,
+    "hasil": TokenType.RETURN,
+    "kem": TokenType.RETURN,
+    "break": TokenType.BREAK,
+    "berhenti": TokenType.BREAK,
+    "henti": TokenType.BREAK,
+    "continue": TokenType.CONTINUE,
+    "lanjut": TokenType.CONTINUE,
+    "true": TokenType.TRUE,
+    "True": TokenType.TRUE,
+    "benar": TokenType.TRUE,
+    "Benar": TokenType.TRUE,
+    "false": TokenType.FALSE,
+    "False": TokenType.FALSE,
+    "salah": TokenType.FALSE,
+    "Salah": TokenType.FALSE,
+    "null": TokenType.NULL,
+    "nil": TokenType.NULL,
+    "None": TokenType.NULL,
+    "kosong": TokenType.NULL,
+    "Kosong": TokenType.NULL,
+    "class": TokenType.CLASS,
+    "kelas": TokenType.CLASS,
+    "this": TokenType.THIS,
+    "self": TokenType.THIS,
+    "ini": TokenType.THIS,
+    "super": TokenType.SUPER,
+    "induk": TokenType.SUPER,
+    "try": TokenType.TRY,
+    "coba": TokenType.TRY,
+    "catch": TokenType.CATCH,
+    "except": TokenType.CATCH,
+    "tangkap": TokenType.CATCH,
+    "finally": TokenType.FINALLY,
+    "akhirnya": TokenType.FINALLY,
+    "akhir": TokenType.FINALLY,
+    "throw": TokenType.THROW,
+    "raise": TokenType.THROW,
+    "lempar": TokenType.THROW,
+    "and": TokenType.AND,
+    "dan": TokenType.AND,
+    "or": TokenType.OR,
+    "atau": TokenType.OR,
+    "not": TokenType.NOT,
+    "bukan": TokenType.NOT,
+    "pass": TokenType.PASS
 }
 
 class Lexer:
-    func __init__(self, sumber):
-        self.sumber = sumber
+    func __init__(self, source):
+        self.source = source
         self.pos = 0
-        self.baris = 1
-        self.kolom = 1
-        self.n = len(sumber)
-        self.KataKunci = KataKunci
+        self.line = 1
+        self.col = 1
+        self.length = len(source)
+        self.keywords = keywords
 
-    func intip(self, offset):
+    func peek(self, offset = 0):
         idx = self.pos + offset
-        if idx < self.n:
-            return self.sumber[idx]
+        if idx < self.length:
+            return self.source[idx]
         return ""
 
-    func maju(self):
-        ch = self.sumber[self.pos]
+    func advance(self):
+        ch = self.source[self.pos]
         self.pos += 1
         if ch == "\n":
-            self.baris += 1
-            self.kolom = 1
+            self.line += 1
+            self.col = 1
         else:
-            self.kolom += 1
+            self.col += 1
         return ch
 
-    func cocok(self, karakter):
-        if self.pos < self.n and self.sumber[self.pos] == karakter:
-            self.maju()
+    func match(self, expected):
+        if self.pos < self.length and self.source[self.pos] == expected:
+            self.advance()
             return True
         return False
 
     func tokenize(self):
-        raw = self.tokenize_mentah()
-        return self.terapkan_layout(raw)
+        raw = self.tokenizeRaw()
+        return self.applyLayout(raw)
 
-    func tokenize_mentah(self):
+    func tokenizeRaw(self):
         tokens = []
-
-        while self.pos < self.n:
-            ch = self.sumber[self.pos]
+        while self.pos < self.length:
+            ch = self.source[self.pos]
 
             if ch == " " or ch == "\t" or ch == "\r":
-                self.maju()
+                self.advance()
             elif ch == "\n":
-                self.maju()
-            elif ch == "#" or (ch == "/" and self.intip(1) == "/"):
-                while self.pos < self.n and self.sumber[self.pos] != "\n":
-                    self.maju()
+                self.advance()
+            elif ch == "#" or (ch == "/" and self.peek(1) == "/"):
+                while self.pos < self.length and self.source[self.pos] != "\n":
+                    self.advance()
             elif ch.isdigit():
-                tokens.append(self.baca_angka())
+                tokens.append(self.readNumber())
             elif ch == "\"" or ch == "'":
-                tokens.append(self.baca_string(ch))
+                tokens.append(self.readString(ch))
             elif ch.isalpha() or ch == "_":
-                tok = self.baca_pengenal()
-                if tok.teks == "elif":
-                    tokens.append(Token("LAIN", "else", 0, tok.baris, tok.kolom))
-                    tokens.append(Token("JIKA", "if", 0, tok.baris, tok.kolom))
+                tok = self.readIdent()
+                prevWasDot = len(tokens) > 0 and tokens[-1].type == TokenType.DOT
+                if tok.text == "elif" and not prevWasDot:
+                    tokens.append(Token(TokenType.ELSE, "else", 0, tok.line, tok.col))
+                    tokens.append(Token(TokenType.IF, "if", 0, tok.line, tok.col))
                 else:
                     tokens.append(tok)
             else:
-                tokens.append(self.baca_simbol())
+                tokens.append(self.readSymbol())
 
-        tokens.append(Token("EOF", "", 0, self.baris, self.kolom))
+        tokens.append(Token(TokenType.EOF, "", 0, self.line, self.col))
         return tokens
 
-    func terapkan_layout(self, toks):
+    func applyLayout(self, tokens):
         out = []
         indents = [0]
         depth = 0
-        pending_block = False
-        prev_line = 0
-        line_open = False
-        inline_blocks = 0
+        pendingBlock = False
+        prevLine = 0
+        lineOpen = False
+        inlineBlocks = 0
 
-        n_toks = len(toks)
+        totalTokens = len(tokens)
         i = 0
-        while i < n_toks:
-            t = toks[i]
-            is_eof = t.tipe == "EOF"
-            cur_line = t.baris
+        while i < totalTokens:
+            t = tokens[i]
+            isEof = (t.type == TokenType.EOF)
+            curLine = t.line
 
-            if depth == 0 and cur_line > prev_line:
-                while inline_blocks > 0:
-                    out.append(Token("}", "}", 0, prev_line, 0))
-                    out.append(Token(";", ";", 0, prev_line, 0))
-                    inline_blocks -= 1
+            if depth == 0 and curLine > prevLine:
+                while inlineBlocks > 0:
+                    out.append(Token(TokenType.RBRACE, "}", 0, prevLine, 0))
+                    out.append(Token(TokenType.SEMICOLON, ";", 0, prevLine, 0))
+                    inlineBlocks -= 1
 
-                indent = t.kolom - 1
-                if is_eof:
+                indent = t.col - 1
+                if isEof:
                     indent = 0
 
-                if pending_block:
+                if pendingBlock:
                     if indent > indents[-1]:
                         indents.append(indent)
-                        out.append(Token("{", "{", 0, t.baris, t.kolom))
+                        out.append(Token(TokenType.LBRACE, "{", 0, t.line, t.col))
                     else:
-                        out.append(Token("{", "{", 0, t.baris, t.kolom))
-                        out.append(Token("}", "}", 0, t.baris, t.kolom))
-                    pending_block = False
+                        out.append(Token(TokenType.LBRACE, "{", 0, t.line, t.col))
+                        out.append(Token(TokenType.RBRACE, "}", 0, t.line, t.col))
+                    pendingBlock = False
                 else:
-                    if line_open and len(out) > 0:
-                        last = out[-1].tipe
-                        if last != ";" and last != "{" and last != "}":
-                            out.append(Token(";", ";", 0, t.baris, t.kolom))
+                    if lineOpen and len(out) > 0:
+                        last = out[-1].type
+                        if last != TokenType.SEMICOLON and last != TokenType.LBRACE:
+                            out.append(Token(TokenType.SEMICOLON, ";", 0, t.line, t.col))
                     while indent < indents[-1]:
                         indents.pop()
-                        out.append(Token("}", "}", 0, t.baris, t.kolom))
-                        out.append(Token(";", ";", 0, t.baris, t.kolom))
-                line_open = False
+                        out.append(Token(TokenType.RBRACE, "}", 0, t.line, t.col))
+                        out.append(Token(TokenType.SEMICOLON, ";", 0, t.line, t.col))
+                lineOpen = False
 
-            if is_eof:
-                while inline_blocks > 0:
-                    out.append(Token("}", "}", 0, cur_line, 0))
-                    inline_blocks -= 1
+            if isEof:
+                while inlineBlocks > 0:
+                    out.append(Token(TokenType.RBRACE, "}", 0, curLine, 0))
+                    inlineBlocks -= 1
                 while len(indents) > 1:
                     indents.pop()
-                    out.append(Token("}", "}", 0, cur_line, 0))
+                    out.append(Token(TokenType.RBRACE, "}", 0, curLine, 0))
                 out.append(t)
                 break
 
-            if t.tipe == "(" or t.tipe == "[" or t.tipe == "{":
+            if t.type == TokenType.LPAREN or t.type == TokenType.LBRACKET or t.type == TokenType.LBRACE:
                 depth += 1
-            elif (t.tipe == ")" or t.tipe == "]" or t.tipe == "}") and depth > 0:
+            elif (t.type == TokenType.RPAREN or t.type == TokenType.RBRACKET or t.type == TokenType.RBRACE) and depth > 0:
                 depth -= 1
 
-            if t.tipe == ":" and depth == 0:
-                is_eol = (i + 1 >= n_toks) or (toks[i + 1].baris > cur_line) or (toks[i + 1].tipe == "EOF")
-                if is_eol:
-                    pending_block = True
-                    line_open = False
-                    prev_line = cur_line
+            if t.type == TokenType.COLON and depth == 0:
+                isEol = (i + 1 >= totalTokens) or (tokens[i + 1].line > curLine) or (tokens[i + 1].type == TokenType.EOF)
+                if isEol:
+                    pendingBlock = True
+                    lineOpen = False
+                    prevLine = curLine
                     i += 1
                     continue
                 else:
-                    out.append(Token("{", "{", 0, t.baris, t.kolom))
-                    inline_blocks += 1
-                    line_open = True
-                    prev_line = cur_line
+                    out.append(Token(TokenType.LBRACE, "{", 0, t.line, t.col))
+                    inlineBlocks += 1
+                    lineOpen = True
+                    prevLine = curLine
                     i += 1
                     continue
 
             out.append(t)
-            line_open = True
-            prev_line = cur_line
+            lineOpen = True
+            prevLine = curLine
             i += 1
 
         return out
 
-    func baca_angka(self):
-        awal_baris = self.baris
-        awal_kolom = self.kolom
-        teks = ""
+    func hexDigitVal(self, ch):
+        if ch >= "0" and ch <= "9":
+            return ord(ch) - 48
+        if ch >= "a" and ch <= "f":
+            return ord(ch) - 97 + 10
+        if ch >= "A" and ch <= "F":
+            return ord(ch) - 65 + 10
+        return -1
 
-        while self.pos < self.n and (self.sumber[self.pos].isdigit() or self.sumber[self.pos] == "."):
-            teks += self.maju()
+    func readHex(self):
+        startLine = self.line
+        startCol = self.col
+        if self.hexDigitVal(self.peek(2)) < 0:
+            return Token(TokenType.NUMBER, self.advance(), 0, startLine, startCol)
+        text = self.advance() + self.advance()
+        val = 0
+        d = self.hexDigitVal(self.source[self.pos]) if self.pos < self.length else -1
+        while self.pos < self.length and d >= 0:
+            text += self.advance()
+            val = val * 16 + d
+            d = self.hexDigitVal(self.source[self.pos]) if self.pos < self.length else -1
+        return Token(TokenType.NUMBER, text, val, startLine, startCol)
 
-        return Token("ANGKA", teks, float(teks), awal_baris, awal_kolom)
+    func readBinary(self):
+        startLine = self.line
+        startCol = self.col
+        if self.peek(2) != "0" and self.peek(2) != "1":
+            return Token(TokenType.NUMBER, self.advance(), 0, startLine, startCol)
+        text = self.advance() + self.advance()
+        val = 0
+        while self.pos < self.length and (self.source[self.pos] == "0" or self.source[self.pos] == "1"):
+            ch = self.advance()
+            text += ch
+            val = val * 2 + (ord(ch) - 48)
+        return Token(TokenType.NUMBER, text, val, startLine, startCol)
 
-    func baca_string(self, kutip):
-        awal_baris = self.baris
-        awal_kolom = self.kolom
-        self.maju()
+    func readOctal(self):
+        startLine = self.line
+        startCol = self.col
+        if self.peek(2) < "0" or self.peek(2) > "7":
+            return Token(TokenType.NUMBER, self.advance(), 0, startLine, startCol)
+        text = self.advance() + self.advance()
+        val = 0
+        while self.pos < self.length and self.source[self.pos] >= "0" and self.source[self.pos] <= "7":
+            ch = self.advance()
+            text += ch
+            val = val * 8 + (ord(ch) - 48)
+        return Token(TokenType.NUMBER, text, val, startLine, startCol)
 
-        teks = ""
-        while self.pos < self.n and self.sumber[self.pos] != kutip:
-            ch = self.maju()
-            if ch == "\\" and self.pos < self.n:
-                esc = self.maju()
-                if esc == "n":
-                    teks += "\n"
-                elif esc == "t":
-                    teks += "\t"
-                elif esc == "r":
-                    teks += "\r"
-                elif esc == "\\":
-                    teks += "\\"
-                elif esc == "\"":
-                    teks += "\""
-                elif esc == "'":
-                    teks += "'"
+    func readNumber(self):
+        startLine = self.line
+        startCol = self.col
+
+        if self.source[self.pos] == "0" and (self.peek(1) == "x" or self.peek(1) == "X"):
+            return self.readHex()
+
+        if self.source[self.pos] == "0" and (self.peek(1) == "b" or self.peek(1) == "B"):
+            return self.readBinary()
+
+        if self.source[self.pos] == "0" and (self.peek(1) == "o" or self.peek(1) == "O"):
+            return self.readOctal()
+
+        text = ""
+        while self.pos < self.length and (self.source[self.pos].isdigit() or self.source[self.pos] == "."):
+            text += self.advance()
+
+        val = float(text) if "." in text else int(text)
+        return Token(TokenType.NUMBER, text, val, startLine, startCol)
+
+    func readString(self, quote):
+        startLine = self.line
+        startCol = self.col
+
+        isTriple = False
+        if self.peek(1) == quote and self.peek(2) == quote:
+            isTriple = True
+            self.advance()
+            self.advance()
+            self.advance()
+        else:
+            self.advance()
+
+        text = ""
+        if isTriple:
+            while self.pos < self.length:
+                if self.source[self.pos] == quote and self.peek(1) == quote and self.peek(2) == quote:
+                    self.advance()
+                    self.advance()
+                    self.advance()
+                    break
+                ch = self.advance()
+                if ch == "\\" and self.pos < self.length:
+                    esc = self.advance()
+                    if esc == "n":
+                        text += "\n"
+                    elif esc == "t":
+                        text += "\t"
+                    elif esc == "r":
+                        text += "\r"
+                    elif esc == "\\":
+                        text += "\\"
+                    elif esc == "\"":
+                        text += "\""
+                    elif esc == "'":
+                        text += "'"
+                    else:
+                        text += "\\" + esc
                 else:
-                    teks += esc
-            else:
-                teks += ch
+                    text += ch
+        else:
+            while self.pos < self.length and self.source[self.pos] != quote:
+                ch = self.advance()
+                if ch == "\\" and self.pos < self.length:
+                    esc = self.advance()
+                    if esc == "n":
+                        text += "\n"
+                    elif esc == "t":
+                        text += "\t"
+                    elif esc == "r":
+                        text += "\r"
+                    elif esc == "\\":
+                        text += "\\"
+                    elif esc == "\"":
+                        text += "\""
+                    elif esc == "'":
+                        text += "'"
+                    else:
+                        text += esc
+                else:
+                    text += ch
 
-        if self.pos < self.n:
-            self.maju()
+            if self.pos < self.length:
+                self.advance()
 
-        return Token("STRING", teks, 0, awal_baris, awal_kolom)
+        return Token(TokenType.STRING, text, 0, startLine, startCol)
 
-    func baca_pengenal(self):
-        awal_baris = self.baris
-        awal_kolom = self.kolom
-        teks = ""
+    func readIdent(self):
+        startLine = self.line
+        startCol = self.col
+        text = ""
 
-        while self.pos < self.n and (self.sumber[self.pos].isalnum() or self.sumber[self.pos] == "_"):
-            teks += self.maju()
+        while self.pos < self.length and (self.source[self.pos].isalnum() or self.source[self.pos] == "_"):
+            text += self.advance()
 
-        tipe = "IDENT"
-        if teks in self.KataKunci:
-            tipe = self.KataKunci[teks]
+        tokenType = TokenType.IDENT
+        if text in self.keywords:
+            tokenType = self.keywords[text]
 
-        return Token(tipe, teks, 0, awal_baris, awal_kolom)
+        return Token(tokenType, text, 0, startLine, startCol)
 
-    func baca_simbol(self):
-        awal_baris = self.baris
-        awal_kolom = self.kolom
-        ch = self.maju()
+    func readSymbol(self):
+        startLine = self.line
+        startCol = self.col
+        ch = self.advance()
 
         if ch == "+":
-            if self.cocok("="):
-                return Token("+=", "+=", 0, awal_baris, awal_kolom)
-            return Token("+", "+", 0, awal_baris, awal_kolom)
+            if self.match("="):
+                return Token("+=", "+=", 0, startLine, startCol)
+            return Token(TokenType.PLUS, "+", 0, startLine, startCol)
         elif ch == "-":
-            if self.cocok("="):
-                return Token("-=", "-=", 0, awal_baris, awal_kolom)
-            return Token("-", "-", 0, awal_baris, awal_kolom)
+            if self.match("="):
+                return Token("-=", "-=", 0, startLine, startCol)
+            return Token(TokenType.MINUS, "-", 0, startLine, startCol)
         elif ch == "*":
-            if self.cocok("="):
-                return Token("*=", "*=", 0, awal_baris, awal_kolom)
-            return Token("*", "*", 0, awal_baris, awal_kolom)
+            if self.match("="):
+                return Token("*=", "*=", 0, startLine, startCol)
+            return Token(TokenType.STAR, "*", 0, startLine, startCol)
         elif ch == "/":
-            if self.cocok("="):
-                return Token("/=", "/=", 0, awal_baris, awal_kolom)
-            return Token("/", "/", 0, awal_baris, awal_kolom)
+            if self.match("="):
+                return Token("/=", "/=", 0, startLine, startCol)
+            return Token(TokenType.SLASH, "/", 0, startLine, startCol)
         elif ch == "%":
-            return Token("%", "%", 0, awal_baris, awal_kolom)
+            return Token(TokenType.PERCENT, "%", 0, startLine, startCol)
         elif ch == "=":
-            if self.cocok("="):
-                return Token("==", "==", 0, awal_baris, awal_kolom)
-            return Token("=", "=", 0, awal_baris, awal_kolom)
+            if self.match("="):
+                return Token(TokenType.EQ, "==", 0, startLine, startCol)
+            return Token(TokenType.ASSIGN, "=", 0, startLine, startCol)
         elif ch == "!":
-            if self.cocok("="):
-                return Token("!=", "!=", 0, awal_baris, awal_kolom)
-            return Token("!", "!", 0, awal_baris, awal_kolom)
+            if self.match("="):
+                return Token(TokenType.NEQ, "!=", 0, startLine, startCol)
+            return Token("!", "!", 0, startLine, startCol)
         elif ch == "<":
-            if self.cocok("="):
-                return Token("<=", "<=", 0, awal_baris, awal_kolom)
-            return Token("<", "<", 0, awal_baris, awal_kolom)
+            if self.match("<"):
+                return Token(TokenType.SHL, "<<", 0, startLine, startCol)
+            if self.match("="):
+                return Token(TokenType.LTE, "<=", 0, startLine, startCol)
+            return Token(TokenType.LT, "<", 0, startLine, startCol)
         elif ch == ">":
-            if self.cocok("="):
-                return Token(">=", ">=", 0, awal_baris, awal_kolom)
-            return Token(">", ">", 0, awal_baris, awal_kolom)
+            if self.match(">"):
+                return Token(TokenType.SHR, ">>", 0, startLine, startCol)
+            if self.match("="):
+                return Token(TokenType.GTE, ">=", 0, startLine, startCol)
+            return Token(TokenType.GT, ">", 0, startLine, startCol)
+        elif ch == "&":
+            return Token(TokenType.AMP, "&", 0, startLine, startCol)
+        elif ch == "|":
+            return Token(TokenType.PIPE, "|", 0, startLine, startCol)
+        elif ch == "^":
+            return Token(TokenType.CARET, "^", 0, startLine, startCol)
+        elif ch == "~":
+            return Token(TokenType.TILDE, "~", 0, startLine, startCol)
         elif ch == "(":
-            return Token("(", "(", 0, awal_baris, awal_kolom)
+            return Token(TokenType.LPAREN, "(", 0, startLine, startCol)
         elif ch == ")":
-            return Token(")", ")", 0, awal_baris, awal_kolom)
+            return Token(TokenType.RPAREN, ")", 0, startLine, startCol)
         elif ch == "{":
-            return Token("{", "{", 0, awal_baris, awal_kolom)
+            return Token(TokenType.LBRACE, "{", 0, startLine, startCol)
         elif ch == "}":
-            return Token("}", "}", 0, awal_baris, awal_kolom)
+            return Token(TokenType.RBRACE, "}", 0, startLine, startCol)
         elif ch == "[":
-            return Token("[", "[", 0, awal_baris, awal_kolom)
+            return Token(TokenType.LBRACKET, "[", 0, startLine, startCol)
         elif ch == "]":
-            return Token("]", "]", 0, awal_baris, awal_kolom)
+            return Token(TokenType.RBRACKET, "]", 0, startLine, startCol)
         elif ch == ",":
-            return Token(",", ",", 0, awal_baris, awal_kolom)
+            return Token(TokenType.COMMA, ",", 0, startLine, startCol)
         elif ch == ";":
-            return Token(";", ";", 0, awal_baris, awal_kolom)
+            return Token(TokenType.SEMICOLON, ";", 0, startLine, startCol)
         elif ch == ":":
-            return Token(":", ":", 0, awal_baris, awal_kolom)
+            return Token(TokenType.COLON, ":", 0, startLine, startCol)
         elif ch == ".":
-            return Token(".", ".", 0, awal_baris, awal_kolom)
+            return Token(TokenType.DOT, ".", 0, startLine, startCol)
 
-        return Token("UNKNOWN", ch, 0, awal_baris, awal_kolom)
+        return Token("UNKNOWN", ch, 0, startLine, startCol)

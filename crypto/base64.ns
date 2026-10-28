@@ -1,6 +1,6 @@
-TABEL_B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+b64Table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
-func _b64_val(c):
+func b64Val(c):
     if c >= "A" and c <= "Z":
         return ord(c) - 65
     if c >= "a" and c <= "z":
@@ -23,24 +23,24 @@ func encode(s):
         b1 = ord(s[i + 1])
         b2 = ord(s[i + 2])
 
-        out += TABEL_B64[b0 >> 2]
-        out += TABEL_B64[((b0 & 3) << 4) | (b1 >> 4)]
-        out += TABEL_B64[((b1 & 15) << 2) | (b2 >> 6)]
-        out += TABEL_B64[b2 & 63]
+        out += b64Table[b0 >> 2]
+        out += b64Table[((b0 & 3) << 4) | (b1 >> 4)]
+        out += b64Table[((b1 & 15) << 2) | (b2 >> 6)]
+        out += b64Table[b2 & 63]
         i += 3
 
     rem = n - i
     if rem == 1:
         b0 = ord(s[i])
-        out += TABEL_B64[b0 >> 2]
-        out += TABEL_B64[(b0 & 3) << 4]
+        out += b64Table[b0 >> 2]
+        out += b64Table[(b0 & 3) << 4]
         out += "=="
     elif rem == 2:
         b0 = ord(s[i])
         b1 = ord(s[i + 1])
-        out += TABEL_B64[b0 >> 2]
-        out += TABEL_B64[((b0 & 3) << 4) | (b1 >> 4)]
-        out += TABEL_B64[(b1 & 15) << 2]
+        out += b64Table[b0 >> 2]
+        out += b64Table[((b0 & 3) << 4) | (b1 >> 4)]
+        out += b64Table[(b1 & 15) << 2]
         out += "="
 
     return out
@@ -57,7 +57,7 @@ func decode(s):
         i += 1
         if c == "=" or c == "\n" or c == "\r" or c == " ":
             continue
-        v = _b64_val(c)
+        v = b64Val(c)
         if v < 0:
             continue
         buf = (buf << 6) | v
@@ -66,5 +66,6 @@ func decode(s):
             bits -= 8
             b = (buf >> bits) & 255
             out += chr(b)
+            buf = buf & ((1 << bits) - 1)
 
     return out

@@ -1,163 +1,275 @@
-class AngkaExpr:
-    func __init__(self, nilai):
+class NumberExpr:
+    func __init__(self, value):
+        self.type = "NUMBER"
+        self.value = value
         self.jenis = "ANGKA"
-        self.nilai = nilai
+        self.nilai = value
 
-class TeksExpr:
-    func __init__(self, nilai):
+class StringExpr:
+    func __init__(self, value):
+        self.type = "STRING"
+        self.value = value
         self.jenis = "TEKS"
-        self.nilai = nilai
+        self.nilai = value
 
 class BoolExpr:
-    func __init__(self, nilai):
+    func __init__(self, value):
+        self.type = "BOOL"
+        self.value = value
         self.jenis = "BOOL"
-        self.nilai = nilai
+        self.nilai = value
 
-class KosongExpr:
+class NullExpr:
     func __init__(self):
+        self.type = "NULL"
         self.jenis = "KOSONG"
 
-class PengenalExpr:
-    func __init__(self, nama):
+class IdentExpr:
+    func __init__(self, name):
+        self.type = "IDENT"
+        self.name = name
         self.jenis = "PENGENAL"
-        self.nama = nama
+        self.nama = name
 
-class BinerExpr:
-    func __init__(self, op, kiri, kanan):
-        self.jenis = "BINER"
+class BinaryExpr:
+    func __init__(self, op, left, right):
+        self.type = "BINARY"
         self.op = op
-        self.kiri = kiri
-        self.kanan = kanan
+        self.left = left
+        self.right = right
+        self.jenis = "BINER"
+        self.kiri = left
+        self.kanan = right
 
-class UnerExpr:
+class UnaryExpr:
     func __init__(self, op, operand):
-        self.jenis = "UNER"
+        self.type = "UNARY"
         self.op = op
         self.operand = operand
+        self.jenis = "UNER"
 
-class PanggilExpr:
+class CallExpr:
     func __init__(self, callee, args):
-        self.jenis = "PANGGIL"
+        self.type = "CALL"
         self.callee = callee
         self.args = args
+        self.jenis = "PANGGIL"
 
 class IndexExpr:
     func __init__(self, target, index):
-        self.jenis = "INDEX"
+        self.type = "INDEX"
         self.target = target
         self.index = index
+        self.jenis = "INDEX"
 
-class IrisanExpr:
-    func __init__(self, target, awal, sampai):
-        self.jenis = "IRISAN"
+class SliceExpr:
+    func __init__(self, target, start, stop):
+        self.type = "SLICE"
         self.target = target
-        self.awal = awal
-        self.sampai = sampai
+        self.start = start
+        self.stop = stop
+        self.jenis = "IRISAN"
+        self.awal = start
+        self.sampai = stop
 
-class LarikExpr:
-    func __init__(self, elemen):
+class ListExpr:
+    func __init__(self, elements):
+        self.type = "LIST"
+        self.elements = elements
         self.jenis = "LARIK"
-        self.elemen = elemen
+        self.elemen = elements
 
-class PetaExpr:
-    func __init__(self, kunci, nilai):
+class MapExpr:
+    func __init__(self, keys, values):
+        self.type = "MAP"
+        self.keys = keys
+        self.values = values
         self.jenis = "PETA"
-        self.kunci = kunci
-        self.nilai = nilai
+        self.kunci = keys
+        self.nilai = values
 
-class TugasExpr:
-    func __init__(self, target, op, nilai):
-        self.jenis = "TUGAS"
+class AssignExpr:
+    func __init__(self, target, op, value):
+        self.type = "ASSIGN"
         self.target = target
         self.op = op
-        self.nilai = nilai
+        self.value = value
+        self.jenis = "TUGAS"
+        self.nilai = value
 
-class AksesAnggotaExpr:
-    func __init__(self, target, nama):
-        self.jenis = "MEMBER"
+class MemberExpr:
+    func __init__(self, target, name):
+        self.type = "MEMBER"
         self.target = target
-        self.nama = nama
+        self.name = name
+        self.jenis = "MEMBER"
+        self.nama = name
 
-class BlokStmt:
-    func __init__(self, stmts):
-        self.jenis = "BLOK"
-        self.stmts = stmts
+class TernaryExpr:
+    func __init__(self, condition, thenVal, elseVal):
+        self.type = "TERNARY"
+        self.condition = condition
+        self.thenVal = thenVal
+        self.elseVal = elseVal
+        self.jenis = "TERNER"
+        self.kondisi = condition
 
-class BuatStmt:
-    func __init__(self, nama, nilai):
-        self.jenis = "BUAT"
-        self.nama = nama
-        self.nilai = nilai
-
-class FungsiStmt:
-    func __init__(self, nama, params, badan):
-        self.jenis = "FUNGSI"
-        self.nama = nama
+class LambdaExpr:
+    func __init__(self, params, body):
+        self.type = "LAMBDA"
         self.params = params
-        self.badan = badan
+        self.body = body
+        self.jenis = "LAMBDA"
+        self.badan = body
 
-class JikaStmt:
-    func __init__(self, kondisi, maka, cabang_lain):
+class BlockStmt:
+    func __init__(self, stmts):
+        self.type = "BLOCK"
+        self.stmts = stmts
+        self.jenis = "BLOK"
+
+class VarStmt:
+    func __init__(self, name, value):
+        self.type = "VAR"
+        self.name = name
+        self.value = value
+        self.jenis = "BUAT"
+        self.nama = name
+        self.nilai = value
+
+class FuncStmt:
+    func __init__(self, name, params, body, defaults = None):
+        self.type = "FUNC"
+        self.name = name
+        self.params = params
+        self.body = body
+        self.defaults = defaults if defaults != None else {}
+        self.jenis = "FUNGSI"
+        self.nama = name
+        self.badan = body
+
+class IfStmt:
+    func __init__(self, condition, thenBranch, elseBranch):
+        self.type = "IF"
+        self.condition = condition
+        self.thenBranch = thenBranch
+        self.elseBranch = elseBranch
         self.jenis = "JIKA"
-        self.kondisi = kondisi
-        self.maka = maka
-        self.lain = cabang_lain
+        self.kondisi = condition
+        self.maka = thenBranch
+        self.lain = elseBranch
 
-class SelamaStmt:
-    func __init__(self, kondisi, badan):
+class WhileStmt:
+    func __init__(self, condition, body):
+        self.type = "WHILE"
+        self.condition = condition
+        self.body = body
         self.jenis = "SELAMA"
-        self.kondisi = kondisi
-        self.badan = badan
+        self.kondisi = condition
+        self.badan = body
 
-class UntukStmt:
-    func __init__(self, inisialisasi, kondisi, pasca, badan):
+class ForStmt:
+    func __init__(self, init, condition, post, body):
+        self.type = "FOR"
+        self.init = init
+        self.condition = condition
+        self.post = post
+        self.body = body
         self.jenis = "UNTUK"
-        self.inisialisasi = inisialisasi
-        self.kondisi = kondisi
-        self.pasca = pasca
-        self.badan = badan
+        self.inisialisasi = init
+        self.kondisi = condition
+        self.pasca = post
+        self.badan = body
 
-class UntukDalamStmt:
-    func __init__(self, variabel, iter, badan):
+class ForInStmt:
+    func __init__(self, variable, iterable, body):
+        self.type = "FOR_IN"
+        self.variable = variable
+        self.iterable = iterable
+        self.body = body
         self.jenis = "UNTUK_DALAM"
-        self.variabel = variabel
-        self.iter = iter
-        self.badan = badan
+        self.variabel = variable
+        self.iter = iterable
+        self.badan = body
 
-class HasilStmt:
-    func __init__(self, nilai):
+class ReturnStmt:
+    func __init__(self, value):
+        self.type = "RETURN"
+        self.value = value
         self.jenis = "HASIL"
-        self.nilai = nilai
+        self.nilai = value
 
-class BerhentiStmt:
+class BreakStmt:
     func __init__(self):
+        self.type = "BREAK"
         self.jenis = "BERHENTI"
 
-class LanjutStmt:
+class ContinueStmt:
     func __init__(self):
+        self.type = "CONTINUE"
         self.jenis = "LANJUT"
 
-class CobaStmt:
-    func __init__(self, coba_blok, tangkap_var, tangkap_blok, akhirnya_blok):
+class TryStmt:
+    func __init__(self, tryBlock, catchVar, catchBlock, finallyBlock):
+        self.type = "TRY"
+        self.tryBlock = tryBlock
+        self.catchVar = catchVar
+        self.catchBlock = catchBlock
+        self.finallyBlock = finallyBlock
         self.jenis = "COBA"
-        self.coba_blok = coba_blok
-        self.tangkap_var = tangkap_var
-        self.tangkap_blok = tangkap_blok
-        self.akhirnya_blok = akhirnya_blok
+        self.coba_blok = tryBlock
+        self.tangkap_var = catchVar
+        self.tangkap_blok = catchBlock
+        self.akhirnya_blok = finallyBlock
 
-class LemparStmt:
-    func __init__(self, nilai):
+class ThrowStmt:
+    func __init__(self, value):
+        self.type = "THROW"
+        self.value = value
         self.jenis = "LEMPAR"
-        self.nilai = nilai
+        self.nilai = value
 
-class EkspresiStmt:
+class ExprStmt:
     func __init__(self, expr):
-        self.jenis = "EKSPRESI"
+        self.type = "EXPR"
         self.expr = expr
+        self.jenis = "EKSPRESI"
 
-class KelasStmt:
-    func __init__(self, nama, induk_kelas, metode):
+class ClassStmt:
+    func __init__(self, name, baseClass, methods):
+        self.type = "CLASS"
+        self.name = name
+        self.baseClass = baseClass
+        self.methods = methods
         self.jenis = "KELAS"
-        self.nama = nama
-        self.induk = induk_kelas
-        self.metode = metode
+        self.nama = name
+        self.induk = baseClass
+        self.metode = methods
+
+AngkaExpr = NumberExpr
+TeksExpr = StringExpr
+KosongExpr = NullExpr
+PengenalExpr = IdentExpr
+BinerExpr = BinaryExpr
+UnerExpr = UnaryExpr
+PanggilExpr = CallExpr
+IrisanExpr = SliceExpr
+LarikExpr = ListExpr
+PetaExpr = MapExpr
+TugasExpr = AssignExpr
+AksesAnggotaExpr = MemberExpr
+TernerExpr = TernaryExpr
+BlokStmt = BlockStmt
+BuatStmt = VarStmt
+FungsiStmt = FuncStmt
+JikaStmt = IfStmt
+SelamaStmt = WhileStmt
+UntukStmt = ForStmt
+UntukDalamStmt = ForInStmt
+HasilStmt = ReturnStmt
+BerhentiStmt = BreakStmt
+LanjutStmt = ContinueStmt
+CobaStmt = TryStmt
+LemparStmt = ThrowStmt
+EkspresiStmt = ExprStmt
+KelasStmt = ClassStmt

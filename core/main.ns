@@ -1,166 +1,252 @@
 import sys
 
-func load_mod(name):
+func loadMod(name):
     try:
         return impor(name)
-    except:
+    except e:
         return impor("core/" + name)
 
-Lexer = load_mod("lexer").Lexer
-Parser = load_mod("parser").Parser
-Interpreter = load_mod("interpreter").Interpreter
-VmCompiler = load_mod("vm").VmCompiler
-VmRunner = load_mod("vm").VmRunner
+Lexer = loadMod("lexer").Lexer
+Parser = loadMod("parser").Parser
+Interpreter = loadMod("interpreter").Interpreter
+VmCompiler = loadMod("vm").VmCompiler
+VmRunner = loadMod("vm").VmRunner
+JalankanPerintah = jalankan_perintah
 
-func parse_source(kode_sumber):
-    lex = Lexer(kode_sumber)
-    tokens = lex.tokenize()
-    p = Parser(tokens)
-    return p.parse()
+USAGE = """usage: nusa [options] [-c code | -m module | file | -] [args]
+  -c code      run code from the command line
+  -m module    run a module by name
+  -            read the program from stdin
+  -i           open a REPL after running
+  -q           no REPL banner
+  -x           skip the first line of the source
+  -k, --check  parse only
+  --vm         run on the bytecode VM
+  --tokens     dump tokens before running
+  --ast        dump the AST before running
+  -V, --version
+  -h, --help
+  build [dir|file] [-o out] [--native]   bundle a program into script or native binary
+  run file                    same as passing the file directly
+  repl"""
 
-func jalankan_berkas(path, use_vm = False):
-    if not file_ada(path):
-        cetak("error: berkas '" + path + "' tidak ditemukan")
-        sys.exit(1)
-    try:
-        sumber = baca_file(path)
-        ast = parse_source(sumber)
-        if use_vm:
-            compiler = VmCompiler()
-            fn = compiler.compile(ast)
-            vm = VmRunner()
-            vm.run(fn)
-        else:
-            runtime = Interpreter()
-            runtime.jalankan(ast)
-    except e:
-        cetak("error: " + str(e))
-        sys.exit(1)
+func fail(msg):
+    print("nusa: " + msg)
+    sys.exit(1)
 
-func jalankan_eval(kode):
-    try:
-        ast = parse_source(kode)
+func parse(src, tokens = False, ast = False):
+    toks = Lexer(src).tokenize()
+    if tokens:
+        for t in toks:
+            print(t)
+    tree = Parser(toks).parse()
+    if ast:
+        print(tree)
+    return tree
+
+func exec(src, vm, tokens, ast, runtime = None):
+    tree = parse(src, tokens, ast)
+    if vm:
+        VmRunner().run(VmCompiler().compile(tree))
+        return None
+    if runtime == None:
         runtime = Interpreter()
-        runtime.jalankan(ast)
-    except e:
-        cetak("error: " + str(e))
-        sys.exit(1)
+    runtime.run(tree)
+    return runtime
 
-func periksa_sintaks(path):
+func readSource(path, skipFirst):
     if not file_ada(path):
-        cetak("error: berkas '" + path + "' tidak ditemukan")
-        sys.exit(1)
-    try:
-        sumber = baca_file(path)
-        parse_source(sumber)
-    except e:
-        cetak("error sintaks di " + path + ": " + str(e))
-        sys.exit(1)
+        fail("cannot open " + path)
+    src = baca_file(path)
+    if skipFirst or src.startswith("#!"):
+        nl = src.find("\n")
+        if nl != -1:
+            src = src[nl + 1:]
+    return src
 
-func bangun_proyek(args):
+func guarded(fn):
+    try:
+        return fn()
+    except e:
+        fail(str(e))
+
+func findModule(name):
+    for c in [name, name + ".ns", name + "/main.ns", "std/" + name + ".ns", "core/" + name + ".ns", "lib/" + name + ".ns"]:
+        if file_ada(c):
+            return c
+    fail("no module named " + name)
+
+func readStdin():
+    if file_ada("/dev/stdin"):
+        return baca_file("/dev/stdin")
+    lines = []
+    while True:
+        try:
+            lines.append(input())
+        except e:
+            break
+    return "\n".join(lines)
+
+func repl(runtime, banner):
+    if banner:
+        print("nusa 0.0.2 - type exit to quit")
+    if runtime == None:
+        runtime = Interpreter()
+    buf = ""
+    while True:
+        try:
+            line = input("... " if len(buf) > 0 else ">>> ")
+        except e:
+            print("")
+            break
+        if line == "exit" or line == "exit()" or line == "quit()":
+            break
+        if line.endswith(":") or (len(buf) > 0 and line != ""):
+            buf = buf + line + "\n"
+            continue
+        code = buf if len(buf) > 0 else line
+        buf = ""
+        if code == "":
+            continue
+        try:
+            runtime.run(parse(code))
+        except e:
+            print("error: " + str(e))
+
+func build(args):
     target = "."
-    output = ""
+    out = ""
+    isNative = False
     i = 2
-    n = len(args)
-
-    while i < n:
-        a = args[i]
-        if a == "-o" and i + 1 < n:
-            output = args[i + 1]
+    while i < len(args):
+        if (args[i] == "-o" or args[i] == "--output") and i + 1 < len(args):
+            out = args[i + 1]
             i += 2
-        elif target == "." and a != ".":
-            target = a
+        elif args[i] == "-n" or args[i] == "--native":
+            isNative = True
             i += 1
         else:
-            i += 1
-
-    berkas_utama = ""
-    if target == "." or not target.endswith(".ns"):
-        dir = target
-        if dir == ".":
-            if file_ada("main.ns"):
-                berkas_utama = "main.ns"
-            elif file_ada("core/main.ns"):
-                berkas_utama = "core/main.ns"
-        else:
-            candidate = dir + "/main.ns"
-            if file_ada(candidate):
-                berkas_utama = candidate
-
-        if berkas_utama == "":
-            cetak("error: tidak ditemukan berkas utama (main.ns) di " + target)
-            sys.exit(1)
-
-        if output == "":
             if target == ".":
-                output = "a.out"
-            else:
-                output = target
+                target = args[i]
+            i += 1
+
+    entry = target
+    if not target.endswith(".ns"):
+        entry = ""
+        for c in [target + "/main.ns", target + "/core/main.ns"]:
+            if file_ada(c):
+                entry = c
+                break
+        if entry == "":
+            fail("no main.ns in " + target)
+        if out == "":
+            out = "a.out" if target == "." else target
+    elif not file_ada(entry):
+        fail("cannot open " + entry)
+    elif out == "":
+        out = entry[:len(entry) - 3]
+
+    src = baca_file(entry)
+    tree = guarded(lambda: parse(src))
+    if isNative:
+        nativeMod = None
+        try:
+            nativeMod = impor("../compiler/native.ns")
+        except e:
+            try:
+                nativeMod = impor("compiler/native.ns")
+            except e2:
+                nativeMod = impor("native")
+        NativeCompiler = nativeMod.NativeCompiler
+        asm = NativeCompiler().compile(tree)
+        asmPath = out + ".s"
+        objPath = out + ".o"
+        tulis_file(asmPath, asm)
+        JalankanPerintah("as", ["-o", objPath, asmPath])
+        JalankanPerintah("ld", ["-o", out, objPath])
+        JalankanPerintah("rm", ["-f", objPath, asmPath])
     else:
-        berkas_utama = target
-        if not file_ada(berkas_utama):
-            cetak("error: berkas '" + berkas_utama + "' tidak ditemukan")
-            sys.exit(1)
-        if output == "":
-            output = berkas_utama
-            if output.endswith(".ns"):
-                output = output[:len(output) - 3]
-
-    try:
-        sumber = baca_file(berkas_utama)
-        parse_source(sumber)
-    except e:
-        cetak("error: " + str(e))
-        sys.exit(1)
-
-    bundle = "#!/usr/bin/env nusa\n" + baca_file(berkas_utama)
-    tulis_file(output, bundle)
-    jalankan_perintah("chmod", ["+x", output])
+        tulis_file(out, "#!/usr/bin/env nusa\n" + src)
+        JalankanPerintah("chmod", ["+x", out])
 
 func main():
     args = sys.argv
     n = len(args)
+    inspect = False
+    quiet = False
+    skipFirst = False
+    vm = False
+    tokens = False
+    ast = False
+    mode = ""
+    arg = ""
+    rest = []
 
-    if n < 2:
-        cetak("Nusantara (nusa) 0.0.1")
-        cetak("Pemakaian: nusa [opsi] <berkas.ns> [argumen]")
-        cetak("Opsi:")
-        cetak("    build [target]  Bangun program menjadi biner eksekusi")
-        cetak("    run <file.ns>   Jalankan berkas secara langsung")
-        cetak("    -c <file.ns>    Periksa sintaks tanpa menjalankan")
-        cetak("    -e <code>       Evaluasi kode langsung")
-        cetak("    --vm <file.ns>  Jalankan lewat Bytecode VM")
-        cetak("    -v, version     Tampilkan versi")
+    i = 1
+    while i < n and mode == "":
+        a = args[i]
+        if a == "-h" or a == "--help" or a == "help":
+            print(USAGE)
+            sys.exit(0)
+        elif a == "-V" or a == "--version" or a == "version":
+            print("nusa 0.0.2")
+            sys.exit(0)
+        elif a == "build":
+            build(args)
+            sys.exit(0)
+        elif a == "repl":
+            mode = "repl"
+        elif a == "run" or a == "-m" or a == "-c" or a == "-e" or a == "--eval" or a == "-k" or a == "--check":
+            if i + 1 >= n:
+                fail(a + " needs an argument")
+            arg = args[i + 1]
+            rest = args[i + 1:]
+            mode = {"run": "file", "-m": "module", "-c": "eval", "-e": "eval", "--eval": "eval", "-k": "check", "--check": "check"}[a]
+            if mode == "eval" or mode == "module":
+                rest = [a] + args[i + 2:]
+        elif a == "-":
+            mode = "stdin"
+            rest = args[i:]
+        elif a == "--vm":
+            vm = True
+        elif a == "--tokens":
+            tokens = True
+        elif a == "--ast":
+            ast = True
+        elif a == "-i":
+            inspect = True
+        elif a == "-q":
+            quiet = True
+        elif a == "-x":
+            skipFirst = True
+        elif a.startswith("-") and len(a) > 1:
+            fail("unknown option " + a)
+        else:
+            mode = "file"
+            arg = a
+            rest = args[i:]
+        i += 1
+
+    if len(rest) > 0:
+        sys.argv = rest
+
+    runtime = None
+    if mode == "file":
+        runtime = guarded(lambda: exec(readSource(arg, skipFirst), vm, tokens, ast))
+    elif mode == "eval":
+        runtime = guarded(lambda: exec(arg, vm, tokens, ast))
+    elif mode == "module":
+        runtime = guarded(lambda: exec(readSource(findModule(arg), skipFirst), vm, tokens, ast))
+    elif mode == "stdin":
+        runtime = guarded(lambda: exec(readStdin(), vm, tokens, ast))
+    elif mode == "check":
+        guarded(lambda: parse(readSource(arg, False)))
         sys.exit(0)
-
-    opt = args[1]
-
-    if opt == "-v" or opt == "version" or opt == "--version":
-        cetak("nusa 0.0.1")
-        sys.exit(0)
-    elif opt == "build":
-        bangun_proyek(args)
-    elif opt == "-e":
-        if n < 3:
-            cetak("error: -e membutuhkan kode untuk dievaluasi")
-            sys.exit(1)
-        jalankan_eval(args[2])
-    elif opt == "-c":
-        if n < 3:
-            cetak("error: -c membutuhkan path berkas")
-            sys.exit(1)
-        periksa_sintaks(args[2])
-    elif opt == "--vm":
-        if n < 3:
-            cetak("error: --vm membutuhkan path berkas")
-            sys.exit(1)
-        jalankan_berkas(args[2], True)
-    elif opt == "run":
-        if n < 3:
-            cetak("error: run membutuhkan path berkas")
-            sys.exit(1)
-        jalankan_berkas(args[2], False)
     else:
-        jalankan_berkas(opt, False)
+        repl(None, not quiet)
+        sys.exit(0)
+
+    if inspect:
+        repl(runtime, not quiet)
 
 main()

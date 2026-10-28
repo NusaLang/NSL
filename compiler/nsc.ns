@@ -1,44 +1,78 @@
 import sys
 
-Lexer = impor("lexer").Lexer
-Parser = impor("parser").Parser
+func loadModule(name):
+    try:
+        return impor(name)
+    except e:
+        return impor("core/" + name)
 
-func kompilasi(berkas_masukan, berkas_keluaran):
-    if not file_ada(berkas_masukan):
-        cetak("error: berkas '" + berkas_masukan + "' tidak ditemukan")
+Lexer = loadModule("lexer").Lexer
+Parser = loadModule("parser").Parser
+JalankanPerintah = jalankan_perintah
+
+func compile(inputFile, outputFile):
+    if not file_ada(inputFile):
+        print("error: file '" + inputFile + "' not found")
         sys.exit(1)
 
     try:
-        sumber = baca_file(berkas_masukan)
-        lex = Lexer(sumber)
+        source = baca_file(inputFile)
+        lex = Lexer(source)
         tokens = lex.tokenize()
-        p = Parser(tokens)
-        p.parse()
+        parser = Parser(tokens)
+        parser.parse()
 
-        bundle = "#!/usr/bin/env nusa\n" + sumber
-        tulis_file(berkas_keluaran, bundle)
-        jalankan_perintah("chmod", ["+x", berkas_keluaran])
+        cleanSource = source
+        if cleanSource.startswith("#!"):
+            nl = cleanSource.find("\n")
+            if nl != -1:
+                cleanSource = cleanSource[nl + 1:]
+
+        bundle = "#!/usr/bin/env nusa\n" + cleanSource
+        tulis_file(outputFile, bundle)
+        JalankanPerintah("chmod", ["+x", outputFile])
     except e:
-        cetak("error kompilasi: " + str(e))
+        print("compile error: " + str(e))
         sys.exit(1)
 
-func utama():
+func compileNative(inputFile, outputFile):
+    NativeCompiler = loadModule("compiler/native.ns").NativeCompiler
+    tree = Parser(Lexer(baca_file(inputFile)).tokenize()).parse()
+    asm = NativeCompiler().compile(tree)
+    asmPath = outputFile + ".s"
+    objPath = outputFile + ".o"
+    tulis_file(asmPath, asm)
+    JalankanPerintah("as", ["-o", objPath, asmPath])
+    JalankanPerintah("ld", ["-o", outputFile, objPath])
+    JalankanPerintah("rm", ["-f", objPath, asmPath])
+
+func main():
     args = sys.argv
     if len(args) < 2:
-        cetak("Penggunaan: nusa compiler/nsc.ns <berkas.ns> [-o output]")
+        print("usage: nusa compiler/nsc.ns <file.ns> [-o output] [--native]")
         sys.exit(1)
 
-    berkas_masukan = args[1]
-    berkas_keluaran = "a.out"
+    inputFile = args[1]
+    outputFile = "a.out"
+    isNative = False
 
     i = 2
     while i < len(args):
-        if args[i] == "-o" and i + 1 < len(args):
-            berkas_keluaran = args[i + 1]
+        if (args[i] == "-o" or args[i] == "--output") and i + 1 < len(args):
+            outputFile = args[i + 1]
             i += 2
+        elif args[i] == "-n" or args[i] == "--native":
+            isNative = True
+            i += 1
         else:
             i += 1
 
-    kompilasi(berkas_masukan, berkas_keluaran)
+    if isNative:
+        compileNative(inputFile, outputFile)
+    else:
+        compile(inputFile, outputFile)
 
-utama()
+if len(sys.argv) > 0:
+    firstArg = sys.argv[0]
+    if "nsc.ns" in firstArg or (len(sys.argv) > 1 and "nsc.ns" in sys.argv[1]):
+        main()

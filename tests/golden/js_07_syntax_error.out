@@ -1,3 +1,0 @@
-nusa: js error: SyntaxError: unexpected token in expression: ';'
-    at tests/cases_js/07_syntax_error.js:1
---- exit: 1

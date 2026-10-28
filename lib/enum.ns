@@ -1,4 +1,3 @@
-# class Color(Enum): RED = 1  -- members are objects with .name and .value (made by the parser's _enum_init)
 class Enum:
     def __str__(self):
         return type(self).__name__ + "." + self.name

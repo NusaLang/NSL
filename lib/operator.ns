@@ -7,7 +7,7 @@ def mul(a, b):
 def truediv(a, b):
     return a / b
 def floordiv(a, b):
-    return a // b
+    return a
 def mod(a, b):
     return a % b
 def pow(a, b):

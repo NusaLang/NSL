@@ -1,0 +1,183 @@
+name: CI & Release
+
+on:
+  push:
+    branches:
+      - main
+      - beta
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+      - beta
+
+jobs:
+  build-linux:
+    name: Build Linux (x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y binutils gcc make
+
+      - name: Build self-hosted toolchain
+        run: |
+          make clean
+          make build
+          make check
+          make test
+
+      - name: Package Linux artifact
+        run: |
+          mkdir -p dist
+          cp nusa dist/nusa-linux-x86_64
+          chmod +x dist/nusa-linux-x86_64
+          tar -czf dist/nusa-linux-x86_64.tar.gz nusa core/ compiler/ std/ net/ crypto/ media/ lib/ Makefile README.md LICENSE NOTICE
+          cd dist && sha256sum nusa-linux-x86_64 > nusa-linux-x86_64.sha256
+          cd dist && sha256sum nusa-linux-x86_64.tar.gz > nusa-linux-x86_64.tar.gz.sha256
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nusa-linux-x86_64
+          path: dist/nusa-linux-x86_64*
+
+  build-linux-arm64:
+    name: Build Linux (ARM64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build toolchain
+        run: |
+          make clean
+          make build
+
+      - name: Package Linux ARM64 artifact
+        run: |
+          mkdir -p dist
+          cp nusa dist/nusa-linux-arm64
+          chmod +x dist/nusa-linux-arm64
+          tar -czf dist/nusa-linux-arm64.tar.gz nusa core/ compiler/ std/ net/ crypto/ media/ lib/ Makefile README.md LICENSE NOTICE
+          cd dist && sha256sum nusa-linux-arm64 > nusa-linux-arm64.sha256
+          cd dist && sha256sum nusa-linux-arm64.tar.gz > nusa-linux-arm64.tar.gz.sha256
+
+      - name: Upload Linux ARM64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nusa-linux-arm64
+          path: dist/nusa-linux-arm64*
+
+  build-android:
+    name: Build Android (Termux ARM64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build toolchain
+        run: |
+          make clean
+          make build
+
+      - name: Package Android ARM64 package
+        run: |
+          mkdir -p dist
+          cp nusa dist/nusa-android-arm64
+          chmod +x dist/nusa-android-arm64
+          tar -czf dist/nusa-android-arm64.tar.gz nusa core/ compiler/ std/ net/ crypto/ media/ lib/ Makefile README.md LICENSE NOTICE
+          cd dist && sha256sum nusa-android-arm64 > nusa-android-arm64.sha256
+          cd dist && sha256sum nusa-android-arm64.tar.gz > nusa-android-arm64.tar.gz.sha256
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nusa-android-arm64
+          path: dist/nusa-android-arm64*
+
+  build-windows:
+    name: Build Windows (x86_64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          install: >-
+            base-devel
+            git
+
+      - name: Build on Windows MSYS2
+        shell: msys2 {0}
+        run: |
+          make clean
+          make build
+          mkdir -p dist
+          cp nusa dist/nusa-windows-x86_64
+          tar -czf dist/nusa-windows-x86_64.tar.gz nusa core/ compiler/ std/ net/ crypto/ media/ lib/ Makefile README.md LICENSE NOTICE install.ps1
+          cd dist && sha256sum nusa-windows-x86_64 > nusa-windows-x86_64.sha256
+          cd dist && sha256sum nusa-windows-x86_64.tar.gz > nusa-windows-x86_64.tar.gz.sha256
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nusa-windows-x86_64
+          path: dist/nusa-windows-x86_64*
+
+  release:
+    name: Release
+    needs: [build-linux, build-linux-arm64, build-android, build-windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate release notes
+        run: |
+          cat << 'EOF' > release_notes.md
+          ## Nusantara Toolchain 0.0.2
+
+          ### Architecture
+          - Self-hosted toolchain implemented in pure Nusantara (.ns) source code.
+          - Native x86_64 AOT compiler generating stand-alone ELF executables via system assembler and linker.
+          - Stack-based Bytecode Virtual Machine with instruction caching and constant folding.
+          - Reference Tree-walking Interpreter supporting Python-style indentation blocks and curly brace syntax.
+          - Standardized standard library modules across process execution, cryptography, networking, and filesystem I/O.
+
+          ### Verification
+          SHA256 checksums are provided for all release artifacts:
+          ```bash
+          sha256sum -c <artifact>.sha256
+          ```
+
+          ### Installation
+          ```bash
+          curl -fsSL https://github.com/NusaLang/NSL/raw/beta/install.sh | bash
+          ```
+          EOF
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release_notes.md
+          files: release-assets/*
+          draft: false
+          prerelease: false

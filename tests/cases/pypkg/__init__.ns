@@ -1,4 +1,0 @@
-def salam(nama):
-    return "halo " + nama
-
-PI = 3

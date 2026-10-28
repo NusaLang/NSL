@@ -1,0 +1,2886 @@
+RUNTIME = """rtAlloc:
+    add rdi, 7
+    and rdi, -8
+    mov rax, [heapPtr]
+    lea rdx, [rax+rdi]
+    mov [heapPtr], rdx
+    ret
+rtInit:
+    mov rax, 9
+    xor rdi, rdi
+    mov rsi, 17179869184
+    mov rdx, 3
+    mov r10, 16418
+    mov r8, -1
+    xor r9, r9
+    syscall
+    mov [heapPtr], rax
+    ret
+rtFail:
+    cmp qword ptr [excTop], 0
+    jne rtThrow
+    push rdi
+    lea rdi, [strErr]
+    mov rsi, 2
+    call rtWriteFd
+    pop rdi
+    mov rsi, 2
+    call rtWriteFd
+    lea rdi, [strNl]
+    mov rsi, 2
+    call rtWriteFd
+    mov rax, 60
+    mov rdi, 1
+    syscall
+rtThrow:
+    mov r11, [excTop]
+    test r11, r11
+    jz rtUncaught
+    mov rax, [r11]
+    mov [excTop], rax
+    mov rbp, [r11+8]
+    mov rsp, [r11+16]
+    mov r10, [r11+24]
+    add rsp, 32
+    mov rax, rdi
+    jmp r10
+rtUncaught:
+    push rdi
+    lea rdi, [strUncaught]
+    mov rsi, 2
+    call rtWriteFd
+    pop rdi
+    call rtToStr
+    mov rdi, rax
+    mov rsi, 2
+    call rtWriteFd
+    lea rdi, [strNl]
+    mov rsi, 2
+    call rtWriteFd
+    mov rax, 60
+    mov rdi, 1
+    syscall
+rtWriteFd:
+    mov rdx, [rdi+8]
+    lea rax, [rdi+16]
+    mov rdi, rsi
+    mov rsi, rax
+    mov rax, 1
+    syscall
+    ret
+rtWriteStr:
+    mov rsi, 1
+    jmp rtWriteFd
+rtStrNew:
+    push rdi
+    add rdi, 16
+    call rtAlloc
+    pop rdi
+    mov qword ptr [rax], 2
+    mov [rax+8], rdi
+    ret
+rtConcat:
+    push r12
+    push r13
+    mov r12, rdi
+    mov r13, rsi
+    mov rdi, [r12+8]
+    add rdi, [r13+8]
+    call rtStrNew
+    lea rdi, [rax+16]
+    lea rsi, [r12+16]
+    mov rcx, [r12+8]
+    rep movsb
+    lea rsi, [r13+16]
+    mov rcx, [r13+8]
+    rep movsb
+    pop r13
+    pop r12
+    ret
+rtIntStr:
+    sub rsp, 32
+    sar rdi, 1
+    mov rax, rdi
+    lea rsi, [rsp+32]
+    xor r8, r8
+    test rax, rax
+    jns rtIsPos
+    neg rax
+    mov r8, 1
+rtIsPos:
+    mov rcx, 10
+rtIsLoop:
+    xor rdx, rdx
+    div rcx
+    add dl, 48
+    dec rsi
+    mov [rsi], dl
+    test rax, rax
+    jnz rtIsLoop
+    test r8, r8
+    jz rtIsDone
+    dec rsi
+    mov byte ptr [rsi], 45
+rtIsDone:
+    lea rdi, [rsp+32]
+    sub rdi, rsi
+    mov r9, rsi
+    mov r10, rdi
+    call rtStrNew
+    lea rdi, [rax+16]
+    mov rsi, r9
+    mov rcx, r10
+    rep movsb
+    add rsp, 32
+    ret
+rtToStr:
+    test dil, 1
+    jnz rtIntStr
+    cmp rdi, 4
+    ja rtToStrObj
+    test rdi, rdi
+    jz rtTsNone
+    cmp rdi, 2
+    je rtTsFalse
+    lea rax, [strTrue]
+    ret
+rtTsNone:
+    lea rax, [strNone]
+    ret
+rtTsFalse:
+    lea rax, [strFalse]
+    ret
+rtToStrObj:
+    mov rax, [rdi]
+    cmp rax, 2
+    jne rtTsNotStr
+    mov rax, rdi
+    ret
+rtTsNotStr:
+    cmp rax, 3
+    je rtArrStr
+    cmp rax, 4
+    je rtMapStr
+    cmp rax, 6
+    je rtFloatStr
+    lea rax, [strObj]
+    ret
+rtRepr:
+    test dil, 1
+    jnz rtToStr
+    cmp rdi, 4
+    jbe rtToStr
+    cmp qword ptr [rdi], 2
+    jne rtToStr
+    push rdi
+    lea rdi, [strQuote]
+    mov rsi, [rsp]
+    call rtConcat
+    mov rdi, rax
+    lea rsi, [strQuote]
+    call rtConcat
+    add rsp, 8
+    ret
+rtArrStr:
+    push r12
+    push r13
+    push r14
+    mov r12, rdi
+    lea r13, [strLb]
+    xor r14, r14
+rtAsLoop:
+    cmp r14, [r12+8]
+    jae rtAsEnd
+    test r14, r14
+    jz rtAsNoSep
+    mov rdi, r13
+    lea rsi, [strComma]
+    call rtConcat
+    mov r13, rax
+rtAsNoSep:
+    mov rax, [r12+24]
+    mov rdi, [rax+r14*8]
+    call rtRepr
+    mov rdi, r13
+    mov rsi, rax
+    call rtConcat
+    mov r13, rax
+    inc r14
+    jmp rtAsLoop
+rtAsEnd:
+    mov rdi, r13
+    lea rsi, [strRb]
+    call rtConcat
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtMapStr:
+    push r12
+    push r13
+    push r14
+    mov r12, rdi
+    lea r13, [strLc]
+    xor r14, r14
+    xor r15, r15
+rtMsLoop:
+    cmp r14, [r12+16]
+    jae rtMsEnd
+    mov rax, r14
+    shl rax, 4
+    add rax, [r12+24]
+    cmp qword ptr [rax], 0
+    je rtMsNext
+    push rax
+    test r15, r15
+    jz rtMsNoSep
+    mov rdi, r13
+    lea rsi, [strComma]
+    call rtConcat
+    mov r13, rax
+rtMsNoSep:
+    mov r15, 1
+    mov rax, [rsp]
+    mov rdi, [rax]
+    call rtRepr
+    mov rdi, r13
+    mov rsi, rax
+    call rtConcat
+    mov rdi, rax
+    lea rsi, [strColon]
+    call rtConcat
+    mov r13, rax
+    pop rax
+    mov rdi, [rax+8]
+    call rtRepr
+    mov rdi, r13
+    mov rsi, rax
+    call rtConcat
+    mov r13, rax
+rtMsNext:
+    inc r14
+    jmp rtMsLoop
+rtMsEnd:
+    mov rdi, r13
+    lea rsi, [strRc]
+    call rtConcat
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtTruthy:
+    mov rax, [rdi]
+    cmp rax, 2
+    je rtTrLen
+    cmp rax, 6
+    je rtTrFloat
+    mov rax, 1
+    ret
+rtTrLen:
+    cmp qword ptr [rdi+8], 0
+    setne al
+    movzx eax, al
+    ret
+rtTrFloat:
+    movsd xmm0, [rdi+8]
+    xorpd xmm1, xmm1
+    ucomisd xmm0, xmm1
+    setne al
+    movzx eax, al
+    ret
+rtEq:
+    cmp rdi, rsi
+    je rtEqYes
+    test dil, 1
+    jnz rtEqIntLeft
+    test sil, 1
+    jnz rtEqIntRight
+    cmp rdi, 4
+    jbe rtEqNo
+    cmp rsi, 4
+    jbe rtEqNo
+    mov rax, [rdi]
+    cmp rax, [rsi]
+    jne rtEqNo
+    cmp rax, 6
+    je rtEqFloat
+    cmp rax, 3
+    je rtEqArr
+    cmp rax, 4
+    je rtEqMap
+    cmp rax, 2
+    jne rtEqNo
+    mov rcx, [rdi+8]
+    add rdi, 16
+    add rsi, 16
+    cmp rcx, [rsi-8]
+    jne rtEqNo
+    repe cmpsb
+    jne rtEqNo
+rtEqYes:
+    mov rax, 1
+    ret
+rtEqNo:
+    xor eax, eax
+    ret
+rtEqIntLeft:
+    test sil, 1
+    jnz rtEqNo
+    cmp rsi, 4
+    jbe rtEqNo
+    cmp qword ptr [rsi], 6
+    jne rtEqNo
+    jmp rtEqMixed
+rtEqIntRight:
+    cmp rdi, 4
+    jbe rtEqNo
+    cmp qword ptr [rdi], 6
+    jne rtEqNo
+rtEqMixed:
+    call rtToFloat2
+    ucomisd xmm0, xmm1
+    sete al
+    movzx eax, al
+    ret
+rtEqFloat:
+    movsd xmm0, [rdi+8]
+    ucomisd xmm0, [rsi+8]
+    sete al
+    movzx eax, al
+    ret
+rtEqArr:
+    mov rax, [rdi+8]
+    cmp rax, [rsi+8]
+    jne rtEqNo
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r12, [rdi+24]
+    mov r13, [rsi+24]
+    mov r14, rax
+    xor r15, r15
+rtEqArrLoop:
+    cmp r15, r14
+    je rtEqArrYes
+    mov rdi, [r12+r15*8]
+    mov rsi, [r13+r15*8]
+    call rtEq
+    mov r8, rax
+    test r8, r8
+    jz rtEqArrNo
+    inc r15
+    jmp rtEqArrLoop
+rtEqArrYes:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    mov rax, 1
+    ret
+rtEqArrNo:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    xor eax, eax
+    ret
+rtEqMap:
+    mov rax, [rdi+8]
+    cmp rax, [rsi+8]
+    jne rtEqNo
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, [rdi+16]
+    xor r15, r15
+rtEqMapLoop:
+    cmp r15, r14
+    je rtEqMapYes
+    mov rax, [r12+24]
+    mov rcx, r15
+    shl rcx, 4
+    add rax, rcx
+    mov rdi, [rax]
+    test rdi, rdi
+    jz rtEqMapNext
+    push rax
+    mov rsi, rdi
+    mov rdi, r13
+    call rtMapFind
+    mov rcx, rax
+    pop rax
+    cmp qword ptr [rcx], 0
+    je rtEqMapNo
+    push rax
+    push rcx
+    mov rdi, [rax+8]
+    mov rsi, [rcx+8]
+    call rtEq
+    mov r8, rax
+    pop rcx
+    pop rax
+    test r8, r8
+    jz rtEqMapNo
+rtEqMapNext:
+    inc r15
+    jmp rtEqMapLoop
+rtEqMapYes:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    mov rax, 1
+    ret
+rtEqMapNo:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    xor eax, eax
+    ret
+rtCmp:
+    mov rax, rdi
+    and rax, rsi
+    test al, 1
+    jz rtCmpSlow
+    cmp rdi, rsi
+    mov eax, 0
+    jl rtCmpNeg
+    jg rtCmpPos
+    ret
+rtCmpNeg:
+    mov rax, -1
+    ret
+rtCmpPos:
+    mov rax, 1
+    ret
+rtCmpSlow:
+    cmp rdi, rsi
+    je rtCmpEq
+    test dil, 1
+    jnz rtCmpMixed
+    test sil, 1
+    jnz rtCmpMixed
+    cmp rdi, 4
+    jbe rtCmpOne
+    cmp rsi, 4
+    jbe rtCmpOne
+    mov rax, [rdi]
+    cmp rax, [rsi]
+    jne rtCmpOne
+    cmp rax, 6
+    je rtCmpFloat
+    cmp rax, 3
+    je rtCmpStruct
+    cmp rax, 4
+    je rtCmpStruct
+    cmp rax, 2
+    jne rtCmpOne
+    mov r8, [rdi+8]
+    mov r9, [rsi+8]
+    mov rcx, r8
+    cmp rcx, r9
+    cmova rcx, r9
+    add rdi, 16
+    add rsi, 16
+    test rcx, rcx
+    jz rtCmpLen
+    repe cmpsb
+    jne rtCmpByte
+rtCmpLen:
+    cmp r8, r9
+    mov eax, 0
+    jl rtCmpNeg
+    jg rtCmpPos
+    ret
+rtCmpByte:
+    ja rtCmpPos
+    jmp rtCmpNeg
+rtCmpEq:
+    xor eax, eax
+    ret
+rtCmpOne:
+    mov rax, 1
+    ret
+rtCmpMixed:
+    call rtToFloat2
+    ucomisd xmm0, xmm1
+    mov eax, 0
+    jb rtCmpNeg
+    ja rtCmpPos
+    ret
+rtCmpFloat:
+    movsd xmm0, [rdi+8]
+    movsd xmm1, [rsi+8]
+    ucomisd xmm0, xmm1
+    mov eax, 0
+    jb rtCmpNeg
+    ja rtCmpPos
+    ret
+rtCmpStruct:
+    call rtEq
+    test rax, rax
+    jnz rtCmpEq
+    mov rax, 1
+    ret
+rtToFloat2:
+    mov r8, rdi
+    mov r9, rsi
+    mov rdi, r8
+    call rtToDouble
+    movsd xmm2, xmm0
+    mov rdi, r9
+    call rtToDouble
+    movsd xmm1, xmm0
+    movsd xmm0, xmm2
+    ret
+rtToDouble:
+    test dil, 1
+    jz rtTdPtr
+    sar rdi, 1
+    cvtsi2sd xmm0, rdi
+    ret
+rtTdPtr:
+    cmp rdi, 4
+    jbe rtTdZero
+    cmp qword ptr [rdi], 6
+    jne rtTdZero
+    movsd xmm0, [rdi+8]
+    ret
+rtTdZero:
+    xorpd xmm0, xmm0
+    ret
+rtBoxFloat:
+    sub rsp, 8
+    movsd [rsp], xmm0
+    mov rdi, 16
+    call rtAlloc
+    mov qword ptr [rax], 6
+    mov rdx, [rsp]
+    mov [rax+8], rdx
+    add rsp, 8
+    ret
+rtIsNum:
+    test dil, 1
+    jnz rtIsNumYes
+    cmp rdi, 4
+    jbe rtIsNumNo
+    cmp qword ptr [rdi], 6
+    jne rtIsNumNo
+rtIsNumYes:
+    mov eax, 1
+    ret
+rtIsNumNo:
+    xor eax, eax
+    ret
+rtArith:
+    mov r10, rdx
+    mov r8, rdi
+    mov r9, rsi
+    mov rdi, r8
+    call rtIsNum
+    test eax, eax
+    jz rtArithOther
+    mov rdi, r9
+    call rtIsNum
+    test eax, eax
+    jz rtArithOther
+    mov rdi, r8
+    mov rsi, r9
+    call rtToFloat2
+    cmp r10, 0
+    je rtArAdd
+    cmp r10, 1
+    je rtArSub
+    cmp r10, 2
+    je rtArMul
+    cmp r10, 3
+    je rtArDiv
+    jmp rtArMod
+rtArAdd:
+    addsd xmm0, xmm1
+    jmp rtBoxFloat
+rtArSub:
+    subsd xmm0, xmm1
+    jmp rtBoxFloat
+rtArMul:
+    mulsd xmm0, xmm1
+    jmp rtBoxFloat
+rtArDiv:
+    divsd xmm0, xmm1
+    jmp rtBoxFloat
+rtArMod:
+    movsd xmm2, xmm0
+    divsd xmm2, xmm1
+    roundsd xmm2, xmm2, 9
+    mulsd xmm2, xmm1
+    subsd xmm0, xmm2
+    jmp rtBoxFloat
+rtArithOther:
+    cmp r10, 0
+    je rtArithConcat
+    cmp r10, 2
+    je rtArithMulCheck
+    jmp rtArithBad
+rtArithConcat:
+    mov rdi, r8
+    mov rsi, r9
+    jmp rtConcatAny
+rtArithMulCheck:
+    mov rdi, r8
+    test dil, 1
+    jnz rtAmIntLeft
+    cmp rdi, 4
+    jbe rtArithBad
+    cmp qword ptr [rdi], 2
+    jne rtArithBad
+    mov rsi, r9
+    test sil, 1
+    jz rtArithBad
+    jmp rtStrRepeat
+rtAmIntLeft:
+    mov rsi, r9
+    test sil, 1
+    jnz rtArithBad
+    cmp rsi, 4
+    jbe rtArithBad
+    cmp qword ptr [rsi], 2
+    jne rtArithBad
+    mov rdi, rsi
+    mov rsi, r8
+    jmp rtStrRepeat
+rtArithBad:
+    lea rdi, [strBadOp]
+    jmp rtFail
+rtStrRepeat:
+    push r12
+    push r13
+    push r14
+    mov r12, rdi
+    sar rsi, 1
+    mov r13, rsi
+    test r13, r13
+    jg rtSrPositive
+    xor r13, r13
+rtSrPositive:
+    mov r14, [r12+8]
+    mov rax, r14
+    imul rax, r13
+    push rax
+    mov rdi, rax
+    add rdi, 16
+    call rtAlloc
+    pop rdx
+    mov qword ptr [rax], 2
+    mov [rax+8], rdx
+    push rax
+    lea rdi, [rax+16]
+    xor r9, r9
+rtSrOuter:
+    cmp r9, r13
+    je rtSrDone
+    xor r10, r10
+rtSrInner:
+    cmp r10, r14
+    je rtSrInnerDone
+    mov cl, [r12+16+r10]
+    mov [rdi], cl
+    inc rdi
+    inc r10
+    jmp rtSrInner
+rtSrInnerDone:
+    inc r9
+    jmp rtSrOuter
+rtSrDone:
+    pop rax
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtConcatAny:
+    test dil, 1
+    jnz rtArithBadPop
+    test sil, 1
+    jnz rtArithBadPop
+    cmp rdi, 4
+    jbe rtArithBadPop
+    cmp rsi, 4
+    jbe rtArithBadPop
+    mov rax, [rdi]
+    cmp rax, [rsi]
+    jne rtArithBadPop
+    cmp rax, 2
+    je rtConcat
+    cmp rax, 3
+    je rtArrConcat
+rtArithBadPop:
+    lea rdi, [strBadOp]
+    jmp rtFail
+rtArrConcat:
+    push r12
+    push r13
+    push r14
+    mov r12, rdi
+    mov r13, rsi
+    call rtArrNew
+    mov r14, rax
+    xor r8, r8
+rtAcLoop1:
+    cmp r8, [r12+8]
+    jae rtAcNext
+    push r8
+    mov rax, [r12+24]
+    mov rsi, [rax+r8*8]
+    mov rdi, r14
+    call rtArrPush
+    pop r8
+    inc r8
+    jmp rtAcLoop1
+rtAcNext:
+    xor r8, r8
+rtAcLoop2:
+    cmp r8, [r13+8]
+    jae rtAcDone
+    push r8
+    mov rax, [r13+24]
+    mov rsi, [rax+r8*8]
+    mov rdi, r14
+    call rtArrPush
+    pop r8
+    inc r8
+    jmp rtAcLoop2
+rtAcDone:
+    mov rax, r14
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtAdd:
+    mov rax, rdi
+    and rax, rsi
+    test al, 1
+    jz rtAddSlow
+    lea rax, [rdi+rsi-1]
+    ret
+rtAddSlow:
+    xor edx, edx
+    jmp rtArith
+rtSub:
+    mov rax, rdi
+    and rax, rsi
+    test al, 1
+    jz rtSubSlow
+    mov rax, rdi
+    sub rax, rsi
+    inc rax
+    ret
+rtSubSlow:
+    mov edx, 1
+    jmp rtArith
+rtMul:
+    mov rax, rdi
+    and rax, rsi
+    test al, 1
+    jz rtMulSlow
+    mov rax, rdi
+    sar rax, 1
+    mov rdx, rsi
+    dec rdx
+    imul rax, rdx
+    inc rax
+    ret
+rtMulSlow:
+    mov edx, 2
+    jmp rtArith
+rtDiv:
+    mov rax, rdi
+    and rax, rsi
+    test al, 1
+    jz rtDivSlow
+    mov rcx, rsi
+    sar rcx, 1
+    test rcx, rcx
+    jz rtDivZero
+    sar rdi, 1
+    sar rsi, 1
+    cvtsi2sd xmm0, rdi
+    cvtsi2sd xmm1, rsi
+    divsd xmm0, xmm1
+    jmp rtBoxFloat
+rtDivSlow:
+    mov edx, 3
+    jmp rtArith
+rtDivZero:
+    lea rdi, [strDivZero]
+    jmp rtFail
+rtMod:
+    mov rax, rdi
+    and rax, rsi
+    test al, 1
+    jz rtModSlow
+    mov rax, rdi
+    sar rax, 1
+    mov rcx, rsi
+    sar rcx, 1
+    test rcx, rcx
+    jz rtDivZero
+    cqo
+    idiv rcx
+    test rdx, rdx
+    jz rtModDone
+    mov r8, rdx
+    xor r8, rcx
+    jns rtModDone
+    add rdx, rcx
+rtModDone:
+    lea rax, [rdx*2+1]
+    ret
+rtModSlow:
+    mov edx, 4
+    jmp rtArith
+rtNeg:
+    test dil, 1
+    jz rtNegSlow
+    mov rax, 2
+    sub rax, rdi
+    ret
+rtNegSlow:
+    call rtToDouble
+    mov rax, 0x8000000000000000
+    movq xmm1, rax
+    xorpd xmm0, xmm1
+    jmp rtBoxFloat
+rtBitAnd:
+    mov rax, rdi
+    and rax, rsi
+    test al, 1
+    jz rtBitAndSlow
+    ret
+rtBitAndSlow:
+    mov r10, 0
+    jmp rtBitSlow
+rtBitOr:
+    mov rax, rdi
+    and rax, rsi
+    test al, 1
+    jz rtBitOrSlow
+    mov rax, rdi
+    or rax, rsi
+    ret
+rtBitOrSlow:
+    mov r10, 1
+    jmp rtBitSlow
+rtBitXor:
+    mov rax, rdi
+    and rax, rsi
+    test al, 1
+    jz rtBitXorSlow
+    mov rax, rdi
+    xor rax, rsi
+    or rax, 1
+    ret
+rtBitXorSlow:
+    mov r10, 2
+    jmp rtBitSlow
+rtShl:
+    mov rax, rdi
+    and rax, rsi
+    test al, 1
+    jz rtShlSlow
+    mov rax, rdi
+    sar rax, 1
+    mov rcx, rsi
+    sar rcx, 1
+    shl rax, cl
+    lea rax, [rax*2+1]
+    ret
+rtShlSlow:
+    mov r10, 3
+    jmp rtBitSlow
+rtShr:
+    mov rax, rdi
+    and rax, rsi
+    test al, 1
+    jz rtShrSlow
+    mov rax, rdi
+    sar rax, 1
+    mov rcx, rsi
+    sar rcx, 1
+    sar rax, cl
+    lea rax, [rax*2+1]
+    ret
+rtShrSlow:
+    mov r10, 4
+    jmp rtBitSlow
+rtBitSlow:
+    call rtToFloat2
+    cvttsd2si r8, xmm0
+    cvttsd2si r9, xmm1
+    cmp r10, 0
+    je rtBsAnd
+    cmp r10, 1
+    je rtBsOr
+    cmp r10, 2
+    je rtBsXor
+    cmp r10, 3
+    je rtBsShl
+    jmp rtBsShr
+rtBsAnd:
+    and r8, r9
+    jmp rtBsDone
+rtBsOr:
+    or r8, r9
+    jmp rtBsDone
+rtBsXor:
+    xor r8, r9
+    jmp rtBsDone
+rtBsShl:
+    mov rcx, r9
+    shl r8, cl
+    jmp rtBsDone
+rtBsShr:
+    mov rcx, r9
+    sar r8, cl
+rtBsDone:
+    lea rax, [r8*2+1]
+    ret
+rtBitNot:
+    test dil, 1
+    jz rtBitNotSlow
+    mov rax, rdi
+    sar rax, 1
+    not rax
+    lea rax, [rax*2+1]
+    ret
+rtBitNotSlow:
+    call rtToDouble
+    cvttsd2si r8, xmm0
+    not r8
+    lea rax, [r8*2+1]
+    ret
+rtFloatStr:
+    movsd xmm0, [rdi+8]
+    sub rsp, 64
+    xor r8, r8
+    xorpd xmm1, xmm1
+    ucomisd xmm0, xmm1
+    jae rtFsPos
+    mov r8, 1
+    mov rax, 0x8000000000000000
+    movq xmm2, rax
+    xorpd xmm0, xmm2
+rtFsPos:
+    cvttsd2si rax, xmm0
+    cvtsi2sd xmm1, rax
+    subsd xmm0, xmm1
+    mov r9, rax
+    mov rax, 1000000
+    cvtsi2sd xmm1, rax
+    mulsd xmm0, xmm1
+    mov rax, 0x3fe0000000000000
+    movq xmm1, rax
+    addsd xmm0, xmm1
+    cvttsd2si r10, xmm0
+    cmp r10, 1000000
+    jb rtFsOk
+    sub r10, 1000000
+    inc r9
+rtFsOk:
+    lea rsi, [rsp+64]
+    mov rcx, 6
+    test r10, r10
+    jz rtFsZero
+rtFsTrim:
+    mov rax, r10
+    xor rdx, rdx
+    mov r11, 10
+    div r11
+    test rdx, rdx
+    jnz rtFsFrac
+    mov r10, rax
+    dec rcx
+    jmp rtFsTrim
+rtFsFrac:
+    mov r11, rcx
+rtFsFLoop:
+    mov rax, r10
+    xor rdx, rdx
+    mov rdi, 10
+    div rdi
+    add dl, 48
+    dec rsi
+    mov [rsi], dl
+    mov r10, rax
+    dec r11
+    jnz rtFsFLoop
+    dec rsi
+    mov byte ptr [rsi], 46
+    jmp rtFsInt
+rtFsZero:
+    dec rsi
+    mov byte ptr [rsi], 48
+    dec rsi
+    mov byte ptr [rsi], 46
+rtFsInt:
+    mov rax, r9
+    mov rcx, 10
+rtFsILoop:
+    xor rdx, rdx
+    div rcx
+    add dl, 48
+    dec rsi
+    mov [rsi], dl
+    test rax, rax
+    jnz rtFsILoop
+    test r8, r8
+    jz rtFsDone
+    dec rsi
+    mov byte ptr [rsi], 45
+rtFsDone:
+    lea rdi, [rsp+64]
+    sub rdi, rsi
+    mov r9, rsi
+    mov r10, rdi
+    call rtStrNew
+    lea rdi, [rax+16]
+    mov rsi, r9
+    mov rcx, r10
+    rep movsb
+    add rsp, 64
+    ret
+rtInt:
+    test dil, 1
+    jnz rtIntSelf
+    cmp rdi, 4
+    jbe rtIntSelf
+    cmp qword ptr [rdi], 6
+    je rtIntFloat
+    cmp qword ptr [rdi], 2
+    je rtIntParse
+rtIntSelf:
+    mov rax, rdi
+    ret
+rtIntFloat:
+    cvttsd2si rax, [rdi+8]
+    lea rax, [rax*2+1]
+    ret
+rtIntParse:
+    mov rcx, [rdi+8]
+    lea rsi, [rdi+16]
+    xor rax, rax
+    xor r8, r8
+rtIpLoop:
+    test rcx, rcx
+    jz rtIpDone
+    movzx edx, byte ptr [rsi]
+    cmp edx, 45
+    jne rtIpDigit
+    mov r8, 1
+    jmp rtIpNext
+rtIpDigit:
+    sub edx, 48
+    cmp edx, 9
+    ja rtIpDone
+    imul rax, rax, 10
+    add rax, rdx
+rtIpNext:
+    inc rsi
+    dec rcx
+    jmp rtIpLoop
+rtIpDone:
+    test r8, r8
+    jz rtIpPos
+    neg rax
+rtIpPos:
+    lea rax, [rax*2+1]
+    ret
+rtFloat:
+    call rtToDouble
+    jmp rtBoxFloat
+rtTime:
+    sub rsp, 16
+    mov rax, 228
+    mov rdi, 1
+    mov rsi, rsp
+    syscall
+    mov rax, [rsp]
+    cvtsi2sd xmm0, rax
+    mov rax, [rsp+8]
+    cvtsi2sd xmm1, rax
+    mov rax, 1000000000
+    cvtsi2sd xmm2, rax
+    divsd xmm1, xmm2
+    addsd xmm0, xmm1
+    add rsp, 16
+    jmp rtBoxFloat
+rtArrNew:
+    mov rdi, 32
+    call rtAlloc
+    mov qword ptr [rax], 3
+    ret
+rtArrPush:
+    mov rax, [rdi+8]
+    cmp rax, [rdi+16]
+    jb rtApStore
+    push rdi
+    push rsi
+    mov rcx, [rdi+16]
+    add rcx, rcx
+    cmp rcx, 4
+    jae rtApCap
+    mov rcx, 4
+rtApCap:
+    mov [rdi+16], rcx
+    lea rdi, [rcx*8]
+    call rtAlloc
+    pop rsi
+    pop rdi
+    mov r8, [rdi+24]
+    mov [rdi+24], rax
+    mov r9, [rdi+8]
+    xor r11, r11
+rtApCopy:
+    cmp r11, r9
+    jae rtApStore
+    mov rdx, [r8+r11*8]
+    mov [rax+r11*8], rdx
+    inc r11
+    jmp rtApCopy
+rtApStore:
+    mov rax, [rdi+8]
+    mov rdx, [rdi+24]
+    mov [rdx+rax*8], rsi
+    inc qword ptr [rdi+8]
+    xor eax, eax
+    ret
+rtArrPop:
+    mov rax, [rdi+8]
+    test rax, rax
+    jz rtApEmpty
+    dec rax
+    mov [rdi+8], rax
+    mov rdx, [rdi+24]
+    mov rax, [rdx+rax*8]
+    ret
+rtApEmpty:
+    xor eax, eax
+    ret
+rtLen:
+    cmp rdi, 4
+    jbe rtLenZero
+    test dil, 1
+    jnz rtLenZero
+    mov rax, [rdi+8]
+    cmp qword ptr [rdi], 6
+    je rtLenZero
+    lea rax, [rax*2+1]
+    ret
+rtLenZero:
+    mov eax, 1
+    ret
+rtIndex:
+    cmp rdi, 4
+    jbe rtIdxFail
+    test dil, 1
+    jnz rtIdxFail
+    mov rax, [rdi]
+    cmp rax, 3
+    je rtIdxArr
+    cmp rax, 4
+    je rtMapGet
+    cmp rax, 2
+    jne rtIdxFail
+    test sil, 1
+    jz rtIdxFail
+    sar rsi, 1
+    mov rcx, [rdi+8]
+    test rsi, rsi
+    jns rtIdxS1
+    add rsi, rcx
+rtIdxS1:
+    cmp rsi, rcx
+    jae rtIdxRange
+    movzx edx, byte ptr [rdi+rsi+16]
+    push rdx
+    mov rdi, 24
+    call rtAlloc
+    pop rdx
+    mov qword ptr [rax], 2
+    mov qword ptr [rax+8], 1
+    mov [rax+16], dl
+    ret
+rtIdxArr:
+    test sil, 1
+    jz rtIdxFail
+    sar rsi, 1
+    mov rcx, [rdi+8]
+    test rsi, rsi
+    jns rtIdxA1
+    add rsi, rcx
+rtIdxA1:
+    cmp rsi, rcx
+    jae rtIdxRange
+    mov rax, [rdi+24]
+    mov rax, [rax+rsi*8]
+    ret
+rtIdxRange:
+    lea rdi, [strIdxRange]
+    jmp rtFail
+rtCStrLen:
+    xor rax, rax
+rtClLoop:
+    cmp byte ptr [rdi+rax], 0
+    je rtClDone
+    inc rax
+    jmp rtClLoop
+rtClDone:
+    ret
+rtResolveExecPath:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 4096
+    mov r12, rdi
+    call rtCStrLen
+    mov r13, rax
+    xor rbx, rbx
+rtRepScan:
+    cmp rbx, r13
+    je rtRepNoSlash
+    cmp byte ptr [r12+rbx], 47
+    je rtRepHasSlash
+    inc rbx
+    jmp rtRepScan
+rtRepHasSlash:
+    mov rax, r12
+    jmp rtRepDone
+rtRepNoSlash:
+    mov r14, [gEnvp]
+    test r14, r14
+    jz rtRepNotFound
+rtRepEnvLoop:
+    mov rax, [r14]
+    test rax, rax
+    jz rtRepNotFound
+    cmp byte ptr [rax], 80
+    jne rtRepEnvNext
+    cmp byte ptr [rax+1], 65
+    jne rtRepEnvNext
+    cmp byte ptr [rax+2], 84
+    jne rtRepEnvNext
+    cmp byte ptr [rax+3], 72
+    jne rtRepEnvNext
+    cmp byte ptr [rax+4], 61
+    jne rtRepEnvNext
+    lea r15, [rax+5]
+    jmp rtRepGotPath
+rtRepEnvNext:
+    add r14, 8
+    jmp rtRepEnvLoop
+rtRepNotFound:
+    mov rax, r12
+    jmp rtRepDone
+rtRepGotPath:
+rtRepDirLoop:
+    mov r14, r15
+    xor rbx, rbx
+rtRepDirScan:
+    mov al, [r15]
+    test al, al
+    jz rtRepDirEnd
+    cmp al, 58
+    je rtRepDirEnd
+    inc r15
+    inc rbx
+    jmp rtRepDirScan
+rtRepDirEnd:
+    test rbx, rbx
+    jz rtRepDirNext
+    cmp rbx, 4000
+    jae rtRepDirNext
+    xor r8, r8
+rtRepCopyDir:
+    cmp r8, rbx
+    je rtRepCopyDirDone
+    mov al, [r14+r8]
+    mov [rsp+r8], al
+    inc r8
+    jmp rtRepCopyDir
+rtRepCopyDirDone:
+    mov byte ptr [rsp+rbx], 47
+    lea r9, [rsp+rbx+1]
+    xor r8, r8
+rtRepCopyCmd:
+    cmp r8, r13
+    je rtRepCopyCmdDone
+    mov al, [r12+r8]
+    mov [r9+r8], al
+    inc r8
+    jmp rtRepCopyCmd
+rtRepCopyCmdDone:
+    mov byte ptr [r9+r13], 0
+    mov rdi, rsp
+    mov rsi, 1
+    mov rax, 21
+    syscall
+    test rax, rax
+    jz rtRepFoundOnStack
+rtRepDirNext:
+    mov al, [r15]
+    test al, al
+    jz rtRepNotFound2
+    inc r15
+    jmp rtRepDirLoop
+rtRepNotFound2:
+    mov rax, r12
+    jmp rtRepDone
+rtRepFoundOnStack:
+    mov rdi, r13
+    add rdi, rbx
+    add rdi, 2
+    call rtAlloc
+    xor r8, r8
+rtRepFinalCopy:
+    cmp byte ptr [rsp+r8], 0
+    je rtRepFinalDone
+    mov r9b, [rsp+r8]
+    mov [rax+r8], r9b
+    inc r8
+    jmp rtRepFinalCopy
+rtRepFinalDone:
+    mov byte ptr [rax+r8], 0
+rtRepDone:
+    add rsp, 4096
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+rtReadAllFd:
+    push r12
+    push r13
+    sub rsp, 4096
+    mov r12, rdi
+    mov rdi, 16
+    call rtAlloc
+    mov qword ptr [rax], 2
+    mov qword ptr [rax+8], 0
+    mov r13, rax
+rtRafLoop:
+    mov rdi, r12
+    lea rsi, [rsp]
+    mov rdx, 4096
+    xor rax, rax
+    syscall
+    test rax, rax
+    jle rtRafDone
+    push rax
+    mov rdi, rax
+    add rdi, 16
+    call rtAlloc
+    pop rdx
+    mov qword ptr [rax], 2
+    mov [rax+8], rdx
+    xor rcx, rcx
+rtRafCopy:
+    cmp rcx, rdx
+    je rtRafCopyDone
+    mov r8b, [rsp+rcx]
+    mov [rax+16+rcx], r8b
+    inc rcx
+    jmp rtRafCopy
+rtRafCopyDone:
+    mov rdi, r13
+    mov rsi, rax
+    call rtConcat
+    mov r13, rax
+    jmp rtRafLoop
+rtRafDone:
+    mov rax, r13
+    add rsp, 4096
+    pop r13
+    pop r12
+    ret
+rtRunCommand:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 64
+    mov r12, rdi
+    mov r13, rsi
+    mov rdi, r12
+    call rtToCStr
+    mov r14, rax
+    mov rdi, r14
+    call rtResolveExecPath
+    mov [rsp+32], rax
+    mov rax, [r13+8]
+    mov rbx, rax
+    lea rdi, [rbx*8+16]
+    call rtAlloc
+    mov [rsp+24], rax
+    mov [rax], r14
+    mov r15, [r13+24]
+    xor rcx, rcx
+rtRcArgvLoop:
+    cmp rcx, rbx
+    je rtRcArgvDone
+    mov rdi, [r15+rcx*8]
+    push rcx
+    call rtToCStr
+    pop rcx
+    mov r9, [rsp+24]
+    mov [r9+8+rcx*8], rax
+    inc rcx
+    jmp rtRcArgvLoop
+rtRcArgvDone:
+    mov r9, [rsp+24]
+    mov qword ptr [r9+8+rbx*8], 0
+    lea rdi, [rsp]
+    mov rax, 22
+    syscall
+    lea rdi, [rsp+8]
+    mov rax, 22
+    syscall
+    mov rax, 57
+    syscall
+    test rax, rax
+    jz rtRcChild
+    mov [rsp+16], rax
+    movsxd rdi, dword ptr [rsp+4]
+    mov rax, 3
+    syscall
+    movsxd rdi, dword ptr [rsp+12]
+    mov rax, 3
+    syscall
+    movsxd rdi, dword ptr [rsp]
+    call rtReadAllFd
+    mov r12, rax
+    movsxd rdi, dword ptr [rsp+8]
+    call rtReadAllFd
+    mov r13, rax
+    movsxd rdi, dword ptr [rsp]
+    mov rax, 3
+    syscall
+    movsxd rdi, dword ptr [rsp+8]
+    mov rax, 3
+    syscall
+    mov rdi, [rsp+16]
+    lea rsi, [rsp+40]
+    xor rdx, rdx
+    xor r10, r10
+    mov rax, 61
+    syscall
+    mov eax, [rsp+40]
+    sar eax, 8
+    and eax, 255
+    movsxd rax, eax
+    lea rbx, [rax*2+1]
+    call rtMapNew
+    mov r14, rax
+    mov rdi, r14
+    lea rsi, [strStatusKey]
+    mov rdx, rbx
+    call rtMapSet
+    mov rdi, r14
+    lea rsi, [strKeluaranKey]
+    mov rdx, r12
+    call rtMapSet
+    mov rdi, r14
+    lea rsi, [strErrorKey]
+    mov rdx, r13
+    call rtMapSet
+    mov rax, r14
+    add rsp, 64
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+rtRcChild:
+    movsxd rdi, dword ptr [rsp+4]
+    mov rsi, 1
+    mov rax, 33
+    syscall
+    movsxd rdi, dword ptr [rsp+12]
+    mov rsi, 2
+    mov rax, 33
+    syscall
+    movsxd rdi, dword ptr [rsp]
+    mov rax, 3
+    syscall
+    movsxd rdi, dword ptr [rsp+8]
+    mov rax, 3
+    syscall
+    mov rdi, [rsp+32]
+    mov rsi, [rsp+24]
+    mov rdx, [gEnvp]
+    mov rax, 59
+    syscall
+    mov rax, 60
+    mov rdi, 127
+    syscall
+rtToCStr:
+    mov rcx, [rdi+8]
+    mov rsi, rdi
+    push rsi
+    push rcx
+    mov rdi, rcx
+    inc rdi
+    call rtAlloc
+    pop rcx
+    pop rsi
+    xor rdx, rdx
+rtCStrCopy:
+    cmp rdx, rcx
+    je rtCStrTerm
+    mov r8b, [rsi+16+rdx]
+    mov [rax+rdx], r8b
+    inc rdx
+    jmp rtCStrCopy
+rtCStrTerm:
+    mov byte ptr [rax+rdx], 0
+    ret
+rtFileExists:
+    call rtToCStr
+    mov rdi, rax
+    xor rsi, rsi
+    mov rax, 21
+    syscall
+    test rax, rax
+    jz rtFeTrue
+    mov rax, 2
+    ret
+rtFeTrue:
+    mov rax, 4
+    ret
+rtReadFile:
+    push r12
+    push r13
+    push r14
+    call rtToCStr
+    mov rdi, rax
+    xor rsi, rsi
+    xor rdx, rdx
+    mov rax, 2
+    syscall
+    test rax, rax
+    js rtRfEmpty
+    mov r12, rax
+    mov rdi, r12
+    xor rsi, rsi
+    mov rdx, 2
+    mov rax, 8
+    syscall
+    mov r13, rax
+    mov rdi, r12
+    xor rsi, rsi
+    xor rdx, rdx
+    mov rax, 8
+    syscall
+    mov rdi, r13
+    add rdi, 16
+    call rtAlloc
+    mov r14, rax
+    mov qword ptr [r14], 2
+    mov [r14+8], r13
+    mov rdi, r12
+    lea rsi, [r14+16]
+    mov rdx, r13
+    xor rax, rax
+    syscall
+    mov rdi, r12
+    mov rax, 3
+    syscall
+    mov rax, r14
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtRfEmpty:
+    mov rdi, 16
+    call rtAlloc
+    mov qword ptr [rax], 2
+    mov qword ptr [rax+8], 0
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtWriteFile:
+    push r12
+    push r13
+    mov r13, rsi
+    call rtToCStr
+    mov rdi, rax
+    mov rsi, 577
+    mov rdx, 420
+    mov rax, 2
+    syscall
+    test rax, rax
+    js rtWfDone
+    mov r12, rax
+    mov rdi, r12
+    lea rsi, [r13+16]
+    mov rdx, [r13+8]
+    mov rax, 1
+    syscall
+    mov rdi, r12
+    mov rax, 3
+    syscall
+rtWfDone:
+    xor rax, rax
+    pop r13
+    pop r12
+    ret
+rtSubstr:
+    push rdi
+    push rsi
+    push rdx
+    mov rdi, rdx
+    add rdi, 16
+    call rtAlloc
+    pop rdx
+    pop rsi
+    pop rdi
+    mov qword ptr [rax], 2
+    mov [rax+8], rdx
+    lea r9, [rdi+16]
+    add r9, rsi
+    xor rcx, rcx
+rtSubstrCopy:
+    cmp rcx, rdx
+    je rtSubstrDone
+    mov r8b, [r9+rcx]
+    mov [rax+16+rcx], r8b
+    inc rcx
+    jmp rtSubstrCopy
+rtSubstrDone:
+    ret
+rtStrFind:
+    mov r8, [rdi+8]
+    mov r9, [rsi+8]
+    sar rdx, 1
+    test rdx, rdx
+    jns rtSfStartOk
+    xor rdx, rdx
+rtSfStartOk:
+    mov r10, rdx
+rtSfLoop:
+    mov rax, r10
+    add rax, r9
+    cmp rax, r8
+    jg rtSfNotFound
+    lea r11, [rdi+16]
+    add r11, r10
+    xor rcx, rcx
+rtSfCmpLoop:
+    cmp rcx, r9
+    je rtSfFound
+    movzx eax, byte ptr [r11+rcx]
+    movzx edx, byte ptr [rsi+16+rcx]
+    cmp al, dl
+    jne rtSfNext
+    inc rcx
+    jmp rtSfCmpLoop
+rtSfNext:
+    inc r10
+    jmp rtSfLoop
+rtSfFound:
+    lea rax, [r10*2+1]
+    ret
+rtSfNotFound:
+    mov rax, -1
+    ret
+rtStrStartsWith:
+    mov r8, [rdi+8]
+    mov r9, [rsi+8]
+    cmp r9, r8
+    jg rtSwFalse
+    xor rcx, rcx
+rtSwLoop:
+    cmp rcx, r9
+    je rtSwTrue
+    movzx eax, byte ptr [rdi+16+rcx]
+    movzx edx, byte ptr [rsi+16+rcx]
+    cmp al, dl
+    jne rtSwFalse
+    inc rcx
+    jmp rtSwLoop
+rtSwTrue:
+    mov rax, 4
+    ret
+rtSwFalse:
+    mov rax, 2
+    ret
+rtStrEndsWith:
+    mov r8, [rdi+8]
+    mov r9, [rsi+8]
+    cmp r9, r8
+    jg rtEwFalse
+    mov r10, r8
+    sub r10, r9
+    lea r11, [rdi+16]
+    add r11, r10
+    xor rcx, rcx
+rtEwLoop:
+    cmp rcx, r9
+    je rtEwTrue
+    movzx eax, byte ptr [r11+rcx]
+    movzx edx, byte ptr [rsi+16+rcx]
+    cmp al, dl
+    jne rtEwFalse
+    inc rcx
+    jmp rtEwLoop
+rtEwTrue:
+    mov rax, 4
+    ret
+rtEwFalse:
+    mov rax, 2
+    ret
+rtStrJoin:
+    push r12
+    push r13
+    push r14
+    push r15
+    push rdi
+    push rsi
+    mov r8, [rsi+8]
+    mov r9, [rsi+24]
+    mov r10, [rdi+8]
+    xor r11, r11
+    xor rcx, rcx
+rtSjLen:
+    cmp rcx, r8
+    je rtSjLenDone
+    mov rax, [r9+rcx*8]
+    add r11, [rax+8]
+    test rcx, rcx
+    jz rtSjLenSkipSep
+    add r11, r10
+rtSjLenSkipSep:
+    inc rcx
+    jmp rtSjLen
+rtSjLenDone:
+    mov rdi, r11
+    add rdi, 16
+    call rtAlloc
+    mov qword ptr [rax], 2
+    mov [rax+8], r11
+    pop rsi
+    pop rdi
+    mov r8, [rsi+8]
+    mov r9, [rsi+24]
+    mov r10, [rdi+8]
+    lea r12, [rdi+16]
+    lea r11, [rax+16]
+    push rax
+    xor rcx, rcx
+rtSjOuter:
+    cmp rcx, r8
+    je rtSjOuterDone
+    test rcx, rcx
+    jz rtSjSkipSep
+    xor r15, r15
+rtSjSepCopy:
+    cmp r15, r10
+    je rtSjSepDone
+    mov al, [r12+r15]
+    mov [r11], al
+    inc r11
+    inc r15
+    jmp rtSjSepCopy
+rtSjSepDone:
+rtSjSkipSep:
+    mov r13, [r9+rcx*8]
+    mov r14, [r13+8]
+    lea r13, [r13+16]
+    xor r15, r15
+rtSjElemCopy:
+    cmp r15, r14
+    je rtSjElemDone
+    mov al, [r13+r15]
+    mov [r11], al
+    inc r11
+    inc r15
+    jmp rtSjElemCopy
+rtSjElemDone:
+    inc rcx
+    jmp rtSjOuter
+rtSjOuterDone:
+    pop rax
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtStrSplit:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r12, rdi
+    mov r13, rsi
+    call rtArrNew
+    mov r14, rax
+    xor r15, r15
+    xor rbx, rbx
+rtSplitScan:
+    mov r8, [r12+8]
+    mov r9, [r13+8]
+    mov rax, rbx
+    add rax, r9
+    cmp rax, r8
+    jg rtSplitTail
+    lea r11, [r12+16]
+    add r11, rbx
+    xor r10, r10
+rtSplitCmp:
+    cmp r10, r9
+    je rtSplitMatch
+    movzx eax, byte ptr [r11+r10]
+    movzx edx, byte ptr [r13+16+r10]
+    cmp al, dl
+    jne rtSplitNoMatch
+    inc r10
+    jmp rtSplitCmp
+rtSplitMatch:
+    mov rdi, r12
+    mov rsi, r15
+    mov rdx, rbx
+    sub rdx, r15
+    call rtSubstr
+    mov rdi, r14
+    mov rsi, rax
+    call rtArrPush
+    mov r9, [r13+8]
+    add rbx, r9
+    mov r15, rbx
+    jmp rtSplitScan
+rtSplitNoMatch:
+    inc rbx
+    jmp rtSplitScan
+rtSplitTail:
+    mov r8, [r12+8]
+    mov rdi, r12
+    mov rsi, r15
+    mov rdx, r8
+    sub rdx, r15
+    call rtSubstr
+    mov rdi, r14
+    mov rsi, rax
+    call rtArrPush
+    mov rax, r14
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+rtStrStrip:
+    mov rcx, [rdi+8]
+    xor rax, rax
+rtStripFwd:
+    cmp rax, rcx
+    je rtStripAllWs
+    movzx edx, byte ptr [rdi+16+rax]
+    cmp dl, 32
+    je rtStripFwdNext
+    cmp dl, 9
+    je rtStripFwdNext
+    cmp dl, 10
+    je rtStripFwdNext
+    cmp dl, 13
+    je rtStripFwdNext
+    jmp rtStripFwdDone
+rtStripFwdNext:
+    inc rax
+    jmp rtStripFwd
+rtStripFwdDone:
+    mov r8, rcx
+    dec r8
+rtStripBack:
+    cmp r8, rax
+    jl rtStripAllWs
+    movzx edx, byte ptr [rdi+16+r8]
+    cmp dl, 32
+    je rtStripBackNext
+    cmp dl, 9
+    je rtStripBackNext
+    cmp dl, 10
+    je rtStripBackNext
+    cmp dl, 13
+    je rtStripBackNext
+    jmp rtStripBackDone
+rtStripBackNext:
+    dec r8
+    jmp rtStripBack
+rtStripBackDone:
+    mov rdx, r8
+    sub rdx, rax
+    inc rdx
+    mov rsi, rax
+    call rtSubstr
+    ret
+rtStripAllWs:
+    xor rsi, rsi
+    xor rdx, rdx
+    call rtSubstr
+    ret
+rtStrLower:
+    mov rdx, [rdi+8]
+    push rdi
+    push rdx
+    mov rdi, rdx
+    add rdi, 16
+    call rtAlloc
+    pop rdx
+    pop rsi
+    mov qword ptr [rax], 2
+    mov [rax+8], rdx
+    xor rcx, rcx
+rtLowerLoop:
+    cmp rcx, rdx
+    je rtLowerDone
+    movzx r8d, byte ptr [rsi+16+rcx]
+    cmp r8b, 65
+    jl rtLowerSkip
+    cmp r8b, 90
+    jg rtLowerSkip
+    add r8b, 32
+rtLowerSkip:
+    mov [rax+16+rcx], r8b
+    inc rcx
+    jmp rtLowerLoop
+rtLowerDone:
+    ret
+rtStrUpper:
+    mov rdx, [rdi+8]
+    push rdi
+    push rdx
+    mov rdi, rdx
+    add rdi, 16
+    call rtAlloc
+    pop rdx
+    pop rsi
+    mov qword ptr [rax], 2
+    mov [rax+8], rdx
+    xor rcx, rcx
+rtUpperLoop:
+    cmp rcx, rdx
+    je rtUpperDone
+    movzx r8d, byte ptr [rsi+16+rcx]
+    cmp r8b, 97
+    jl rtUpperSkip
+    cmp r8b, 122
+    jg rtUpperSkip
+    sub r8b, 32
+rtUpperSkip:
+    mov [rax+16+rcx], r8b
+    inc rcx
+    jmp rtUpperLoop
+rtUpperDone:
+    ret
+rtStrIsDigit:
+    mov rcx, [rdi+8]
+    test rcx, rcx
+    jz rtIsFalse
+    xor rax, rax
+rtIsDigitLoop:
+    cmp rax, rcx
+    je rtIsTrue
+    movzx edx, byte ptr [rdi+16+rax]
+    cmp dl, 48
+    jl rtIsFalse
+    cmp dl, 57
+    jg rtIsFalse
+    inc rax
+    jmp rtIsDigitLoop
+rtStrIsAlpha:
+    mov rcx, [rdi+8]
+    test rcx, rcx
+    jz rtIsFalse
+    xor rax, rax
+rtIsAlphaLoop:
+    cmp rax, rcx
+    je rtIsTrue
+    movzx edx, byte ptr [rdi+16+rax]
+    cmp dl, 65
+    jl rtIsAlphaCheckLower
+    cmp dl, 90
+    jle rtIsAlphaNext
+rtIsAlphaCheckLower:
+    cmp dl, 97
+    jl rtIsFalse
+    cmp dl, 122
+    jg rtIsFalse
+rtIsAlphaNext:
+    inc rax
+    jmp rtIsAlphaLoop
+rtStrIsAlnum:
+    mov rcx, [rdi+8]
+    test rcx, rcx
+    jz rtIsFalse
+    xor rax, rax
+rtIsAlnumLoop:
+    cmp rax, rcx
+    je rtIsTrue
+    movzx edx, byte ptr [rdi+16+rax]
+    cmp dl, 48
+    jl rtIsAlnumCheckUpper
+    cmp dl, 57
+    jle rtIsAlnumNext
+rtIsAlnumCheckUpper:
+    cmp dl, 65
+    jl rtIsAlnumCheckLower
+    cmp dl, 90
+    jle rtIsAlnumNext
+rtIsAlnumCheckLower:
+    cmp dl, 97
+    jl rtIsFalse
+    cmp dl, 122
+    jg rtIsFalse
+rtIsAlnumNext:
+    inc rax
+    jmp rtIsAlnumLoop
+rtIsTrue:
+    mov rax, 4
+    ret
+rtIsFalse:
+    mov rax, 2
+    ret
+rtType:
+    test dil, 1
+    jnz rtTypeInt
+    cmp rdi, 4
+    ja rtTypePtr
+    cmp rdi, 0
+    je rtTypeNull
+    jmp rtTypeBool
+rtTypePtr:
+    mov rax, [rdi]
+    cmp rax, 2
+    je rtTypeStr
+    cmp rax, 3
+    je rtTypeArr
+    cmp rax, 4
+    je rtTypeMap
+    cmp rax, 5
+    je rtTypeMap
+    jmp rtTypeFloat
+rtTypeInt:
+    lea rax, [strTypeAngka]
+    ret
+rtTypeFloat:
+    lea rax, [strTypeAngka]
+    ret
+rtTypeStr:
+    lea rax, [strTypeTeks]
+    ret
+rtTypeArr:
+    lea rax, [strTypeLarik]
+    ret
+rtTypeMap:
+    lea rax, [strTypePeta]
+    ret
+rtTypeBool:
+    lea rax, [strTypeBoolean]
+    ret
+rtTypeNull:
+    lea rax, [strTypeKosong]
+    ret
+rtOrd:
+    movzx eax, byte ptr [rdi+16]
+    lea rax, [rax*2+1]
+    ret
+rtChr:
+    sar rdi, 1
+    push rdi
+    mov rdi, 24
+    call rtAlloc
+    pop rdx
+    mov qword ptr [rax], 2
+    mov qword ptr [rax+8], 1
+    mov [rax+16], dl
+    ret
+rtIdxFail:
+    lea rdi, [strBadIdx]
+    jmp rtFail
+rtSetIndex:
+    cmp rdi, 4
+    jbe rtIdxFail
+    test dil, 1
+    jnz rtIdxFail
+    mov rax, [rdi]
+    cmp rax, 4
+    je rtMapSet
+    cmp rax, 3
+    jne rtIdxFail
+    test sil, 1
+    jz rtIdxFail
+    sar rsi, 1
+    mov rcx, [rdi+8]
+    test rsi, rsi
+    jns rtSiA1
+    add rsi, rcx
+rtSiA1:
+    cmp rsi, rcx
+    jae rtIdxRange
+    mov rax, [rdi+24]
+    mov [rax+rsi*8], rdx
+    ret
+rtMapNew:
+    mov rdi, 176
+    call rtAlloc
+    mov qword ptr [rax], 4
+    mov qword ptr [rax+16], 8
+    lea rdx, [rax+48]
+    mov [rax+24], rdx
+    ret
+rtHash:
+    test dil, 1
+    jz rtHashPtr
+    mov rax, rdi
+    mov rdx, 0x9E3779B97F4A7C15
+    imul rax, rdx
+    shr rax, 20
+    ret
+rtHashPtr:
+    cmp qword ptr [rdi], 2
+    jne rtHashAddr
+    mov rcx, [rdi+8]
+    lea rsi, [rdi+16]
+    mov rax, 0xcbf29ce484222325
+    mov rdx, 0x100000001b3
+rtHLoop:
+    test rcx, rcx
+    jz rtHDone
+    movzx r8, byte ptr [rsi]
+    xor rax, r8
+    imul rax, rdx
+    inc rsi
+    dec rcx
+    jmp rtHLoop
+rtHDone:
+    ret
+rtHashAddr:
+    mov rax, rdi
+    shr rax, 3
+    ret
+rtMapFind:
+    push r12
+    push r13
+    push r14
+    mov r12, rdi
+    mov r13, rsi
+    mov rdi, rsi
+    call rtHash
+    mov r14, rax
+    mov rcx, [r12+16]
+    dec rcx
+    and r14, rcx
+rtMfLoop:
+    mov rax, [r12+24]
+    mov rdx, r14
+    shl rdx, 4
+    add rax, rdx
+    mov rdi, [rax]
+    test rdi, rdi
+    jz rtMfDone
+    cmp rdi, r13
+    je rtMfDone
+    test dil, 1
+    jnz rtMfNext
+    test r13b, 1
+    jnz rtMfNext
+    push rax
+    mov rsi, r13
+    call rtEq
+    mov rdx, rax
+    pop rax
+    test rdx, rdx
+    jnz rtMfDone
+rtMfNext:
+    inc r14
+    mov rcx, [r12+16]
+    dec rcx
+    and r14, rcx
+    jmp rtMfLoop
+rtMfDone:
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtMapGrow:
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r12, rdi
+    mov r13, [r12+24]
+    mov r15, [r12+16]
+    mov rdi, r15
+    shl rdi, 5
+    call rtAlloc
+    mov [r12+24], rax
+    shl qword ptr [r12+16], 1
+    xor r14, r14
+rtMgLoop:
+    cmp r14, r15
+    jae rtMgDone
+    mov rax, r14
+    shl rax, 4
+    add rax, r13
+    mov rsi, [rax]
+    test rsi, rsi
+    jz rtMgNext
+    push rsi
+    push qword ptr [rax+8]
+    mov rdi, r12
+    call rtMapFind
+    pop rdx
+    pop rsi
+    mov [rax], rsi
+    mov [rax+8], rdx
+rtMgNext:
+    inc r14
+    jmp rtMgLoop
+rtMgDone:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtMapSet:
+    push r12
+    push r13
+    push r14
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    mov rax, [r12+8]
+    inc rax
+    shl rax, 1
+    cmp rax, [r12+16]
+    jbe rtMsFind
+    mov rdi, r12
+    call rtMapGrow
+rtMsFind:
+    mov rdi, r12
+    mov rsi, r13
+    call rtMapFind
+    cmp qword ptr [rax], 0
+    jne rtMsStore
+    inc qword ptr [r12+8]
+    mov [rax], r13
+rtMsStore:
+    mov [rax+8], r14
+    mov rax, r14
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtMapGet:
+    call rtMapFind
+    cmp qword ptr [rax], 0
+    je rtMgNone
+    mov rax, [rax+8]
+    ret
+rtMgNone:
+    xor eax, eax
+    ret
+rtIn:
+    cmp rsi, 4
+    jbe rtInNo
+    test sil, 1
+    jnz rtInNo
+    mov rax, [rsi]
+    cmp rax, 4
+    je rtInMap
+    cmp rax, 3
+    je rtInArr
+    cmp rax, 2
+    jne rtInNo
+    test dil, 1
+    jnz rtInNo
+    cmp rdi, 4
+    jbe rtInNo
+    mov r8, [rdi+8]
+    mov r9, [rsi+8]
+    sub r9, r8
+    jb rtInNo
+    xor r10, r10
+rtInSLoop:
+    cmp r10, r9
+    ja rtInNo
+    xor r11, r11
+rtInCmp:
+    cmp r11, r8
+    jae rtInYes
+    lea rax, [rsi+r10]
+    movzx ecx, byte ptr [rax+r11+16]
+    cmp cl, byte ptr [rdi+r11+16]
+    jne rtInNext
+    inc r11
+    jmp rtInCmp
+rtInNext:
+    inc r10
+    jmp rtInSLoop
+rtInYes:
+    mov eax, 1
+    ret
+rtInNo:
+    xor eax, eax
+    ret
+rtInArr:
+    push r12
+    push r13
+    push r14
+    mov r12, rsi
+    mov r13, rdi
+    xor r14, r14
+rtIaLoop:
+    cmp r14, [r12+8]
+    jae rtIaNo
+    mov rax, [r12+24]
+    mov rdi, [rax+r14*8]
+    mov rsi, r13
+    call rtEq
+    test rax, rax
+    jnz rtIaYes
+    inc r14
+    jmp rtIaLoop
+rtIaYes:
+    mov eax, 1
+    jmp rtIaEnd
+rtIaNo:
+    xor eax, eax
+rtIaEnd:
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtInMap:
+    xchg rdi, rsi
+    call rtMapFind
+    cmp qword ptr [rax], 0
+    setne al
+    movzx eax, al
+    ret
+rtIter:
+    cmp rdi, 4
+    jbe rtItFail
+    test dil, 1
+    jnz rtItFail
+    mov rax, [rdi]
+    cmp rax, 3
+    jne rtItNot
+    mov rax, rdi
+    ret
+rtItNot:
+    cmp rax, 4
+    je rtItMap
+    cmp rax, 2
+    jne rtItFail
+    push r12
+    push r13
+    push r14
+    mov r12, rdi
+    call rtArrNew
+    mov r13, rax
+    xor r14, r14
+rtItSLoop:
+    cmp r14, [r12+8]
+    jae rtItEnd
+    mov rdi, r12
+    lea rsi, [r14*2+1]
+    call rtIndex
+    mov rsi, rax
+    mov rdi, r13
+    call rtArrPush
+    inc r14
+    jmp rtItSLoop
+rtItMap:
+    push r12
+    push r13
+    push r14
+    mov r12, rdi
+    call rtArrNew
+    mov r13, rax
+    xor r14, r14
+rtItMLoop:
+    cmp r14, [r12+16]
+    jae rtItEnd
+    mov rax, r14
+    shl rax, 4
+    add rax, [r12+24]
+    mov rsi, [rax]
+    inc r14
+    test rsi, rsi
+    jz rtItMLoop
+    mov rdi, r13
+    call rtArrPush
+    jmp rtItMLoop
+rtItEnd:
+    mov rax, r13
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtItFail:
+    lea rdi, [strNotIter]
+    jmp rtFail
+rtSlice:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    cmp r12, 4
+    jbe rtSlEmptyArr
+    test r12b, 1
+    jnz rtSlEmptyArr
+    mov rax, [r12]
+    cmp rax, 2
+    je rtSlStr
+    cmp rax, 3
+    je rtSlArr
+    jmp rtSlEmptyArr
+rtSlArr:
+    mov r15, [r12+8]
+    test r13, r13
+    jz rtSlAStartZero
+    sar r13, 1
+    test r13, r13
+    jns rtSlAStartPos
+    add r13, r15
+    test r13, r13
+    jns rtSlAStartPos
+    xor r13, r13
+rtSlAStartPos:
+    cmp r13, r15
+    jbe rtSlAStopDecode
+    mov r13, r15
+    jmp rtSlAStopDecode
+rtSlAStartZero:
+    xor r13, r13
+rtSlAStopDecode:
+    test r14, r14
+    jz rtSlAStopLen
+    sar r14, 1
+    test r14, r14
+    jns rtSlAStopPos
+    add r14, r15
+    test r14, r14
+    jns rtSlAStopPos
+    xor r14, r14
+rtSlAStopPos:
+    cmp r14, r15
+    jbe rtSlACalcLen
+    mov r14, r15
+    jmp rtSlACalcLen
+rtSlAStopLen:
+    mov r14, r15
+rtSlACalcLen:
+    cmp r14, r13
+    jge rtSlAHaveLen
+    mov r14, r13
+rtSlAHaveLen:
+    mov rbx, r14
+    sub rbx, r13
+    push rbx
+    call rtArrNew
+    pop rbx
+    test rbx, rbx
+    jz rtSlADone
+    mov [rax+8], rbx
+    mov rcx, rbx
+    cmp rcx, 4
+    jae rtSlACapOk
+    mov rcx, 4
+rtSlACapOk:
+    mov [rax+16], rcx
+    push rax
+    lea rdi, [rcx*8]
+    call rtAlloc
+    mov rdx, rax
+    pop rax
+    mov [rax+24], rdx
+    mov rsi, [r12+24]
+    lea rsi, [rsi+r13*8]
+    mov rdi, rdx
+    mov rcx, rbx
+    rep movsq
+rtSlADone:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+rtSlStr:
+    mov r15, [r12+8]
+    test r13, r13
+    jz rtSlSStartZero
+    sar r13, 1
+    test r13, r13
+    jns rtSlSStartPos
+    add r13, r15
+    test r13, r13
+    jns rtSlSStartPos
+    xor r13, r13
+rtSlSStartPos:
+    cmp r13, r15
+    jbe rtSlSStopDecode
+    mov r13, r15
+    jmp rtSlSStopDecode
+rtSlSStartZero:
+    xor r13, r13
+rtSlSStopDecode:
+    test r14, r14
+    jz rtSlSStopLen
+    sar r14, 1
+    test r14, r14
+    jns rtSlSStopPos
+    add r14, r15
+    test r14, r14
+    jns rtSlSStopPos
+    xor r14, r14
+rtSlSStopPos:
+    cmp r14, r15
+    jbe rtSlSCalcLen
+    mov r14, r15
+    jmp rtSlSCalcLen
+rtSlSStopLen:
+    mov r14, r15
+rtSlSCalcLen:
+    cmp r14, r13
+    jge rtSlSHaveLen
+    mov r14, r13
+rtSlSHaveLen:
+    mov rbx, r14
+    sub rbx, r13
+    push rbx
+    mov rdi, rbx
+    call rtStrNew
+    pop rbx
+    test rbx, rbx
+    jz rtSlSDone
+    lea rdi, [rax+16]
+    lea rsi, [r12+16]
+    add rsi, r13
+    mov rcx, rbx
+    rep movsb
+rtSlSDone:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+rtSlEmptyArr:
+    call rtArrNew
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+rtRange:
+    push r12
+    push r13
+    push r14
+    mov r12, rdi
+    mov r13, rsi
+    call rtArrNew
+    mov r14, rax
+rtRgLoop:
+    cmp r12, r13
+    jge rtRgEnd
+    mov rdi, r14
+    mov rsi, r12
+    call rtArrPush
+    add r12, 2
+    jmp rtRgLoop
+rtRgEnd:
+    mov rax, r14
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtNewClass:
+    push rdi
+    mov rdi, 32
+    call rtAlloc
+    mov qword ptr [rax], 7
+    pop rdx
+    mov [rax+24], rdx
+    push rax
+    call rtMapNew
+    mov rdx, rax
+    pop rax
+    mov [rax+8], rdx
+    push rax
+    call rtMapNew
+    mov rdx, rax
+    pop rax
+    mov [rax+16], rdx
+    ret
+rtNewInst:
+    push rdi
+    mov rdi, rsi
+    call rtAlloc
+    pop rdx
+    mov qword ptr [rax], 5
+    mov [rax+8], rdx
+    ret
+rtFieldGet:
+    test dil, 1
+    jnz rtFgMapFallback
+    cmp rdi, 4
+    jbe rtFgMapFallback
+    cmp qword ptr [rdi], 5
+    jne rtFgMapFallback
+    push r12
+    push r13
+    mov r12, rdi
+    mov r13, rdx
+    mov rax, [r12+8]
+    cmp rax, [r13]
+    jne rtFgSlow
+    mov rdx, [r13+8]
+    mov rax, [r12+rdx]
+    pop r13
+    pop r12
+    ret
+rtFgSlow:
+    mov rcx, [r12+8]
+    mov rdi, [rcx+16]
+    call rtMapGet
+    test rax, rax
+    jz rtFgMiss
+    sar rax, 1
+    mov [r13], rcx
+    mov [r13+8], rax
+    mov rax, [r12+rax]
+    pop r13
+    pop r12
+    ret
+rtFgMiss:
+    xor rax, rax
+    pop r13
+    pop r12
+    ret
+rtFgMapFallback:
+    call rtMapGet
+    ret
+rtFieldSet:
+    test dil, 1
+    jnz rtFsMapFallback
+    cmp rdi, 4
+    jbe rtFsMapFallback
+    cmp qword ptr [rdi], 5
+    jne rtFsMapFallback
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    mov r15, rcx
+    mov rax, [r12+8]
+    cmp rax, [r15]
+    jne rtFsSlow
+    mov rdx, [r15+8]
+    mov [r12+rdx], r14
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtFsSlow:
+    mov rcx, [r12+8]
+    mov rdi, [rcx+16]
+    mov rsi, r13
+    call rtMapGet
+    test rax, rax
+    jz rtFsMiss
+    sar rax, 1
+    mov [r15], rcx
+    mov [r15+8], rax
+    mov [r12+rax], r14
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtFsMiss:
+    lea rdi, [strNoField]
+    jmp rtFail
+rtFsMapFallback:
+    call rtMapSet
+    ret
+rtFindMethod:
+    mov rcx, [rdi+8]
+rtFmLoop:
+    test rcx, rcx
+    jz rtFmFail
+    push rcx
+    push rsi
+    mov rdi, [rcx+8]
+    call rtMapGet
+    pop rsi
+    pop rcx
+    test rax, rax
+    jnz rtFmFound
+    mov rcx, [rcx+24]
+    jmp rtFmLoop
+rtFmFound:
+    shr rax, 1
+    ret
+rtFmFail:
+    lea rdi, [strNoMethod]
+    jmp rtFail"""
+
+DATA = """.align 8
+strNone: .quad 2
+ .quad 6
+ .ascii "kosong"
+.align 8
+strTrue: .quad 2
+ .quad 5
+ .ascii "benar"
+.align 8
+strFalse: .quad 2
+ .quad 5
+ .ascii "salah"
+.align 8
+strObj: .quad 2
+ .quad 7
+ .ascii "<objek>"
+.align 8
+strLb: .quad 2
+ .quad 1
+ .ascii "["
+.align 8
+strRb: .quad 2
+ .quad 1
+ .ascii "]"
+.align 8
+strLc: .quad 2
+ .quad 1
+ .ascii "{"
+.align 8
+strRc: .quad 2
+ .quad 1
+ .ascii "}"
+.align 8
+strComma: .quad 2
+ .quad 2
+ .ascii ", "
+.align 8
+strColon: .quad 2
+ .quad 2
+ .ascii ": "
+.align 8
+strQuote: .quad 2
+ .quad 1
+ .ascii "\\""
+.align 8
+strNl: .quad 2
+ .quad 1
+ .ascii "\\n"
+.align 8
+strSp: .quad 2
+ .quad 1
+ .ascii " "
+.align 8
+strErr: .quad 2
+ .quad 15
+ .ascii "runtime error: "
+.align 8
+strBadOp: .quad 2
+ .quad 21
+ .ascii "unsupported operation"
+.align 8
+strTypeAngka: .quad 2
+ .quad 5
+ .ascii "angka"
+.align 8
+strTypeTeks: .quad 2
+ .quad 4
+ .ascii "teks"
+.align 8
+strTypeLarik: .quad 2
+ .quad 5
+ .ascii "larik"
+.align 8
+strTypePeta: .quad 2
+ .quad 4
+ .ascii "peta"
+.align 8
+strTypeBoolean: .quad 2
+ .quad 7
+ .ascii "boolean"
+.align 8
+strTypeKosong: .quad 2
+ .quad 6
+ .ascii "kosong"
+.align 8
+strDivZero: .quad 2
+ .quad 16
+ .ascii "division by zero"
+.align 8
+strIdxRange: .quad 2
+ .quad 18
+ .ascii "index out of range"
+.align 8
+strBadIdx: .quad 2
+ .quad 15
+ .ascii "cannot index it"
+.align 8
+strNotIter: .quad 2
+ .quad 16
+ .ascii "not iterable obj"
+.align 8
+strNoMethod: .quad 2
+ .quad 16
+ .ascii "method not found"
+.align 8
+strNoField: .quad 2
+ .quad 15
+ .ascii "field not found"
+.align 8
+strStatusKey: .quad 2
+ .quad 6
+ .ascii "status"
+.align 8
+strKeluaranKey: .quad 2
+ .quad 8
+ .ascii "keluaran"
+.align 8
+strErrorKey: .quad 2
+ .quad 5
+ .ascii "error"
+.align 8
+strUncaught: .quad 2
+ .quad 20
+ .ascii "uncaught exception: "
+.align 8
+excTop: .quad 0
+.align 8
+heapPtr: .quad 0"""

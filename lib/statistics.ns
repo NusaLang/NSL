@@ -14,17 +14,17 @@ def median(data):
     if n == 0:
         raise ValueError("no median for empty data")
     if n % 2 == 1:
-        return d[n // 2]
-    return (d[n // 2 - 1] + d[n // 2]) / 2
+        return d[n
+    return (d[n
 
 def median_low(data):
     d = sorted(data)
     n = len(d)
-    return d[n // 2] if n % 2 == 1 else d[n // 2 - 1]
+    return d[n
 
 def median_high(data):
     d = sorted(data)
-    return d[len(d) // 2]
+    return d[len(d)
 
 def mode(data):
     counts = {}

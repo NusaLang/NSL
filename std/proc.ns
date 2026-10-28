@@ -1,60 +1,73 @@
-class HasilEksekusi:
-    func __init__(self, status, keluaran, error):
+procStreamStart = proc_stream_mulai
+procStreamRead = proc_stream_baca
+procStreamClose = proc_stream_tutup
+runCommandRaw = JalankanPerintah
+
+class ExecutionResult:
+    func constructor(self, status, output, error):
         self.status = status
-        self.keluaran = keluaran
+        self.output = output
         self.error = error
         self.returncode = status
-        self.stdout = keluaran
+        self.stdout = output
         self.stderr = error
+
+    func isSuccess(self):
+        return self.status == 0
 
     func sukses(self):
         return self.status == 0
 
-class StreamProses:
-    func __init__(self, pid, fd, perintah = ""):
+class ProcessStream:
+    func constructor(self, pid, fd, command = ""):
         self.pid = pid
         self.fd = fd
-        self.perintah = perintah
-        self.ditutup = False
+        self.command = command
+        self.isClosed = False
 
-    func baca(self, max_panjang = 4096):
-        if self.ditutup or self.fd < 0:
+    func read(self, maxLen = 4096):
+        if self.isClosed or self.fd < 0:
             return ""
-        return proc_stream_baca(self.fd, max_panjang)
+        return procStreamRead(self.fd, maxLen)
+
+    func close(self):
+        if not self.isClosed:
+            procStreamClose(self.pid, self.fd)
+            self.isClosed = True
+
+    func baca(self, maxLen = 4096):
+        return self.read(maxLen)
 
     func tutup(self):
-        if not self.ditutup:
-            proc_stream_tutup(self.pid, self.fd)
-            self.ditutup = True
+        self.close()
 
-func jalankan(perintah, argumen = []):
-    res = jalankan_perintah(perintah, argumen)
-    return HasilEksekusi(res.status, res.keluaran, res.error)
+func runCommand(cmd, args = []):
+    res = runCommandRaw(cmd, args)
+    return ExecutionResult(res.status, res.keluaran, res.error)
 
-run = jalankan
+func runShell(cmdStr):
+    return runCommand("sh", ["-c", cmdStr])
 
-func jalankan_shell(perintah_string):
-    res = jalankan_perintah("sh", ["-c", perintah_string])
-    return HasilEksekusi(res.status, res.keluaran, res.error)
+func startStream(cmd, args = []):
+    h = procStreamStart(cmd, args)
+    return ProcessStream(h.pid, h.fd, cmd)
 
-run_shell = jalankan_shell
+func readStream(fd, maxLen = 4096):
+    return procStreamRead(fd, maxLen)
 
-func mulai_stream(perintah, argumen = []):
-    h = proc_stream_mulai(perintah, argumen)
-    return StreamProses(h.pid, h.fd, perintah)
-
-start_stream = mulai_stream
-
-func baca_stream(fd, max_panjang = 4096):
-    return proc_stream_baca(fd, max_panjang)
-
-read_stream = baca_stream
-
-func tutup_stream(pid, fd):
-    proc_stream_tutup(pid, fd)
-
-close_stream = tutup_stream
+func closeStream(pid, fd):
+    procStreamClose(pid, fd)
 
 class Proc:
-    func __init__(self):
+    func constructor(self):
         pass
+
+run = runCommand
+runShell = runShell
+jalankan = runCommand
+jalankanShell = runShell
+mulaiStream = startStream
+bacaStream = readStream
+tutupStream = closeStream
+HasilEksekusi = ExecutionResult
+StreamProses = ProcessStream

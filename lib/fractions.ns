@@ -26,8 +26,8 @@ class Fraction:
         g = math.gcd(abs(int(numerator)), int(denominator))
         if g == 0:
             g = 1
-        self.numerator = int(numerator) // g
-        self.denominator = int(denominator) // g
+        self.numerator = int(numerator)
+        self.denominator = int(denominator)
     def _f(self, o):
         return o if isinstance(o, Fraction) else Fraction(o)
     def __add__(self, o):

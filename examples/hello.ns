@@ -1,6 +1,0 @@
-cetak("Halo, Nusantara!")
-
-func sapa(nama):
-    cetak("Halo,", nama)
-
-sapa("dunia")

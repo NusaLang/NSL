@@ -1,32 +1,43 @@
-_modul_termuat = {}
+loadedModules = {}
+loadPluginRaw = muat_plugin
+readFileRaw = baca_file
+writeFileRaw = tulis_file
+runCommandRaw = JalankanPerintah
+fileExistsRaw = file_ada
+envRaw = ambil_env
 
-func muat(nama_plugin):
-    if nama_plugin in _modul_termuat:
-        return _modul_termuat[nama_plugin]
+func loadPlugin(pluginName):
+    if pluginName in loadedModules:
+        return loadedModules[pluginName]
     try:
-        mod = muat_plugin(nama_plugin)
-        _modul_termuat[nama_plugin] = mod
+        mod = loadPluginRaw(pluginName)
+        loadedModules[pluginName] = mod
         return mod
     except e:
-        raise "modul sistem '" + nama_plugin + "' tidak ditemukan: " + str(e)
+        lempar "system module '" + pluginName + "' not found: " + str(e)
 
-load = muat
+load = loadPlugin
+muat = loadPlugin
+muatPlugin = loadPlugin
 
-func panggil(nama_plugin, nama_fungsi, argumen = []):
-    mod = muat(nama_plugin)
-    if not (nama_fungsi in mod):
-        raise "modul sistem '" + nama_plugin + "' tidak punya fungsi '" + nama_fungsi + "'"
-    fn = mod[nama_fungsi]
-    return fn(argumen)
+func callPlugin(pluginName, funcName, args = []):
+    mod = loadPlugin(pluginName)
+    if not (funcName in mod):
+        lempar "system module '" + pluginName + "' does not have function '" + funcName + "'"
+    fn = mod[funcName]
+    return fn(args)
 
-call = panggil
+call = callPlugin
+panggil = callPlugin
+panggilPlugin = callPlugin
 
-func isabs(path):
+func isAbs(path):
     return len(path) > 0 and path[0] == "/"
 
-apakah_mutlak = isabs
+isabs = isAbs
+apakahMutlak = isAbs
 
-func basename(path):
+func baseName(path):
     n = len(path)
     pos = -1
     i = n - 1
@@ -39,9 +50,10 @@ func basename(path):
         return path
     return path[pos + 1:]
 
-nama_dasar = basename
+basename = baseName
+namaDasar = baseName
 
-func dirname(path):
+func dirName(path):
     n = len(path)
     pos = -1
     i = n - 1
@@ -56,9 +68,10 @@ func dirname(path):
         return "/"
     return path[:pos]
 
-nama_direktori = dirname
+dirname = dirName
+namaDirektori = dirName
 
-func splitext(path):
+func splitExt(path):
     n = len(path)
     slash = -1
     dot = -1
@@ -74,87 +87,94 @@ func splitext(path):
         return [path, ""]
     return [path[:dot], path[dot:]]
 
-pisah_ekstensi = splitext
+splitext = splitExt
+pisahEkstensi = splitExt
 
-func join_path(bagian_larik):
-    hasil_path = ""
-    for bagian in bagian_larik:
-        p = str(bagian)
-        if isabs(p):
-            hasil_path = p
-        elif hasil_path == "" or hasil_path[len(hasil_path) - 1] == "/":
-            hasil_path += p
+func joinPath(parts):
+    resultPath = ""
+    for part in parts:
+        p = str(part)
+        if isAbs(p):
+            resultPath = p
+        elif resultPath == "" or resultPath[len(resultPath) - 1] == "/":
+            resultPath += p
         else:
-            hasil_path = hasil_path + "/" + p
-    return hasil_path
+            resultPath = resultPath + "/" + p
+    return resultPath
 
-gabung_path = join_path
+joinpath = joinPath
+gabungPath = joinPath
 
-func normpath(path):
+func normPath(path):
     if path == "":
         return "."
-    mutlak = isabs(path)
-    bagian = []
+    absolute = isAbs(path)
+    parts = []
     cur = ""
     n = len(path)
     i = 0
     while i < n:
         if path[i] == "/":
             if cur != "":
-                bagian.append(cur)
+                parts.append(cur)
                 cur = ""
         else:
             cur += path[i]
         i += 1
     if cur != "":
-        bagian.append(cur)
+        parts.append(cur)
 
-    tumpukan = []
-    for b in bagian:
+    stack = []
+    for b in parts:
         if b == ".":
             pass
         elif b == "..":
-            if len(tumpukan) > 0 and tumpukan[len(tumpukan) - 1] != "..":
-                tumpukan.pop()
-            elif not mutlak:
-                tumpukan.append("..")
+            if len(stack) > 0 and stack[len(stack) - 1] != "..":
+                stack.pop()
+            elif not absolute:
+                stack.append("..")
         else:
-            tumpukan.append(b)
+            stack.append(b)
 
-    hasil_path = ""
-    m = len(tumpukan)
+    resultPath = ""
+    m = len(stack)
     k = 0
     while k < m:
         if k > 0:
-            hasil_path += "/"
-        hasil_path += tumpukan[k]
+            resultPath += "/"
+        resultPath += stack[k]
         k += 1
 
-    if mutlak:
-        return "/" + hasil_path
-    if hasil_path == "":
+    if absolute:
+        return "/" + resultPath
+    if resultPath == "":
         return "."
-    return hasil_path
+    return resultPath
 
-normalkan_path = normpath
+normpath = normPath
+normalkanPath = normPath
 
-func expanduser(path):
+func expandUser(path):
     if len(path) > 0 and path[0] == "~":
-        home = ambil_env("HOME")
+        home = envRaw("HOME")
         if home != "":
             return home + path[1:]
     return path
 
-perluas_user = expanduser
+expanduser = expandUser
+perluasUser = expandUser
 
-func getenv(kunci, baku = None):
-    val = ambil_env(kunci)
+func getEnv(key, defaultVal = None):
+    val = envRaw(key)
     if val == "":
-        return baku
+        return defaultVal
     return val
 
-func getcwd():
-    res = jalankan_perintah("pwd", [])
+getenv = getEnv
+ambilEnv = getEnv
+
+func getCwd():
+    res = runCommand("pwd", [])
     if res.status == 0:
         out = res.keluaran
         if len(out) > 0 and out[len(out) - 1] == "\n":
@@ -162,124 +182,137 @@ func getcwd():
         return out
     return "."
 
-ambil_cwd = getcwd
+getcwd = getCwd
+ambilCwd = getCwd
 
-func abspath(path):
-    if isabs(path):
-        return normpath(path)
-    return normpath(getcwd() + "/" + path)
+func absPath(path):
+    if isAbs(path):
+        return normPath(path)
+    return normPath(getCwd() + "/" + path)
 
-path_mutlak = abspath
+abspath = absPath
+pathMutlak = absPath
 
 func exists(path):
-    return file_ada(path)
+    return fileExistsRaw(path)
 
-berkas_ada = exists
+berkasAda = exists
 
-func read_file(path):
-    return baca_file(path)
+func readFile(path):
+    return readFileRaw(path)
 
-baca_berkas = read_file
+readfile = readFile
+bacaBerkas = readFile
 
-func write_file(path, konten):
-    tulis_file(path, konten)
+func writeFile(path, content):
+    writeFileRaw(path, content)
 
-tulis_berkas = write_file
+writefile = writeFile
+tulisBerkas = writeFile
 
-func append_file(path, konten):
-    lama = ""
+func appendFile(path, content):
+    oldContent = ""
     if exists(path):
-        lama = read_file(path)
-    write_file(path, lama + konten)
+        oldContent = readFile(path)
+    writeFile(path, oldContent + content)
 
-tambah_berkas = append_file
+appendfile = appendFile
+tambahBerkas = appendFile
 
-func mkdir(path):
-    res = jalankan_perintah("mkdir", [path])
+func mkDir(path):
+    res = runCommand("mkdir", [path])
     if res.status != 0:
-        raise "OSError: gagal membuat direktori '" + path + "': " + res.error
+        lempar "OSError: failed to create directory '" + path + "': " + res.error
 
-buat_dir = mkdir
+mkdir = mkDir
+buatDir = mkDir
 
-func makedirs(path):
-    res = jalankan_perintah("mkdir", ["-p", path])
+func makeDirs(path):
+    res = runCommand("mkdir", ["-p", path])
     if res.status != 0:
-        raise "OSError: gagal membuat direktori bertingkat '" + path + "': " + res.error
+        lempar "OSError: failed to create directories '" + path + "': " + res.error
 
-buat_banyak_dir = makedirs
+makedirs = makeDirs
+buatBanyakDir = makeDirs
 
 func remove(path):
-    res = jalankan_perintah("rm", ["-f", path])
+    res = runCommand("rm", ["-f", path])
     if res.status != 0:
-        raise "OSError: gagal menghapus berkas '" + path + "': " + res.error
+        lempar "OSError: failed to remove file '" + path + "': " + res.error
 
-hapus_berkas = remove
+hapusBerkas = remove
 
-func rmdir(path):
-    res = jalankan_perintah("rmdir", [path])
+func rmDir(path):
+    res = runCommand("rmdir", [path])
     if res.status != 0:
-        raise "OSError: gagal menghapus direktori '" + path + "': " + res.error
+        lempar "OSError: failed to remove directory '" + path + "': " + res.error
 
-hapus_dir = rmdir
+rmdir = rmDir
+hapusDir = rmDir
 
-func rmtree(path):
-    res = jalankan_perintah("rm", ["-rf", path])
+func rmTree(path):
+    res = runCommand("rm", ["-rf", path])
     if res.status != 0:
-        raise "OSError: gagal menghapus pohon direktori '" + path + "': " + res.error
+        lempar "OSError: failed to remove tree '" + path + "': " + res.error
 
-hapus_semua = rmtree
+rmtree = rmTree
+hapusSemua = rmTree
 
-func rename(lama, baru):
-    res = jalankan_perintah("mv", [lama, baru])
+func rename(oldPath, newPath):
+    res = runCommand("mv", [oldPath, newPath])
     if res.status != 0:
-        raise "OSError: gagal mengubah nama dari '" + lama + "' ke '" + baru + "': " + res.error
+        lempar "OSError: failed to rename '" + oldPath + "' to '" + newPath + "': " + res.error
 
-ganti_nama = rename
+gantiNama = rename
 
-func copyfile(sumber, tujuan):
-    res = jalankan_perintah("cp", [sumber, tujuan])
+func copyFile(src, dst):
+    res = runCommand("cp", [src, dst])
     if res.status != 0:
-        raise "OSError: gagal menyalin dari '" + sumber + "' ke '" + tujuan + "': " + res.error
+        lempar "OSError: failed to copy '" + src + "' to '" + dst + "': " + res.error
 
-salin_berkas = copyfile
+copyfile = copyFile
+salinBerkas = copyFile
 
-func listdir(dir = "."):
-    res = jalankan_perintah("ls", ["-1", dir])
+func listDir(dir = "."):
+    res = runCommand("ls", ["-1", dir])
     if res.status != 0:
-        raise "OSError: tidak bisa membuka direktori '" + dir + "': " + res.error
-    teks = res.keluaran
-    hasil_larik = []
+        lempar "OSError: cannot open directory '" + dir + "': " + res.error
+    text = res.keluaran
+    files = []
     cur = ""
-    n = len(teks)
+    n = len(text)
     i = 0
     while i < n:
-        if teks[i] == "\n":
+        if text[i] == "\n":
             if cur != "" and cur != "." and cur != "..":
-                hasil_larik.append(cur)
+                files.append(cur)
             cur = ""
         else:
-            cur += teks[i]
+            cur += text[i]
         i += 1
     if cur != "" and cur != "." and cur != "..":
-        hasil_larik.append(cur)
-    return hasil_larik
+        files.append(cur)
+    return files
 
-daftar_dir = listdir
+listdir = listDir
+daftarDir = listDir
 
-func isfile(path):
-    res = jalankan_perintah("test", ["-f", path])
+func isFile(path):
+    res = runCommand("test", ["-f", path])
     return res.status == 0
 
-apakah_berkas = isfile
+isfile = isFile
+apakahBerkas = isFile
 
-func isdir(path):
-    res = jalankan_perintah("test", ["-d", path])
+func isDir(path):
+    res = runCommand("test", ["-d", path])
     return res.status == 0
 
-apakah_direktori = isdir
+isdir = isDir
+apakahDirektori = isDir
 
-func getsize(path):
-    res = jalankan_perintah("wc", ["-c", path])
+func getSize(path):
+    res = runCommand("wc", ["-c", path])
     if res.status == 0:
         out = res.keluaran
         s = ""
@@ -292,12 +325,13 @@ func getsize(path):
             i += 1
         if s != "":
             return float(s)
-    raise "OSError: gagal mengambil ukuran berkas '" + path + "'"
+    lempar "OSError: failed to get file size for '" + path + "'"
 
-ukuran_berkas = getsize
+getsize = getSize
+ukuranBerkas = getSize
 
 func pid():
-    res = jalankan_perintah("sh", ["-c", "echo $$"])
+    res = runCommand("sh", ["-c", "echo $$"])
     if res.status == 0:
         out = res.keluaran
         s = ""
@@ -312,20 +346,26 @@ func pid():
             return float(s)
     return 0
 
+getPid = pid
+
 func platform():
     return "linux"
 
-func jalankan(perintah, argumen = []):
-    return jalankan_perintah(perintah, argumen)
+getPlatform = platform
 
-run = jalankan
+func runCommand(cmd, args = []):
+    return runCommandRaw(cmd, args)
 
-func sistem(perintah):
-    res = jalankan_perintah("sh", ["-c", perintah])
+run = runCommand
+jalankan = runCommand
+
+func runSystem(cmd):
+    res = runCommand("sh", ["-c", cmd])
     return res.status
 
-system = sistem
+system = runSystem
+sistem = runSystem
 
 class SysMod:
-    func __init__(self):
+    func constructor(self):
         pass

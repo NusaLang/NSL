@@ -1,20 +1,24 @@
-func _read_u16(buf, off):
+fileExistsRaw = file_ada
+readFileRaw = baca_file
+writeFileRaw = tulis_file
+
+func readU16(buf, off):
     return ord(buf[off]) | (ord(buf[off + 1]) << 8)
 
-func _read_u32(buf, off):
+func readU32(buf, off):
     return ord(buf[off]) | (ord(buf[off + 1]) << 8) | (ord(buf[off + 2]) << 16) | (ord(buf[off + 3]) << 24)
 
-func _read_i32(buf, off):
-    v = _read_u32(buf, off)
+func readI32(buf, off):
+    v = readU32(buf, off)
     if v >= 2147483648:
         return v - 4294967296
     return v
 
-func _to_hex_byte(b):
-    hex_chars = "0123456789abcdef"
-    return hex_chars[(b >> 4) & 15] + hex_chars[b & 15]
+func toHexByte(b):
+    hexChars = "0123456789abcdef"
+    return hexChars[(b >> 4) & 15] + hexChars[b & 15]
 
-func _channel_index(c):
+func channelIndex(c):
     if c == "r" or c == "R":
         return 0
     if c == "g" or c == "G":
@@ -25,22 +29,22 @@ func _channel_index(c):
         return 3
     return -1
 
-func muat_bmp(path):
+func loadBmp(path):
     img = {
         "ok": False,
         "width": 0,
         "height": 0,
         "bpp": 0,
-        "bytes_per_pixel": 0,
-        "row_size": 0,
-        "bottom_up": True,
+        "bytesPerPixel": 0,
+        "rowSize": 0,
+        "bottomUp": True,
         "pixels": []
     }
 
-    if not file_ada(path):
+    if not fileExistsRaw(path):
         return img
 
-    buf = baca_file(path)
+    buf = readFileRaw(path)
     tot = len(buf)
     if tot < 54:
         return img
@@ -48,11 +52,11 @@ func muat_bmp(path):
     if buf[0] != "B" or buf[1] != "M":
         return img
 
-    off_bits = _read_u32(buf, 10)
-    w = _read_i32(buf, 18)
-    raw_h = _read_i32(buf, 22)
-    bpp = _read_u16(buf, 28)
-    comp = _read_u32(buf, 30)
+    offBits = readU32(buf, 10)
+    w = readI32(buf, 18)
+    rawH = readI32(buf, 22)
+    bpp = readU16(buf, 28)
+    comp = readU32(buf, 30)
 
     if comp != 0:
         return img
@@ -61,82 +65,87 @@ func muat_bmp(path):
     if w <= 0:
         return img
 
-    bup = raw_h > 0
-    h = raw_h if raw_h > 0 else -raw_h
+    bup = rawH > 0
+    h = rawH if rawH > 0 else -rawH
     if h <= 0:
         return img
 
-    bpp_byte = bpp / 8
-    row_sz = ((w * bpp_byte + 3) / 4) * 4
-    needed = off_bits + row_sz * h
+    bppByte = bpp / 8
+    rowSz = ((w * bppByte + 3) / 4) * 4
+    needed = offBits + rowSz * h
     if tot < needed:
         return img
 
     pixels = []
     i = 0
-    px_count = row_sz * h
-    while i < px_count:
-        pixels.append(ord(buf[off_bits + i]))
+    pxCount = rowSz * h
+    while i < pxCount:
+        pixels.append(ord(buf[offBits + i]))
         i += 1
 
     img["width"] = w
     img["height"] = h
+    img["bottomUp"] = bup
     img["bottom_up"] = bup
     img["bpp"] = bpp
-    img["bytes_per_pixel"] = bpp_byte
-    img["row_size"] = row_sz
+    img["bytesPerPixel"] = bppByte
+    img["bytes_per_pixel"] = bppByte
+    img["rowSize"] = rowSz
+    img["row_size"] = rowSz
     img["pixels"] = pixels
     img["ok"] = True
     return img
 
-func get_pixel(img, x, y):
+muatBmp = loadBmp
+
+func getPixel(img, x, y):
     if not img["ok"] or x < 0 or y < 0 or x >= img["width"] or y >= img["height"]:
         return [False, 0, 0, 0, 0]
-    frow = (img["height"] - 1 - y) if img["bottom_up"] else y
-    off = frow * img["row_size"] + x * img["bytes_per_pixel"]
+    fRow = (img["height"] - 1 - y) if img["bottomUp"] else y
+    off = fRow * img["rowSize"] + x * img["bytesPerPixel"]
     b = img["pixels"][off]
     g = img["pixels"][off + 1]
     r = img["pixels"][off + 2]
     a = 255
-    if img["bytes_per_pixel"] == 4:
+    if img["bytesPerPixel"] == 4:
         a = img["pixels"][off + 3]
     return [True, r, g, b, a]
 
-func set_pixel(img, x, y, r, g, b):
-    frow = (img["height"] - 1 - y) if img["bottom_up"] else y
-    off = frow * img["row_size"] + x * img["bytes_per_pixel"]
+func setPixel(img, x, y, r, g, b):
+    fRow = (img["height"] - 1 - y) if img["bottomUp"] else y
+    off = fRow * img["rowSize"] + x * img["bytesPerPixel"]
     img["pixels"][off] = b
     img["pixels"][off + 1] = g
     img["pixels"][off + 2] = r
 
-func bmp_info(path):
-    img = muat_bmp(path)
+func bmpInfo(path):
+    img = loadBmp(path)
     if not img["ok"]:
-        return "{\"ok\": false, \"error\": \"gagal buka/parse BMP (cuma dukung 24/32-bit uncompressed)\"}"
+        return "{\"ok\": false, \"error\": \"failed to open/parse BMP (supports 24/32-bit uncompressed only)\"}"
     return (
         "{\"ok\": true, \"width\": " + str(img["width"]) +
         ", \"height\": " + str(img["height"]) +
         ", \"bit_depth\": " + str(img["bpp"]) + "}"
     )
 
-func bmp_pixel(path, x, y):
-    img = muat_bmp(path)
+func bmpPixel(path, x, y):
+    img = loadBmp(path)
     if not img["ok"]:
-        return "{\"ok\": false, \"error\": \"gagal buka/parse BMP\"}"
-    px = get_pixel(img, x, y)
+        return "{\"ok\": false, \"error\": \"failed to open/parse BMP\"}"
+    px = getPixel(img, x, y)
     if not px[0]:
-        return "{\"ok\": false, \"error\": \"koordinat di luar batas gambar\"}"
+        return "{\"ok\": false, \"error\": \"coordinates out of bounds\"}"
     res = "{\"ok\": true, \"r\": " + str(px[1]) + ", \"g\": " + str(px[2]) + ", \"b\": " + str(px[3])
-    if img["bytes_per_pixel"] == 4:
+    if img["bytesPerPixel"] == 4:
         res += ", \"a\": " + str(px[4])
     return res + "}"
 
-func bmp_channel_hex(path, ch_str):
-    img = muat_bmp(path)
-    if not img["ok"] or len(ch_str) != 1:
+func bmpChannelHex(path, chStr):
+    img = loadBmp(path)
+    if not img["ok"] or len(chStr) != 1:
         return ""
-    ch = _channel_index(ch_str)
-    if ch < 0 or (ch == 3 and img["bytes_per_pixel"] != 4):
+    ch = channelIndex(chStr)
+    if ch < 0 or (ch == 3 and img["bytesPerPixel"] != 4):
         return ""
 
     out = ""
@@ -144,7 +153,7 @@ func bmp_channel_hex(path, ch_str):
     while y < img["height"]:
         x = 0
         while x < img["width"]:
-            px = get_pixel(img, x, y)
+            px = getPixel(img, x, y)
             v = px[1]
             if ch == 1:
                 v = px[2]
@@ -152,17 +161,17 @@ func bmp_channel_hex(path, ch_str):
                 v = px[3]
             elif ch == 3:
                 v = px[4]
-            out += _to_hex_byte(v)
+            out += toHexByte(v)
             x += 1
         y += 1
     return out
 
-func bmp_bitplane_hex(path, ch_str, bit):
-    img = muat_bmp(path)
-    if not img["ok"] or len(ch_str) != 1:
+func bmpBitplaneHex(path, chStr, bit):
+    img = loadBmp(path)
+    if not img["ok"] or len(chStr) != 1:
         return ""
-    ch = _channel_index(ch_str)
-    if ch < 0 or bit < 0 or bit > 7 or (ch == 3 and img["bytes_per_pixel"] != 4):
+    ch = channelIndex(chStr)
+    if ch < 0 or bit < 0 or bit > 7 or (ch == 3 and img["bytesPerPixel"] != 4):
         return ""
 
     out = ""
@@ -172,7 +181,7 @@ func bmp_bitplane_hex(path, ch_str, bit):
     while y < img["height"]:
         x = 0
         while x < img["width"]:
-            px = get_pixel(img, x, y)
+            px = getPixel(img, x, y)
             v = px[1]
             if ch == 1:
                 v = px[2]
@@ -180,33 +189,33 @@ func bmp_bitplane_hex(path, ch_str, bit):
                 v = px[3]
             elif ch == 3:
                 v = px[4]
-            bval = (v >> bit) & 1
-            cur = (cur << 1) | bval
+            bVal = (v >> bit) & 1
+            cur = (cur << 1) | bVal
             filled += 1
             if filled == 8:
-                out += _to_hex_byte(cur)
+                out += toHexByte(cur)
                 cur = 0
                 filled = 0
             x += 1
         y += 1
     if filled > 0:
         cur = cur << (8 - filled)
-        out += _to_hex_byte(cur)
+        out += toHexByte(cur)
     return out
 
-func bmp_lsb_extract(path, channels_str, n_bit):
-    img = muat_bmp(path)
-    if not img["ok"] or len(channels_str) == 0 or n_bit < 1 or n_bit > 8:
+func bmpLsbExtract(path, channelsStr, nBit):
+    img = loadBmp(path)
+    if not img["ok"] or len(channelsStr) == 0 or nBit < 1 or nBit > 8:
         return ""
 
-    ch_idx = []
+    chIdx = []
     i = 0
-    n = len(channels_str)
+    n = len(channelsStr)
     while i < n:
-        idx = _channel_index(channels_str[i])
-        if idx < 0 or (idx == 3 and img["bytes_per_pixel"] != 4):
+        idx = channelIndex(channelsStr[i])
+        if idx < 0 or (idx == 3 and img["bytesPerPixel"] != 4):
             return ""
-        ch_idx.append(idx)
+        chIdx.append(idx)
         i += 1
 
     out = ""
@@ -216,19 +225,19 @@ func bmp_lsb_extract(path, channels_str, n_bit):
     while y < img["height"]:
         x = 0
         while x < img["width"]:
-            px = get_pixel(img, x, y)
+            px = getPixel(img, x, y)
             comp = [px[1], px[2], px[3], px[4]]
             c = 0
-            nch = len(ch_idx)
+            nch = len(chIdx)
             while c < nch:
-                v = comp[ch_idx[c]]
-                b = n_bit - 1
+                v = comp[chIdx[c]]
+                b = nBit - 1
                 while b >= 0:
-                    bval = (v >> b) & 1
-                    cur = (cur << 1) | bval
+                    bVal = (v >> b) & 1
+                    cur = (cur << 1) | bVal
                     filled += 1
                     if filled == 8:
-                        out += _to_hex_byte(cur)
+                        out += toHexByte(cur)
                         cur = 0
                         filled = 0
                     b -= 1
@@ -237,36 +246,36 @@ func bmp_lsb_extract(path, channels_str, n_bit):
         y += 1
     if filled > 0:
         cur = cur << (8 - filled)
-        out += _to_hex_byte(cur)
+        out += toHexByte(cur)
     return out
 
-func _pack_u32(v):
+func packU32(v):
     return chr(v & 255) + chr((v >> 8) & 255) + chr((v >> 16) & 255) + chr((v >> 24) & 255)
 
-func _pack_u16(v):
+func packU16(v):
     return chr(v & 255) + chr((v >> 8) & 255)
 
-func tulis_bmp(path, img):
-    off_bits = 54
-    image_sz = img["row_size"] * img["height"]
-    file_sz = off_bits + image_sz
+func writeBmp(path, img):
+    offBits = 54
+    imageSz = img["rowSize"] * img["height"]
+    fileSz = offBits + imageSz
 
     hdr = (
         "BM" +
-        _pack_u32(file_sz) +
-        _pack_u32(0) +
-        _pack_u32(off_bits) +
-        _pack_u32(40) +
-        _pack_u32(img["width"]) +
-        _pack_u32(img["height"]) +
-        _pack_u16(1) +
-        _pack_u16(img["bpp"]) +
-        _pack_u32(0) +
-        _pack_u32(image_sz) +
-        _pack_u32(0) +
-        _pack_u32(0) +
-        _pack_u32(0) +
-        _pack_u32(0)
+        packU32(fileSz) +
+        packU32(0) +
+        packU32(offBits) +
+        packU32(40) +
+        packU32(img["width"]) +
+        packU32(img["height"]) +
+        packU16(1) +
+        packU16(img["bpp"]) +
+        packU32(0) +
+        packU32(imageSz) +
+        packU32(0) +
+        packU32(0) +
+        packU32(0) +
+        packU32(0)
     )
 
     body = ""
@@ -276,11 +285,13 @@ func tulis_bmp(path, img):
         body += chr(img["pixels"][i])
         i += 1
 
-    tulis_file(path, hdr + body)
+    writeFileRaw(path, hdr + body)
     return True
 
-func bmp_filter(path_in, path_out, filter_name):
-    img = muat_bmp(path_in)
+tulisBmp = writeBmp
+
+func bmpFilter(pathIn, pathOut, filterName):
+    img = loadBmp(pathIn)
     if not img["ok"]:
         return False
 
@@ -288,23 +299,23 @@ func bmp_filter(path_in, path_out, filter_name):
     while y < img["height"]:
         x = 0
         while x < img["width"]:
-            px = get_pixel(img, x, y)
+            px = getPixel(img, x, y)
             r = px[1]
             g = px[2]
             b = px[3]
 
-            if filter_name == "grayscale":
+            if filterName == "grayscale":
                 gray = (r * 299 + g * 587 + b * 114) / 1000
-                set_pixel(img, x, y, gray, gray, gray)
-            elif filter_name == "invert":
-                set_pixel(img, x, y, 255 - r, 255 - g, 255 - b)
-            elif filter_name == "r":
-                set_pixel(img, x, y, r, 0, 0)
-            elif filter_name == "g":
-                set_pixel(img, x, y, 0, g, 0)
-            elif filter_name == "b":
-                set_pixel(img, x, y, 0, 0, b)
+                setPixel(img, x, y, gray, gray, gray)
+            elif filterName == "invert":
+                setPixel(img, x, y, 255 - r, 255 - g, 255 - b)
+            elif filterName == "r":
+                setPixel(img, x, y, r, 0, 0)
+            elif filterName == "g":
+                setPixel(img, x, y, 0, g, 0)
+            elif filterName == "b":
+                setPixel(img, x, y, 0, 0, b)
             x += 1
         y += 1
 
-    return tulis_bmp(path_out, img)
+    return writeBmp(pathOut, img)
