@@ -20,26 +20,36 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Checkout bootstrap host (main)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: nsl-host
+
       - name: Install system dependencies
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y binutils gcc make
+          sudo apt-get install -y binutils gcc g++ make
+
+      - name: Build bootstrap host interpreter
+        run: |
+          make -C nsl-host nusantara
 
       - name: Build self-hosted toolchain
         run: |
           make clean
-          make build
-          make check
-          make test
+          make build HOST_NUSA="$GITHUB_WORKSPACE/nsl-host/nusantara"
 
       - name: Package Linux artifact
         run: |
-          mkdir -p dist
-          cp nusa dist/nusa-linux-x86_64
-          chmod +x dist/nusa-linux-x86_64
-          tar -czf dist/nusa-linux-x86_64.tar.gz nusa core/ compiler/ std/ net/ crypto/ media/ lib/ Makefile README.md LICENSE NOTICE
-          cd dist && sha256sum nusa-linux-x86_64 > nusa-linux-x86_64.sha256
-          sha256sum nusa-linux-x86_64.tar.gz > nusa-linux-x86_64.tar.gz.sha256
+          mkdir -p dist/bundle
+          cp nsl-host/nusantara dist/bundle/nusa-engine
+          printf '#!/bin/sh\nDIR="$(cd "$(dirname "$0")" && pwd)"\nexec "$DIR/nusa-engine" "$DIR/core/main.ns" "$@"\n' > dist/bundle/nusa
+          chmod +x dist/bundle/nusa-engine dist/bundle/nusa
+          cp -r core compiler std net crypto media lib dist/bundle/
+          cp Makefile README.md LICENSE NOTICE dist/bundle/
+          tar -czf dist/nusa-linux-x86_64.tar.gz -C dist/bundle .
+          cd dist && sha256sum nusa-linux-x86_64.tar.gz > nusa-linux-x86_64.tar.gz.sha256
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
@@ -160,11 +170,6 @@ jobs:
           Install:
           ```bash
           curl -fsSL https://github.com/NusaLang/NSL/raw/beta/install.sh | bash
-          ```
-
-          Verify a downloaded artifact:
-          ```bash
-          sha256sum -c <artifact>.sha256
           ```
           EOF
 

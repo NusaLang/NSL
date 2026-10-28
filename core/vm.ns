@@ -70,7 +70,10 @@ Op = {
     "SHL": 55,
     "SHR": 56,
     "BITNOT": 57,
-    "GETARGCOUNT": 58
+    "GETARGCOUNT": 58,
+    "SUPER": 59,
+    "TRYSTART": 60,
+    "TRYEND": 61
 }
 
 opNames = {}
@@ -144,6 +147,7 @@ class CallFrame:
     func __init__(self, fn, args):
         self.fn = fn
         self.ip = 0
+        self.handlers = []
         self.providedCount = len(args)
         maxLoc = fn.numLocals if hasattr(fn, "numLocals") else fn.arity
         diff = maxLoc - len(args)
@@ -515,6 +519,38 @@ class VmCompiler:
             valExpr = stmt.value if hasattr(stmt, "value") else stmt.nilai
             self.compileExpr(valExpr)
             self.emitOp(Op.THROW)
+        elif t == "TRY" or t == "COBA":
+            tryBlock = stmt.tryBlock if hasattr(stmt, "tryBlock") else stmt.coba_blok
+            catchVar = stmt.catchVar if hasattr(stmt, "catchVar") else stmt.tangkap_var
+            catchBlock = stmt.catchBlock if hasattr(stmt, "catchBlock") else stmt.tangkap_blok
+            finallyBlock = stmt.finallyBlock if hasattr(stmt, "finallyBlock") else stmt.akhirnya_blok
+            tryStmts = tryBlock.stmts if hasattr(tryBlock, "stmts") else [tryBlock]
+
+            handlerJump = self.emitJump(Op.TRYSTART)
+            self.compileBlock(tryStmts)
+            self.emitOp(Op.TRYEND)
+            if finallyBlock != None:
+                finallyStmts = finallyBlock.stmts if hasattr(finallyBlock, "stmts") else [finallyBlock]
+                self.compileBlock(finallyStmts)
+            normalDoneJump = self.emitJump(Op.JUMP)
+
+            self.patchJump(handlerJump)
+            if catchBlock != None:
+                catchStmts = catchBlock.stmts if hasattr(catchBlock, "stmts") else [catchBlock]
+                slot = self.addLocal(catchVar)
+                self.emitOp(Op.SETLOCAL)
+                self.emitU16(slot)
+                self.emitOp(Op.POP)
+                self.compileBlock(catchStmts)
+                if finallyBlock != None:
+                    finallyStmts = finallyBlock.stmts if hasattr(finallyBlock, "stmts") else [finallyBlock]
+                    self.compileBlock(finallyStmts)
+            else:
+                if finallyBlock != None:
+                    finallyStmts = finallyBlock.stmts if hasattr(finallyBlock, "stmts") else [finallyBlock]
+                    self.compileBlock(finallyStmts)
+                self.emitOp(Op.THROW)
+            self.patchJump(normalDoneJump)
         elif t == "CLASS" or t == "KELAS":
             name = stmt.name if hasattr(stmt, "name") else stmt.nama
             baseClass = stmt.baseClass if hasattr(stmt, "baseClass") else (stmt.induk if hasattr(stmt, "induk") else None)
@@ -765,7 +801,9 @@ class VmCompiler:
             args = expr.args if hasattr(expr, "args") else expr.args
             calleeType = self.nodeType(callee)
             calleeName = callee.name if hasattr(callee, "name") else (callee.nama if hasattr(callee, "nama") else "")
-            if (calleeType == "IDENT" or calleeType == "PENGENAL") and (calleeName == "cetak" or calleeName == "print"):
+            if (calleeType == "IDENT" or calleeType == "PENGENAL") and (calleeName == "super" or calleeName == "induk") and len(args) == 0:
+                self.emitOp(Op.SUPER)
+            elif (calleeType == "IDENT" or calleeType == "PENGENAL") and (calleeName == "cetak" or calleeName == "print"):
                 for a in args:
                     self.compileExpr(a)
                 self.emitOp(Op.PRINT)
@@ -1008,6 +1046,25 @@ class VmRunner:
             return False
         return True
 
+    func resolveMethodChainVm(self, clsObj, name):
+        cur = clsObj
+        while cur != None:
+            mMap = cur.methods if hasattr(cur, "methods") else cur.metode
+            if name in mMap:
+                return mMap[name]
+            parentName = cur.baseClass if hasattr(cur, "baseClass") else None
+            if parentName == None:
+                return None
+            cur = self.globals[parentName] if parentName in self.globals else None
+        return None
+
+    func resolveInitVm(self, clsObj):
+        for candidate in ["__init__", "constructor", "konstruktor"]:
+            m = self.resolveMethodChainVm(clsObj, candidate)
+            if m != None:
+                return m
+        return None
+
     func run(self, topFn):
         initFrame = CallFrame(topFn, [])
         self.frames = [initFrame]
@@ -1138,6 +1195,7 @@ class VmRunner:
                         stack.append(globalVars[name])
                     else:
                         print("RuntimeError: Undefined variable '" + name + "'")
+                        sys.exit(1)
                         stack.append(None)
                 elif op == opSetGlobal:
                     if len(stack) > 0:
@@ -1204,6 +1262,7 @@ class VmRunner:
                 a = self.pop()
                 if b == 0:
                     print("RuntimeError: Division by zero")
+                    sys.exit(1)
                     self.push(0)
                 else:
                     self.push(a / b)
@@ -1270,6 +1329,12 @@ class VmRunner:
                 self.push(~a)
             elif op == Op.GETARGCOUNT:
                 self.push(self.frame.providedCount)
+            elif op == Op.SUPER:
+                selfVal = self.frame.locals[0]
+                definingName = self.frame.fn.name.split(".")[0]
+                cls = self.globals[definingName] if definingName in self.globals else None
+                parentName = cls.baseClass if cls != None and hasattr(cls, "baseClass") else None
+                self.push({"isSuperProc": True, "self": selfVal, "parentName": parentName})
             elif op == Op.GETLOCAL:
                 slot = self.readU16()
                 self.push(self.frame.locals[slot])
@@ -1299,6 +1364,7 @@ class VmRunner:
                     self.push(self.globals[name])
                 else:
                     print("RuntimeError: Undefined variable '" + name + "'")
+                    sys.exit(1)
                     self.push(None)
             elif op == Op.SETGLOBAL:
                 idx = self.readU16()
@@ -1386,25 +1452,39 @@ class VmRunner:
                 nameIdx = self.readU16()
                 name = self.frame.fn.constants[nameIdx]
                 target = self.pop()
-                if hasattr(target, "fields"):
+                if isinstance(target, dict) and "isSuperProc" in target:
+                    parentName = target["parentName"]
+                    parentCls = self.globals[parentName] if parentName != None and parentName in self.globals else None
+                    m = self.resolveMethodChainVm(parentCls, name) if parentCls != None else None
+                    if m != None:
+                        self.push({"isMethod": True, "instance": target["self"], "method": m})
+                    else:
+                        print("RuntimeError: super has no method '" + name + "'")
+                        sys.exit(1)
+                        self.push(None)
+                elif hasattr(target, "fields"):
                     f = target.fields
                     if name in f:
                         self.push(f[name])
-                    elif hasattr(target, "cls") and name in target.cls.methods:
-                        self.push({"isMethod": True, "instance": target, "method": target.cls.methods[name]})
-                    elif hasattr(target, "bidang") and name in target.bidang:
-                        self.push(target.bidang[name])
-                    elif hasattr(target, "kelas") and hasattr(target.kelas, "metode") and name in target.kelas.metode:
-                        self.push({"isMethod": True, "instance": target, "method": target.kelas.metode[name]})
                     else:
-                        print("RuntimeError: Field '" + name + "' not found")
-                        self.push(None)
+                        m = None
+                        if hasattr(target, "cls"):
+                            m = self.resolveMethodChainVm(target.cls, name)
+                        elif hasattr(target, "kelas"):
+                            m = self.resolveMethodChainVm(target.kelas, name)
+                        if m != None:
+                            self.push({"isMethod": True, "instance": target, "method": m})
+                        else:
+                            print("RuntimeError: Field '" + name + "' not found")
+                            sys.exit(1)
+                            self.push(None)
                 elif (type(target) == "peta" or type(target) == "dict") and name in target:
                     self.push(target[name])
                 elif hasattr(target, name):
                     self.push(getattr(target, name))
                 else:
                     print("RuntimeError: Field '" + name + "' not found")
+                    sys.exit(1)
                     self.push(None)
             elif op == Op.SETFIELD:
                 nameIdx = self.readU16()
@@ -1431,17 +1511,30 @@ class VmRunner:
                     self.stack = self.stack[:-argCount]
                 target = self.pop()
 
+                if isinstance(target, dict) and "isSuperProc" in target:
+                    parentName = target["parentName"]
+                    parentCls = self.globals[parentName] if parentName != None and parentName in self.globals else None
+                    m = self.resolveMethodChainVm(parentCls, name) if parentCls != None else None
+                    if m != None:
+                        newFrame = CallFrame(m, [target["self"]] + callArgs)
+                        self.frames.append(newFrame)
+                        self.frame = newFrame
+                        continue
+                    print("RuntimeError: super has no method '" + name + "'")
+                    sys.exit(1)
+                    self.push(None)
+                    continue
                 if hasattr(target, "cls"):
-                    mMap = target.cls.methods
-                    if name in mMap:
-                        newFrame = CallFrame(mMap[name], [target] + callArgs)
+                    m = self.resolveMethodChainVm(target.cls, name)
+                    if m != None:
+                        newFrame = CallFrame(m, [target] + callArgs)
                         self.frames.append(newFrame)
                         self.frame = newFrame
                         continue
                 if hasattr(target, "kelas"):
-                    mMap = target.kelas.metode
-                    if name in mMap:
-                        newFrame = CallFrame(mMap[name], [target] + callArgs)
+                    m = self.resolveMethodChainVm(target.kelas, name)
+                    if m != None:
+                        newFrame = CallFrame(m, [target] + callArgs)
                         self.frames.append(newFrame)
                         self.frame = newFrame
                         continue
@@ -1451,6 +1544,7 @@ class VmRunner:
                     self.push(res)
                 else:
                     print("RuntimeError: Method '" + name + "' not found")
+                    sys.exit(1)
                     self.push(None)
             elif op == Op.CALL:
                 argCount = self.readByte()
@@ -1474,14 +1568,7 @@ class VmRunner:
                     self.frame = newFrame
                 elif hasattr(callee, "isClass") or hasattr(callee, "isKelas"):
                     inst = VmInstance(callee)
-                    initFn = None
-                    methMap = callee.methods if hasattr(callee, "methods") else callee.metode
-                    if "__init__" in methMap:
-                        initFn = methMap["__init__"]
-                    elif "constructor" in methMap:
-                        initFn = methMap["constructor"]
-                    elif "konstruktor" in methMap:
-                        initFn = methMap["konstruktor"]
+                    initFn = self.resolveInitVm(callee)
                     if initFn != None:
                         initArgs = [inst]
                         for a in callArgs:
@@ -1498,6 +1585,7 @@ class VmRunner:
                     self.push(res)
                 else:
                     print("RuntimeError: Object is not callable:", callee)
+                    sys.exit(1)
                     self.push(None)
             elif op == Op.RETURN:
                 val = self.pop()
@@ -1518,7 +1606,29 @@ class VmRunner:
                 self.push(retVal)
             elif op == Op.THROW:
                 val = self.pop()
-                raise val
+                handled = False
+                while len(self.frames) > 0:
+                    f = self.frames[-1]
+                    if len(f.handlers) > 0:
+                        entry = f.handlers.pop()
+                        self.stack = self.stack[:entry[1]]
+                        self.push(val)
+                        f.ip = entry[0]
+                        self.frame = f
+                        handled = True
+                        break
+                    self.frames.pop()
+                    if len(self.frames) > 0:
+                        self.frame = self.frames[-1]
+                if not handled:
+                    raise val
+            elif op == Op.TRYSTART:
+                off = self.readU16()
+                target = self.frame.ip + off
+                self.frame.handlers.append([target, len(self.stack)])
+            elif op == Op.TRYEND:
+                if len(self.frame.handlers) > 0:
+                    self.frame.handlers.pop()
 
         if len(self.stack) > 0:
             return self.pop()

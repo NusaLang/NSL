@@ -1,0 +1,243 @@
+import sys
+
+func fail(msg):
+    print("native: " + msg)
+    sys.exit(1)
+
+BLOCKLIKE = ["BLOCK", "VAR", "FUNC", "IF", "WHILE", "FOR", "FOR_IN", "RETURN", "THROW", "TRY", "EXPR", "CLASS"]
+
+func walkStmtOrExpr(node, onExpr, onStmt):
+    if node == None:
+        return None
+    if hasattr(node, "stmts"):
+        for s in node.stmts:
+            onStmt(s)
+    elif hasattr(node, "type") and (node.type in BLOCKLIKE):
+        onStmt(node)
+    else:
+        onExpr(node)
+
+GOBRIDGE_BUILTINS = ["goHttpGet", "goHttpPost", "goWsServe", "goWsConnect", "goWsSendText", "goWsRecvText", "goWsClose"]
+
+func scanForGoBridgeExpr(e, found):
+    if e == None or not hasattr(e, "type") or found["hit"]:
+        return None
+    t = e.type
+    if t == "CALL":
+        if e.callee.type == "IDENT" and e.callee.name in GOBRIDGE_BUILTINS:
+            found["hit"] = True
+        scanForGoBridgeExpr(e.callee, found)
+        for a in e.args:
+            scanForGoBridgeExpr(a, found)
+    elif t == "BINARY":
+        scanForGoBridgeExpr(e.left, found)
+        scanForGoBridgeExpr(e.right, found)
+    elif t == "UNARY":
+        scanForGoBridgeExpr(e.operand, found)
+    elif t == "MEMBER":
+        scanForGoBridgeExpr(e.target, found)
+    elif t == "INDEX":
+        scanForGoBridgeExpr(e.target, found)
+        scanForGoBridgeExpr(e.index, found)
+    elif t == "ASSIGN":
+        scanForGoBridgeExpr(e.target, found)
+        scanForGoBridgeExpr(e.value, found)
+    elif t == "LIST":
+        for el in e.elements:
+            scanForGoBridgeExpr(el, found)
+    elif t == "MAP":
+        for v in e.values:
+            scanForGoBridgeExpr(v, found)
+    elif t == "TERNARY":
+        scanForGoBridgeExpr(e.condition, found)
+        scanForGoBridgeExpr(e.thenVal, found)
+        scanForGoBridgeExpr(e.elseVal, found)
+    elif t == "LAMBDA":
+        walkStmtOrExpr(e.body, lambda x: scanForGoBridgeExpr(x, found), lambda x: scanForGoBridgeStmt(x, found))
+
+func scanForGoBridgeStmt(s, found):
+    if s == None or found["hit"]:
+        return None
+    t = s.type
+    if t == "BLOCK":
+        for st in s.stmts:
+            scanForGoBridgeStmt(st, found)
+    elif t == "VAR":
+        scanForGoBridgeExpr(s.value, found)
+    elif t == "FUNC":
+        walkStmtOrExpr(s.body, lambda x: scanForGoBridgeExpr(x, found), lambda x: scanForGoBridgeStmt(x, found))
+    elif t == "IF":
+        scanForGoBridgeExpr(s.condition, found)
+        walkStmtOrExpr(s.thenBranch, lambda x: scanForGoBridgeExpr(x, found), lambda x: scanForGoBridgeStmt(x, found))
+        walkStmtOrExpr(s.elseBranch, lambda x: scanForGoBridgeExpr(x, found), lambda x: scanForGoBridgeStmt(x, found))
+    elif t == "WHILE":
+        scanForGoBridgeExpr(s.condition, found)
+        walkStmtOrExpr(s.body, lambda x: scanForGoBridgeExpr(x, found), lambda x: scanForGoBridgeStmt(x, found))
+    elif t == "FOR":
+        walkStmtOrExpr(s.init, lambda x: scanForGoBridgeExpr(x, found), lambda x: scanForGoBridgeStmt(x, found))
+        if s.condition != None:
+            scanForGoBridgeExpr(s.condition, found)
+        walkStmtOrExpr(s.post, lambda x: scanForGoBridgeExpr(x, found), lambda x: scanForGoBridgeStmt(x, found))
+        walkStmtOrExpr(s.body, lambda x: scanForGoBridgeExpr(x, found), lambda x: scanForGoBridgeStmt(x, found))
+    elif t == "FOR_IN":
+        scanForGoBridgeExpr(s.iterable, found)
+        walkStmtOrExpr(s.body, lambda x: scanForGoBridgeExpr(x, found), lambda x: scanForGoBridgeStmt(x, found))
+    elif t == "RETURN":
+        if s.value != None:
+            scanForGoBridgeExpr(s.value, found)
+    elif t == "THROW":
+        scanForGoBridgeExpr(s.value, found)
+    elif t == "TRY":
+        walkStmtOrExpr(s.tryBlock, lambda x: scanForGoBridgeExpr(x, found), lambda x: scanForGoBridgeStmt(x, found))
+        walkStmtOrExpr(s.catchBlock, lambda x: scanForGoBridgeExpr(x, found), lambda x: scanForGoBridgeStmt(x, found))
+        walkStmtOrExpr(s.finallyBlock, lambda x: scanForGoBridgeExpr(x, found), lambda x: scanForGoBridgeStmt(x, found))
+    elif t == "EXPR":
+        scanForGoBridgeExpr(s.expr, found)
+    elif t == "CLASS":
+        for m in s.methods:
+            scanForGoBridgeStmt(m, found)
+
+func countWsExpr(e, counts):
+    if e == None or not hasattr(e, "type"):
+        return None
+    t = e.type
+    if t == "CALL":
+        if e.callee.type == "IDENT":
+            if e.callee.name == "goWsConnect":
+                counts["connect"] = counts["connect"] + 1
+            elif e.callee.name == "goWsClose":
+                counts["close"] = counts["close"] + 1
+        countWsExpr(e.callee, counts)
+        for a in e.args:
+            countWsExpr(a, counts)
+    elif t == "BINARY":
+        countWsExpr(e.left, counts)
+        countWsExpr(e.right, counts)
+    elif t == "UNARY":
+        countWsExpr(e.operand, counts)
+    elif t == "MEMBER":
+        countWsExpr(e.target, counts)
+    elif t == "INDEX":
+        countWsExpr(e.target, counts)
+        countWsExpr(e.index, counts)
+    elif t == "ASSIGN":
+        countWsExpr(e.target, counts)
+        countWsExpr(e.value, counts)
+    elif t == "LIST":
+        for el in e.elements:
+            countWsExpr(el, counts)
+
+func countWsStmt(s, counts):
+    if s == None:
+        return None
+    t = s.type
+    if t == "BLOCK":
+        for st in s.stmts:
+            countWsStmt(st, counts)
+    elif t == "VAR":
+        countWsExpr(s.value, counts)
+    elif t == "IF":
+        countWsExpr(s.condition, counts)
+        walkStmtOrExpr(s.thenBranch, lambda x: countWsExpr(x, counts), lambda x: countWsStmt(x, counts))
+        walkStmtOrExpr(s.elseBranch, lambda x: countWsExpr(x, counts), lambda x: countWsStmt(x, counts))
+    elif t == "WHILE":
+        countWsExpr(s.condition, counts)
+        walkStmtOrExpr(s.body, lambda x: countWsExpr(x, counts), lambda x: countWsStmt(x, counts))
+    elif t == "FOR":
+        walkStmtOrExpr(s.init, lambda x: countWsExpr(x, counts), lambda x: countWsStmt(x, counts))
+        if s.condition != None:
+            countWsExpr(s.condition, counts)
+        walkStmtOrExpr(s.post, lambda x: countWsExpr(x, counts), lambda x: countWsStmt(x, counts))
+        walkStmtOrExpr(s.body, lambda x: countWsExpr(x, counts), lambda x: countWsStmt(x, counts))
+    elif t == "FOR_IN":
+        countWsExpr(s.iterable, counts)
+        walkStmtOrExpr(s.body, lambda x: countWsExpr(x, counts), lambda x: countWsStmt(x, counts))
+    elif t == "RETURN":
+        if s.value != None:
+            countWsExpr(s.value, counts)
+    elif t == "THROW":
+        countWsExpr(s.value, counts)
+    elif t == "TRY":
+        walkStmtOrExpr(s.tryBlock, lambda x: countWsExpr(x, counts), lambda x: countWsStmt(x, counts))
+        walkStmtOrExpr(s.catchBlock, lambda x: countWsExpr(x, counts), lambda x: countWsStmt(x, counts))
+        walkStmtOrExpr(s.finallyBlock, lambda x: countWsExpr(x, counts), lambda x: countWsStmt(x, counts))
+    elif t == "EXPR":
+        countWsExpr(s.expr, counts)
+
+func collectFuncScopes(s, scopes):
+    if s == None:
+        return None
+    t = s.type
+    if t == "BLOCK":
+        for st in s.stmts:
+            collectFuncScopes(st, scopes)
+    elif t == "FUNC":
+        scopes.append(s)
+        walkStmtOrExpr(s.body, lambda x: None, lambda x: collectFuncScopes(x, scopes))
+    elif t == "IF":
+        walkStmtOrExpr(s.thenBranch, lambda x: None, lambda x: collectFuncScopes(x, scopes))
+        walkStmtOrExpr(s.elseBranch, lambda x: None, lambda x: collectFuncScopes(x, scopes))
+    elif t == "WHILE":
+        walkStmtOrExpr(s.body, lambda x: None, lambda x: collectFuncScopes(x, scopes))
+    elif t == "FOR":
+        walkStmtOrExpr(s.init, lambda x: None, lambda x: collectFuncScopes(x, scopes))
+        walkStmtOrExpr(s.post, lambda x: None, lambda x: collectFuncScopes(x, scopes))
+        walkStmtOrExpr(s.body, lambda x: None, lambda x: collectFuncScopes(x, scopes))
+    elif t == "FOR_IN":
+        walkStmtOrExpr(s.body, lambda x: None, lambda x: collectFuncScopes(x, scopes))
+    elif t == "TRY":
+        walkStmtOrExpr(s.tryBlock, lambda x: None, lambda x: collectFuncScopes(x, scopes))
+        walkStmtOrExpr(s.catchBlock, lambda x: None, lambda x: collectFuncScopes(x, scopes))
+        walkStmtOrExpr(s.finallyBlock, lambda x: None, lambda x: collectFuncScopes(x, scopes))
+    elif t == "CLASS":
+        for m in s.methods:
+            scopes.append(m)
+            walkStmtOrExpr(m.body, lambda x: None, lambda x: collectFuncScopes(x, scopes))
+
+func checkWsResourceLeaks(tree):
+    scopes = []
+    for s in tree:
+        collectFuncScopes(s, scopes)
+    topCounts = {"connect": 0, "close": 0}
+    for s in tree:
+        countWsStmt(s, topCounts)
+    if topCounts["connect"] > topCounts["close"]:
+        print("peringatan: goWsConnect tanpa goWsClose yang cukup di scope utama (" + str(topCounts["connect"]) + " vs " + str(topCounts["close"]) + ")")
+    for fn in scopes:
+        counts = {"connect": 0, "close": 0}
+        countWsStmt(fn.body, counts)
+        if counts["connect"] > counts["close"]:
+            print("peringatan: goWsConnect tanpa goWsClose yang cukup di '" + fn.name + "' (" + str(counts["connect"]) + " vs " + str(counts["close"]) + ")")
+
+func verifyGoBridgeAlignment(asmText):
+    lines = asmText.split("\n")
+    i = 0
+    curFunc = "?"
+    delta = 0
+    afterRet = True
+    problems = []
+    while i < len(lines):
+        line = lines[i].strip()
+        if line.endswith(":") and not line.startswith("."):
+            if afterRet:
+                curFunc = line[:len(line) - 1]
+                delta = 0
+                afterRet = False
+        elif line.startswith("push "):
+            delta = delta + 8
+        elif line.startswith("pop "):
+            delta = delta - 8
+        elif line.startswith("sub rsp, "):
+            delta = delta + int(line[len("sub rsp, "):].strip())
+        elif line.startswith("add rsp, "):
+            delta = delta - int(line[len("add rsp, "):].strip())
+        elif line.startswith("call "):
+            target = line[len("call "):].strip()
+            if not target.startswith("rt") and target != "free":
+                if (8 - delta) % 16 != 0:
+                    problems.append(curFunc + ": call " + target + " dengan stack tidak 16-byte aligned (delta=" + str(delta) + ")")
+        elif line == "ret":
+            afterRet = True
+        i = i + 1
+    if len(problems) > 0:
+        fail("Go bridge stack-alignment check gagal:\n" + "\n".join(problems))

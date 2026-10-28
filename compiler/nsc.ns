@@ -9,14 +9,17 @@ func loadModule(name):
 Lexer = loadModule("lexer").Lexer
 Parser = loadModule("parser").Parser
 JalankanPerintah = jalankan_perintah
+FileAda = file_ada
+BacaFile = baca_file
+TulisFile = tulis_file
 
 func compile(inputFile, outputFile):
-    if not file_ada(inputFile):
+    if not FileAda(inputFile):
         print("error: file '" + inputFile + "' not found")
         sys.exit(1)
 
     try:
-        source = baca_file(inputFile)
+        source = BacaFile(inputFile)
         lex = Lexer(source)
         tokens = lex.tokenize()
         parser = Parser(tokens)
@@ -29,7 +32,7 @@ func compile(inputFile, outputFile):
                 cleanSource = cleanSource[nl + 1:]
 
         bundle = "#!/usr/bin/env nusa\n" + cleanSource
-        tulis_file(outputFile, bundle)
+        TulisFile(outputFile, bundle)
         JalankanPerintah("chmod", ["+x", outputFile])
     except e:
         print("compile error: " + str(e))
@@ -37,11 +40,11 @@ func compile(inputFile, outputFile):
 
 func compileNative(inputFile, outputFile):
     NativeCompiler = loadModule("compiler/native.ns").NativeCompiler
-    tree = Parser(Lexer(baca_file(inputFile)).tokenize()).parse()
+    tree = Parser(Lexer(BacaFile(inputFile)).tokenize()).parse()
     asm = NativeCompiler().compile(tree)
     asmPath = outputFile + ".s"
     objPath = outputFile + ".o"
-    tulis_file(asmPath, asm)
+    TulisFile(asmPath, asm)
     JalankanPerintah("as", ["-o", objPath, asmPath])
     JalankanPerintah("ld", ["-o", outputFile, objPath])
     JalankanPerintah("rm", ["-f", objPath, asmPath])

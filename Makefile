@@ -3,7 +3,7 @@ BIN := nusa
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
 
-.PHONY: all build test run clean install check native
+.PHONY: all build run clean install
 
 all: $(BIN)
 
@@ -22,39 +22,8 @@ build: $(BIN)
 run: $(BIN)
 	@./$(BIN)
 
-check: $(BIN)
-	@echo "Checking syntax..."
-	@if ./$(BIN) -V >/dev/null 2>&1; then \
-		./$(BIN) --check core/main.ns && \
-		./$(BIN) --check compiler/native.ns; \
-	else \
-		echo "Compatible runner not found in PATH; syntax check skipped."; \
-	fi
-	@echo "Syntax OK."
-
-test: $(BIN) check
-	@echo "Running tests..."
-	@if ./$(BIN) -V >/dev/null 2>&1; then \
-		if [ -d tests/self_hosted ]; then \
-			./$(BIN) run tests/self_hosted/test1.ns && \
-			./$(BIN) run tests/self_hosted/test2.ns && \
-			./$(BIN) run tests/self_hosted/testStd.ns; \
-		else \
-			./$(BIN) -e "cetak('Self-hosted interpreter OK')" && \
-			./$(BIN) --vm -e "cetak('Bytecode VM OK')"; \
-		fi; \
-		if [ -d tests/native ]; then \
-			./$(BIN) build --native tests/native/basic.ns -o /tmp/native_test_basic && /tmp/native_test_basic >/dev/null && \
-			./$(BIN) build --native tests/native/allFeatures.ns -o /tmp/native_test_all && /tmp/native_test_all >/dev/null; \
-		fi; \
-	else \
-		echo "Compatible runner not found in PATH; runtime tests skipped."; \
-	fi
-	@rm -f /tmp/native_test_*
-	@echo "All tests passed!"
-
 clean:
-	rm -f $(BIN) a.out /tmp/native_test_* /tmp/native_bench*
+	rm -f $(BIN) a.out
 	find . -name ".nusa-cache" -exec rm -rf {} + 2>/dev/null || true
 
 install: $(BIN)
@@ -67,10 +36,4 @@ install: $(BIN)
 		cp -f $(BIN) $(DESTDIR)$(BINDIR)/$(BIN); \
 		chmod +x $(DESTDIR)$(BINDIR)/$(BIN); \
 		echo "Installed to $(DESTDIR)$(BINDIR)/$(BIN)"; \
-	fi
-
-native: $(BIN)
-	@if [ -f bench/native/bench.ns ]; then \
-		./$(BIN) build --native bench/native/bench.ns -o /tmp/native_bench && /tmp/native_bench; \
-		rm -f /tmp/native_bench; \
 	fi

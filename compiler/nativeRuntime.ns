@@ -29,7 +29,7 @@ rtFail:
     lea rdi, [strNl]
     mov rsi, 2
     call rtWriteFd
-    mov rax, 60
+    mov rax, 231
     mov rdi, 1
     syscall
 rtThrow:
@@ -57,7 +57,7 @@ rtUncaught:
     lea rdi, [strNl]
     mov rsi, 2
     call rtWriteFd
-    mov rax, 60
+    mov rax, 231
     mov rdi, 1
     syscall
 rtWriteFd:

@@ -94,6 +94,27 @@ class Interpreter:
             return node.jenis
         return ""
 
+    func resolveMethodChain(self, clsObj, methodName, env):
+        cur = clsObj
+        while cur != None:
+            if methodName in cur["methods"]:
+                return [cur["methods"][methodName], cur]
+            parentName = cur["parent"]
+            if parentName == None:
+                return [None, None]
+            cur = env.get(parentName)
+        return [None, None]
+
+    func execInline(self, node, env):
+        if node == None:
+            return None
+        t = self.nodeType(node)
+        if t == "BLOCK" or t == "BLOK":
+            for s in node.stmts:
+                self.execute(s, env)
+            return None
+        return self.execute(node, env)
+
     func execute(self, stmt, env):
         if stmt == None:
             return None
@@ -123,16 +144,16 @@ class Interpreter:
             thenBranch = stmt.thenBranch if hasattr(stmt, "thenBranch") else stmt.maka
             elseBranch = stmt.elseBranch if hasattr(stmt, "elseBranch") else stmt.lain
             if self.isTruthy(condVal):
-                self.execute(thenBranch, env)
+                self.execInline(thenBranch, env)
             elif elseBranch != None:
-                self.execute(elseBranch, env)
+                self.execInline(elseBranch, env)
             return None
         elif t == "WHILE" or t == "SELAMA":
             condExpr = stmt.condition if hasattr(stmt, "condition") else stmt.kondisi
             body = stmt.body if hasattr(stmt, "body") else stmt.badan
             while self.isTruthy(self.evaluate(condExpr, env)):
                 try:
-                    self.execute(body, env)
+                    self.execInline(body, env)
                 except sig:
                     if hasattr(sig, "isBreak"):
                         break
@@ -151,7 +172,7 @@ class Interpreter:
                 self.execute(initStmt, loopScope)
             while self.isTruthy(self.evaluate(condExpr, loopScope)):
                 try:
-                    self.execute(body, loopScope)
+                    self.execInline(body, loopScope)
                 except sig:
                     if hasattr(sig, "isBreak"):
                         break
@@ -171,7 +192,7 @@ class Interpreter:
                 iterScope = Scope(env)
                 iterScope.define(varName, item)
                 try:
-                    self.execute(body, iterScope)
+                    self.execInline(body, iterScope)
                 except sig:
                     if hasattr(sig, "isBreak"):
                         break
@@ -194,16 +215,20 @@ class Interpreter:
             catchBlock = stmt.catchBlock if hasattr(stmt, "catchBlock") else stmt.tangkap_blok
             finallyBlock = stmt.finallyBlock if hasattr(stmt, "finallyBlock") else stmt.akhirnya_blok
             try:
-                self.execute(tryBlock, env)
+                self.execInline(tryBlock, env)
             except e:
                 if hasattr(e, "isReturn") or hasattr(e, "isBreak") or hasattr(e, "isContinue"):
                     raise e
                 if catchBlock != None:
                     catchScope = Scope(env)
                     catchScope.define(catchVar, e)
-                    self.execute(catchBlock, catchScope)
+                    self.execInline(catchBlock, catchScope)
+                else:
+                    if finallyBlock != None:
+                        self.execInline(finallyBlock, env)
+                    raise e
             if finallyBlock != None:
-                self.execute(finallyBlock, env)
+                self.execInline(finallyBlock, env)
             return None
         elif t == "THROW" or t == "LEMPAR":
             valExpr = stmt.value if hasattr(stmt, "value") else stmt.nilai
@@ -293,6 +318,7 @@ class Interpreter:
             elif op == "/":
                 if rightVal == 0:
                     print("RuntimeError: Division by zero")
+                    sys.exit(1)
                     return 0
                 return leftVal / rightVal
             elif op == "%":
@@ -340,6 +366,12 @@ class Interpreter:
                 return not self.isTruthy(val)
             return val
         elif t == "CALL" or t == "PANGGIL":
+            calleeType = self.nodeType(expr.callee)
+            if calleeType == "IDENT" and (expr.callee.name == "super" or expr.callee.name == "induk") and len(expr.args) == 0:
+                selfVal = env.get("self")
+                ownerClass = env.get("__kelasAktif__")
+                return {"isSuperProxy": True, "self": selfVal, "fromClass": ownerClass}
+
             fnTarget = self.evaluate(expr.callee, env)
             args = []
             for a in expr.args:
@@ -370,11 +402,14 @@ class Interpreter:
 
             if tipe(fnTarget) == "peta" and "isClass" in fnTarget:
                 instance = {"isInstance": True, "class": fnTarget, "fields": {}}
-                if "constructor" in fnTarget["methods"]:
-                    ctor = fnTarget["methods"]["constructor"]
+                found = self.resolveMethodChain(fnTarget, "constructor", env)
+                ctor = found[0]
+                definingClass = found[1]
+                if ctor != None:
                     lk = Scope(ctor.closure)
                     lk.define("self", instance)
                     lk.define("ini", instance)
+                    lk.define("__kelasAktif__", definingClass)
                     nP = panjang(ctor.params)
                     nA = panjang(args)
                     idx = 0
@@ -400,6 +435,7 @@ class Interpreter:
                 lk = Scope(m.closure)
                 lk.define("self", inst)
                 lk.define("ini", inst)
+                lk.define("__kelasAktif__", fnTarget["definingClass"] if "definingClass" in fnTarget else None)
                 nP = panjang(m.params)
                 nA = panjang(args)
                 idx = 0
@@ -462,16 +498,27 @@ class Interpreter:
                 return fnTarget(*args)
 
             print("RuntimeError: Object is not callable")
+            sys.exit(1)
             return None
         elif t == "MEMBER":
             target = self.evaluate(expr.target, env)
             name = expr.name if hasattr(expr, "name") else expr.nama
+            if tipe(target) == "peta" and "isSuperProxy" in target:
+                ownerClass = target["fromClass"]
+                parentName = ownerClass["parent"] if ownerClass != None else None
+                parentClass = env.get(parentName) if parentName != None else None
+                if parentClass != None:
+                    found = self.resolveMethodChain(parentClass, name, env)
+                    if found[0] != None:
+                        return {"isBoundMethod": True, "instance": target["self"], "method": found[0], "definingClass": found[1]}
+                print("RuntimeError: super has no method '" + str(name) + "'")
+                sys.exit(1)
             if tipe(target) == "peta" and "isInstance" in target:
                 if name in target["fields"]:
                     return target["fields"][name]
-                if name in target["class"]["methods"]:
-                    m = target["class"]["methods"][name]
-                    return {"isBoundMethod": True, "instance": target, "method": m}
+                found = self.resolveMethodChain(target["class"], name, env)
+                if found[0] != None:
+                    return {"isBoundMethod": True, "instance": target, "method": found[0], "definingClass": found[1]}
             if tipe(target) == "peta" and name in target:
                 return target[name]
             if tipe(target) == "teks" or tipe(target) == "string":
@@ -547,8 +594,12 @@ class Interpreter:
                 if tipe(obj) == "peta" and "isInstance" in obj:
                     obj["fields"][mName] = val
                     return val
+                elif tipe(obj) == "peta":
+                    obj[mName] = val
+                    return val
 
             print("RuntimeError: Invalid assignment target")
+            sys.exit(1)
             return None
 
         return None

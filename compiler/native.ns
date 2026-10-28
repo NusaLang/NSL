@@ -16,11 +16,25 @@ BinaryExpr = astModule.BinaryExpr
 FuncStmt = astModule.FuncStmt
 BlockStmt = astModule.BlockStmt
 runtimeModule = loadModule("compiler/nativeRuntime.ns")
+goBridgeModule = loadModule("compiler/goBridge.ns")
+
+JalankanPerintah = jalankan_perintah
+FileAda = file_ada
+BacaFile = baca_file
+TulisFile = tulis_file
+
+func getCwd():
+    res = JalankanPerintah("pwd", [])
+    out = res.keluaran
+    if len(out) > 0 and out[len(out) - 1] == "\n":
+        out = out[:len(out) - 1]
+    return out
 
 try:
-    JalankanPerintah = JalankanPerintah
+    goBridgeAddon = impor(getCwd() + "/nusa_packages/nusa-gobridge/nusaGoBridge.ns")
 except e:
-    JalankanPerintah = jalankan_perintah
+    goBridgeAddon = None
+
 REGS = ["rbx", "r12", "r13", "r14", "r15"]
 JUMPS = {"<": "jge", "<=": "jg", ">": "jle", ">=": "jl", "==": "jne", "!=": "je"}
 ARITH = {"+": "rtAdd", "-": "rtSub", "*": "rtMul", "/": "rtDiv", "//": "rtDiv", "%": "rtMod"}
@@ -406,6 +420,7 @@ class NativeCompiler:
         self.funcs = {}
         self.funcParams = {}
         self.funcDefaults = {}
+        self.usesGoBridge = False
         self.classes = {}
         self.globalNames = {}
         self.stringLabels = {}
@@ -470,7 +485,7 @@ class NativeCompiler:
 
     func resolveImportPath(self, name):
         for c in [name, name + ".ns", name + "/main.ns", "std/" + name + ".ns", "core/" + name + ".ns", "lib/" + name + ".ns"]:
-            if file_ada(c):
+            if FileAda(c):
                 return c
         return None
 
@@ -490,7 +505,7 @@ class NativeCompiler:
             resolved = self.resolveImportPath(path)
             if resolved == None:
                 fail("cannot resolve import '" + path + "'")
-            modTree = Parser(Lexer(baca_file(resolved)).tokenize()).parse()
+            modTree = Parser(Lexer(BacaFile(resolved)).tokenize()).parse()
             idx = len(self.importOrder)
             self.importIndex[path] = idx
             self.importOrder.append(path)
@@ -606,6 +621,13 @@ class NativeCompiler:
         for c in classStmts:
             self.resolveClassFields(c.name, classStmtsByName)
 
+        goBridgeHit = {"hit": False}
+        for s in tree:
+            goBridgeModule.scanForGoBridgeStmt(s, goBridgeHit)
+        self.usesGoBridge = goBridgeHit["hit"]
+        if self.usesGoBridge:
+            goBridgeModule.checkWsResourceLeaks(tree)
+
         funcText = []
         for f in funcStmts:
             funcText.append(self.genFunc(f, fnLabel(f.name), f.name))
@@ -624,9 +646,14 @@ class NativeCompiler:
         self.cold = []
         self.inFn = False
         self.regOf = {}
-        self.emit("mov rax, [rsp]")
-        self.emit("lea rdi, [rsp+8+rax*8+8]")
-        self.emit("mov [gEnvp], rdi")
+        if self.usesGoBridge:
+            self.emit("push rbp")
+            self.emit("mov rbp, rsp")
+            self.emit("mov [gEnvp], rdx")
+        else:
+            self.emit("mov rax, [rsp]")
+            self.emit("lea rdi, [rsp+8+rax*8+8]")
+            self.emit("mov [gEnvp], rdi")
         self.emit("call rtInit")
         for path in self.importOrder:
             info = self.importInfo[path]
@@ -635,7 +662,7 @@ class NativeCompiler:
             self.genModuleObject(self.importIndex[path], info["funcNames"], info["varNames"], info["prefix"])
         for s in mainStmts:
             self.genStmt(s)
-        self.emit("mov rax, 60")
+        self.emit("mov rax, 231")
         self.emit("xor rdi, rdi")
         self.emit("syscall")
         mainText = "\n".join(self.out + self.cold)
@@ -644,10 +671,16 @@ class NativeCompiler:
             item = self.lambdas.pop(0)
             funcText.append(self.genFunc(item[0], item[1], item[2]))
 
-        lines = [".intel_syntax noprefix", ".globl _start", ".text", runtimeModule.RUNTIME]
+        entryLabel = "main" if self.usesGoBridge else "_start"
+        lines = [".intel_syntax noprefix", ".globl " + entryLabel, ".text", runtimeModule.RUNTIME]
+        if self.usesGoBridge:
+            if goBridgeAddon == None:
+                fail("Go bridge belum terpasang -- jalankan: nusa get https://github.com/NusaLang/nusa-gobridge")
+            goBridgeModule.verifyGoBridgeAlignment(goBridgeAddon.GOBRIDGE_RUNTIME)
+            lines.append(goBridgeAddon.GOBRIDGE_RUNTIME)
         for ft in funcText:
             lines.append(ft)
-        lines.append("_start:")
+        lines.append(entryLabel + ":")
         lines.append(mainText)
         lines.append(".data")
         lines.append(runtimeModule.DATA)
@@ -688,6 +721,8 @@ class NativeCompiler:
         self.emit("xor rax, rax")
         bodyLines = self.out
         frame = 8 * (len(REGS) + len(self.locals))
+        if frame % 16 != 0:
+            frame = frame + 8
         head = [label + ":", "    push rbp", "    mov rbp, rsp", "    sub rsp, " + str(frame)]
         tail = ["epi" + label + ":"]
         k = 0
@@ -1404,7 +1439,8 @@ class NativeCompiler:
         if sig == None:
             sig = self.findMethodSignature(name)
 
-        numArgs = len(args)
+        numArgs = len(sig[0]) if sig != None else len(args)
+        extra = 8 if numArgs % 2 == 0 else 0
         self.micCount += 1
         micCls = "micC" + str(self.micCount)
         micFn = "micF" + str(self.micCount)
@@ -1417,10 +1453,11 @@ class NativeCompiler:
         missLbl = self.newLabel()
         notClassLbl = self.newLabel()
 
+        if extra > 0:
+            self.emit("sub rsp, " + str(extra))
         self.genExpr(callee.target)
         self.emit("push rax")
         if sig != None:
-            numArgs = len(sig[0])
             self.pushArgsWithDefaults(name, sig[0], sig[1], args)
         else:
             self.pushArgs(args)
@@ -1453,7 +1490,7 @@ class NativeCompiler:
         self.emit("mov rax, [" + micFn + "]")
         self.label(callLbl)
         self.emit("call rax")
-        self.emit("add rsp, " + str(8 * (numArgs + 1)))
+        self.emit("add rsp, " + str(8 * (numArgs + 1) + extra))
 
     func genStringOrGenericCall(self, callee, name, args):
         notStrLbl = self.newLabel()
@@ -1514,35 +1551,45 @@ class NativeCompiler:
             self.genMethodCallGeneric(callee, name, args)
             return None
         if callee.type != "IDENT":
+            extraIndirect = 8 if len(args) % 2 == 1 else 0
+            if extraIndirect > 0:
+                self.emit("sub rsp, " + str(extraIndirect))
             self.genExpr(callee)
             self.emit("mov r11, rax")
             self.emit("shr r11, 1")
             self.pushArgs(args)
             self.emit("call r11")
-            if len(args) > 0:
-                self.emit("add rsp, " + str(8 * len(args)))
+            if len(args) > 0 or extraIndirect > 0:
+                self.emit("add rsp, " + str(8 * len(args) + extraIndirect))
             return None
         name = callee.name
         if name in self.classes:
             instSize = 16 + 8 * len(self.classes[name]["fields"])
+            initLabel = self.resolveInit(name)
+            sig = self.resolveInitSignature(name) if initLabel != None else [[], {}]
+            extra = 8 if initLabel != None and len(sig[0]) % 2 == 0 else 0
+            if extra > 0:
+                self.emit("sub rsp, " + str(extra))
             self.emit("mov rdi, " + self.addr("class" + name, False))
             self.emit("mov rsi, " + str(instSize))
             self.emit("call rtNewInst")
             self.emit("push rax")
-            initLabel = self.resolveInit(name)
             if initLabel != None:
-                sig = self.resolveInitSignature(name)
                 self.pushArgsWithDefaults(name, sig[0], sig[1], args)
                 self.emit("call " + initLabel)
                 self.emit("mov rax, [rsp+" + str(8 * len(sig[0])) + "]")
-                self.emit("add rsp, " + str(8 * (len(sig[0]) + 1)))
+                self.emit("add rsp, " + str(8 * (len(sig[0]) + 1) + extra))
             else:
                 self.emit("pop rax")
         elif name in self.funcs:
+            nParams = len(self.funcParams[name])
+            extra = 8 if nParams % 2 == 1 else 0
+            if extra > 0:
+                self.emit("sub rsp, " + str(extra))
             self.pushArgsWithDefaults(name, self.funcParams[name], self.funcDefaults[name], args)
             self.emit("call " + fnLabel(name))
-            if len(self.funcParams[name]) > 0:
-                self.emit("add rsp, " + str(8 * len(self.funcParams[name])))
+            if nParams > 0 or extra > 0:
+                self.emit("add rsp, " + str(8 * nParams + extra))
         elif name == "print" or name == "cetak":
             i = 0
             for a in args:
@@ -1600,6 +1647,50 @@ class NativeCompiler:
                 self.emit("mov rax, " + self.addr("modobj" + str(idx), False))
             else:
                 fail("impor() with a non-literal or unresolved path is not supported in --native builds")
+        elif name == "goHttpGet":
+            self.usesGoBridge = True
+            self.genExpr(args[0])
+            self.emit("mov rdi, rax")
+            self.emit("call rtGoHttpGet")
+        elif name == "goHttpPost":
+            self.usesGoBridge = True
+            self.genExpr(args[0])
+            self.emit("push rax")
+            self.genExpr(args[1])
+            self.emit("push rax")
+            self.genExpr(args[2])
+            self.emit("mov rdx, rax")
+            self.emit("pop rsi")
+            self.emit("pop rdi")
+            self.emit("call rtGoHttpPost")
+        elif name == "goWsServe":
+            self.usesGoBridge = True
+            self.genExpr(args[0])
+            self.emit("mov rdi, rax")
+            self.emit("call rtGoWsServe")
+        elif name == "goWsConnect":
+            self.usesGoBridge = True
+            self.genExpr(args[0])
+            self.emit("mov rdi, rax")
+            self.emit("call rtGoWsConnect")
+        elif name == "goWsSendText":
+            self.usesGoBridge = True
+            self.genExpr(args[0])
+            self.emit("push rax")
+            self.genExpr(args[1])
+            self.emit("mov rsi, rax")
+            self.emit("pop rdi")
+            self.emit("call rtGoWsSendText")
+        elif name == "goWsRecvText":
+            self.usesGoBridge = True
+            self.genExpr(args[0])
+            self.emit("mov rdi, rax")
+            self.emit("call rtGoWsRecvText")
+        elif name == "goWsClose":
+            self.usesGoBridge = True
+            self.genExpr(args[0])
+            self.emit("mov rdi, rax")
+            self.emit("call rtGoWsClose")
         elif name == "JalankanPerintah" or name == "runCommand":
             self.genExpr(args[0])
             self.emit("push rax")
@@ -1647,25 +1738,38 @@ class NativeCompiler:
                 self.emit("pop rdi")
             self.emit("call rtRange")
         elif name in self.knownGlobals:
+            extraGlobal = 8 if len(args) % 2 == 1 else 0
+            if extraGlobal > 0:
+                self.emit("sub rsp, " + str(extraGlobal))
             self.emit("mov r11, " + self.addr(name, False))
             self.emit("shr r11, 1")
             self.pushArgs(args)
             self.emit("call r11")
-            if len(args) > 0:
-                self.emit("add rsp, " + str(8 * len(args)))
+            if len(args) > 0 or extraGlobal > 0:
+                self.emit("add rsp, " + str(8 * len(args) + extraGlobal))
         else:
             fail("unknown function '" + name + "' (not implemented in --native backend)")
 
+func buildGoBridge():
+    if goBridgeAddon == None:
+        fail("Go bridge belum terpasang -- jalankan: nusa get https://github.com/NusaLang/nusa-gobridge")
+    return goBridgeAddon.buildGoBridge()
+
 func build(inputFile, outputFile, keepAsm):
-    if not file_ada(inputFile):
+    if not FileAda(inputFile):
         fail("file '" + inputFile + "' not found")
-    tree = Parser(Lexer(baca_file(inputFile)).tokenize()).parse()
-    asm = NativeCompiler().compile(tree)
+    tree = Parser(Lexer(BacaFile(inputFile)).tokenize()).parse()
+    compiler = NativeCompiler()
+    asm = compiler.compile(tree)
     asmPath = outputFile + ".s"
     objPath = outputFile + ".o"
-    tulis_file(asmPath, asm)
+    TulisFile(asmPath, asm)
     JalankanPerintah("as", ["-o", objPath, asmPath])
-    JalankanPerintah("ld", ["-o", outputFile, objPath])
+    if compiler.usesGoBridge:
+        bridgeA = buildGoBridge()
+        JalankanPerintah("cc", ["-o", outputFile, objPath, bridgeA, "-lpthread"])
+    else:
+        JalankanPerintah("ld", ["-o", outputFile, objPath])
     JalankanPerintah("rm", ["-f", objPath])
     if not keepAsm:
         JalankanPerintah("rm", ["-f", asmPath])
