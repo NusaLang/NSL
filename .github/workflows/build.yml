@@ -153,24 +153,18 @@ jobs:
       - name: Generate release notes
         run: |
           cat << 'EOF' > release_notes.md
-          ## Nusantara Toolchain 0.0.2
+          ## NSL 0.0.2
 
-          ### Architecture
-          - Self-hosted toolchain implemented in pure Nusantara (.ns) source code.
-          - Native x86_64 AOT compiler generating stand-alone ELF executables via system assembler and linker.
-          - Stack-based Bytecode Virtual Machine with instruction caching and constant folding.
-          - Reference Tree-walking Interpreter supporting Python-style indentation blocks and curly brace syntax.
-          - Standardized standard library modules across process execution, cryptography, networking, and filesystem I/O.
+          This toolchain compiles and runs itself: the lexer, parser, interpreter, bytecode VM, and native x86-64 AOT compiler are all written in NSL, bootstrapped once by a small C++ host. The native compiler emits standalone ELF binaries straight through the system assembler and linker, with no bundled runtime and no external dependencies, and lands within ~2x of Go's speed on arithmetic, array, and object workloads.
 
-          ### Verification
-          SHA256 checksums are provided for all release artifacts:
-          ```bash
-          sha256sum -c <artifact>.sha256
-          ```
-
-          ### Installation
+          Install:
           ```bash
           curl -fsSL https://github.com/NusaLang/NSL/raw/beta/install.sh | bash
+          ```
+
+          Verify a downloaded artifact:
+          ```bash
+          sha256sum -c <artifact>.sha256
           ```
           EOF
 

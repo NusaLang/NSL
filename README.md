@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/hero.svg" width="720" alt="NSL" />
+</p>
+
 # Nusantara
 
 Nusantara is a programming language that compiles and runs itself — the lexer, parser, interpreter, bytecode VM, and native x86-64 compiler are all written in Nusantara, bootstrapped once by a small C++ host. You can write keywords in English (`func`, `if`, `return`) or Indonesian (`fungsi`, `jika`, `hasil`) and mix them freely in the same file; blocks can use colons or braces.
