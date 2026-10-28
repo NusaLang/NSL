@@ -1,6 +1,6 @@
 # Nusantara
 
-A self-hosted programming language: the lexer, parser, interpreter, bytecode VM, and native x86-64 AOT compiler are all written in Nusantara (`.ns`) itself, bootstrapped once by a small C++ host. Keywords come in English (`func`, `if`, `return`) and Indonesian (`fungsi`, `jika`, `hasil`) flavors that can be mixed freely, with both colon-indented and brace blocks.
+Nusantara is a programming language that compiles and runs itself — the lexer, parser, interpreter, bytecode VM, and native x86-64 compiler are all written in Nusantara, bootstrapped once by a small C++ host. You can write keywords in English (`func`, `if`, `return`) or Indonesian (`fungsi`, `jika`, `hasil`) and mix them freely in the same file; blocks can use colons or braces.
 
 ```python
 func fib(n):
@@ -21,7 +21,7 @@ for i in range(10):
 ./app                                 # no runtime, no dependencies
 ```
 
-The native AOT compiler is the one that matters for speed: it turns `.ns` source into x86-64 assembly by hand (tagged 63-bit integers, fixed-offset struct layout for classes, inline caches for field and method access) and assembles it with the system `as`/`ld`. The interpreter and VM exist as slower, simpler references for checking that the language behaves the same way everywhere.
+The native AOT compiler is the one that matters for speed. It turns `.ns` source into x86-64 assembly by hand — tagged 63-bit integers, fixed-offset structs for classes, inline caches for field and method lookups — and hands the result to the system `as` and `ld`. The interpreter and VM are slower, simpler references that exist mainly to check the language behaves the same way everywhere.
 
 ## Benchmarks
 
@@ -72,10 +72,7 @@ Dog("Rex").speak()  # Rex makes a bark
 
 ## Standard library highlights
 
-- `runCommand(cmd, args)`: spawns a process directly via `fork`/`execve`/`pipe`/`waitpid` in the native backend — no shell is invoked, so argument lists can't be reinterpreted as shell syntax.
-- `readFile`, `writeFile`, `fileExists`.
-- `impor()`: imports another `.ns` file; the native compiler resolves and inlines it statically at compile time.
-- `gcInfo()` / `gcForce()`: inspect and trigger the garbage collector.
+`runCommand(cmd, args)` spawns a process straight through `fork`/`execve`/`pipe`/`waitpid` in the native backend, with no shell in between — argument lists can't be reinterpreted as shell syntax. File access is `readFile`, `writeFile`, and `fileExists`. `impor()` pulls in another `.ns` file, and the native compiler resolves and inlines it statically at compile time. `gcInfo()` and `gcForce()` let you inspect and trigger the garbage collector directly.
 
 ## Repository layout
 
