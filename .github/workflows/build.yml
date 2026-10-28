@@ -161,11 +161,6 @@ jobs:
           ```bash
           curl -fsSL https://github.com/NusaLang/NSL/raw/beta/install.sh | bash
           ```
-
-          Verify a downloaded artifact:
-          ```bash
-          sha256sum -c <artifact>.sha256
-          ```
           EOF
 
       - name: Publish GitHub Release
