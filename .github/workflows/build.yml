@@ -39,7 +39,7 @@ jobs:
           chmod +x dist/nusa-linux-x86_64
           tar -czf dist/nusa-linux-x86_64.tar.gz nusa core/ compiler/ std/ net/ crypto/ media/ lib/ Makefile README.md LICENSE NOTICE
           cd dist && sha256sum nusa-linux-x86_64 > nusa-linux-x86_64.sha256
-          cd dist && sha256sum nusa-linux-x86_64.tar.gz > nusa-linux-x86_64.tar.gz.sha256
+          sha256sum nusa-linux-x86_64.tar.gz > nusa-linux-x86_64.tar.gz.sha256
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
@@ -66,7 +66,7 @@ jobs:
           chmod +x dist/nusa-linux-arm64
           tar -czf dist/nusa-linux-arm64.tar.gz nusa core/ compiler/ std/ net/ crypto/ media/ lib/ Makefile README.md LICENSE NOTICE
           cd dist && sha256sum nusa-linux-arm64 > nusa-linux-arm64.sha256
-          cd dist && sha256sum nusa-linux-arm64.tar.gz > nusa-linux-arm64.tar.gz.sha256
+          sha256sum nusa-linux-arm64.tar.gz > nusa-linux-arm64.tar.gz.sha256
 
       - name: Upload Linux ARM64 artifact
         uses: actions/upload-artifact@v4
@@ -93,7 +93,7 @@ jobs:
           chmod +x dist/nusa-android-arm64
           tar -czf dist/nusa-android-arm64.tar.gz nusa core/ compiler/ std/ net/ crypto/ media/ lib/ Makefile README.md LICENSE NOTICE
           cd dist && sha256sum nusa-android-arm64 > nusa-android-arm64.sha256
-          cd dist && sha256sum nusa-android-arm64.tar.gz > nusa-android-arm64.tar.gz.sha256
+          sha256sum nusa-android-arm64.tar.gz > nusa-android-arm64.tar.gz.sha256
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
@@ -125,7 +125,7 @@ jobs:
           cp nusa dist/nusa-windows-x86_64
           tar -czf dist/nusa-windows-x86_64.tar.gz nusa core/ compiler/ std/ net/ crypto/ media/ lib/ Makefile README.md LICENSE NOTICE install.ps1
           cd dist && sha256sum nusa-windows-x86_64 > nusa-windows-x86_64.sha256
-          cd dist && sha256sum nusa-windows-x86_64.tar.gz > nusa-windows-x86_64.tar.gz.sha256
+          sha256sum nusa-windows-x86_64.tar.gz > nusa-windows-x86_64.tar.gz.sha256
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
