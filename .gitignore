@@ -1,5 +1,4 @@
-# Build outputs & binaries
-/nusa
+
 /nusantara
 bin/
 /bin/
@@ -10,11 +9,8 @@ a.out
 *.s
 *.bin
 
-# Shared libraries & objects
 plugins/**/*.so
 plugins/**/vendor/**/*.o
-
-# Caches & temporary files
 .nusa-cache/
 **/.nusa-cache/
 /.nusa_lang
@@ -25,18 +21,3 @@ plugins/**/vendor/**/*.o
 *.tmp
 *.debug
 *.dSYM/
-
-# Benchmark artifacts & comparison
-bench/
-/bench/
-RESULTS.md
-**/RESULTS.md
-*.result
-
-# Examples, auxiliary tools & tests
-examples/
-/examples/
-tools/
-/tools/
-tests/
-/tests/
