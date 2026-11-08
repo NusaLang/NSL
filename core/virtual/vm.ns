@@ -1,5 +1,23 @@
 import sys
 
+func loadModule(path):
+    try:
+        return impor(path)
+    except e:
+        try:
+            return impor("core/" + path)
+        except e2:
+            return impor("../" + path)
+
+resolverModule = loadModule("resolver.ns")
+resolveModulePath = resolverModule.resolveModulePath
+
+func runtimeImpor(name):
+    resolved = resolveModulePath(name, file_ada)
+    if resolved != None:
+        return impor(resolved)
+    return impor(name)
+
 Op = {
     "CONST": 1,
     "NULL": 2,
@@ -1155,8 +1173,8 @@ class VmRunner:
         self.globals["tulis_file"] = tulis_file
         self.globals["fileExists"] = file_ada
         self.globals["file_ada"] = file_ada
-        self.globals["import"] = impor
-        self.globals["impor"] = impor
+        self.globals["import"] = runtimeImpor
+        self.globals["impor"] = runtimeImpor
         self.globals["time"] = waktu
         self.globals["waktu"] = waktu
         self.globals["gcInfo"] = gc_info
@@ -1741,8 +1759,21 @@ class VmRunner:
                                 print("RuntimeError: Field '" + name + "' not found")
                                 sys.exit(1)
                                 self.push(None)
-                    elif (type(target) == "peta" or type(target) == "dict") and name in target:
-                        self.push(target[name])
+                    elif type(target) == "peta" or type(target) == "dict":
+                        if name in target and callable(target[name]):
+                            self.push(target[name])
+                        elif name == "get" or name == "ambil":
+                            self.push(lambda k, d = None: target[k] if k in target else d)
+                        elif name == "keys" or name == "kunci":
+                            self.push(lambda: list(target.keys()))
+                        elif name == "values" or name == "nilai":
+                            self.push(lambda: list(target.values()))
+                        elif name in target:
+                            self.push(target[name])
+                        else:
+                            print("RuntimeError: Field '" + name + "' not found")
+                            sys.exit(1)
+                            self.push(None)
                     elif hasattr(target, name):
                         self.push(getattr(target, name))
                     else:
@@ -1829,6 +1860,29 @@ class VmRunner:
                             continue
                         elif name == "find":
                             self.push(target.find(callArgs[0]))
+                            continue
+                    if tipe(target) == "peta" or type(target) == "dict":
+                        if name in target and callable(target[name]):
+                            fnTarget = target[name]
+                            res = self.callBuiltin(fnTarget, callArgs)
+                            self.push(res)
+                            continue
+                        elif name == "get" or name == "ambil":
+                            k = callArgs[0] if len(callArgs) > 0 else None
+                            d = callArgs[1] if len(callArgs) > 1 else None
+                            self.push(target[k] if k in target else d)
+                            continue
+                        elif name == "keys" or name == "kunci":
+                            self.push(list(target.keys()))
+                            continue
+                        elif name == "values" or name == "nilai":
+                            self.push(list(target.values()))
+                            continue
+                        elif name == "items":
+                            res = []
+                            for k in target:
+                                res.append([k, target[k]])
+                            self.push(res)
                             continue
                     if hasattr(target, name):
                         fnTarget = getattr(target, name)

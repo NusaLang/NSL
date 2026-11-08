@@ -17,6 +17,8 @@ FuncStmt = astModule.FuncStmt
 BlockStmt = astModule.BlockStmt
 runtimeModule = loadModule("compiler/nativeRuntime.ns")
 goBridgeModule = loadModule("compiler/goBridge.ns")
+resolverModule = loadModule("core/resolver.ns")
+resolveModulePath = resolverModule.resolveModulePath
 
 JalankanPerintah = jalankan_perintah
 FileAda = file_ada
@@ -484,10 +486,7 @@ class NativeCompiler:
         return lbl
 
     func resolveImportPath(self, name):
-        for c in [name, name + ".ns", name + "/main.ns", "std/" + name + ".ns", "core/" + name + ".ns", "core/virtual/" + name + ".ns", "core/interpreter/" + name + ".ns", "core/parser/" + name + ".ns", "core/types/" + name + ".ns", "lib/" + name + ".ns", "lib/system/" + name + ".ns", "lib/async/" + name + ".ns", "lib/collections/" + name + ".ns", "lib/math/" + name + ".ns", "lib/types/" + name + ".ns", "lib/text/" + name + ".ns", "lib/utils/" + name + ".ns"]:
-            if FileAda(c):
-                return c
-        return None
+        return resolveModulePath(name, FileAda)
 
     func processImports(self, tree):
         self.importIndex = {}
@@ -1544,6 +1543,41 @@ class NativeCompiler:
                 self.genExpr(callee.target)
                 self.emit("mov rdi, rax")
                 self.emit("call rtArrPop")
+                return None
+            if name == "get" or name == "ambil":
+                lblNotFn = self.newLabel()
+                lblDone = self.newLabel()
+                extra = 8 if len(args) % 2 == 1 else 0
+                self.genExpr(callee.target)
+                self.emit("push rax")
+                self.emit("mov rdi, rax")
+                self.emit("lea rsi, [" + self.internString(name) + "]")
+                self.emit("call rtMapGet")
+                self.emit("cmp rax, 0")
+                self.emit("je " + lblNotFn)
+                self.emit("mov r11, rax")
+                self.emit("shr r11, 1")
+                self.emit("pop rax")
+                if extra > 0:
+                    self.emit("sub rsp, " + str(extra))
+                self.pushArgs(args)
+                self.emit("call r11")
+                self.emit("add rsp, " + str(8 * len(args) + extra))
+                self.emit("jmp " + lblDone)
+                self.label(lblNotFn)
+                self.emit("pop rdi")
+                self.emit("push rdi")
+                self.genExpr(args[0])
+                self.emit("push rax")
+                if len(args) > 1:
+                    self.genExpr(args[1])
+                else:
+                    self.emit("xor eax, eax")
+                self.emit("mov rdx, rax")
+                self.emit("pop rsi")
+                self.emit("pop rdi")
+                self.emit("call rtMapGetDef")
+                self.label(lblDone)
                 return None
             if name in STRMETHODS:
                 self.genStringOrGenericCall(callee, name, args)

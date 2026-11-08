@@ -29,6 +29,8 @@ Parser = loadMod("parser/parser").Parser
 Interpreter = loadMod("interpreter/interpreter").Interpreter
 VmCompiler = loadMod("virtual/vm").VmCompiler
 VmRunner = loadMod("virtual/vm").VmRunner
+resolverModule = loadMod("resolver")
+resolveModulePath = resolverModule.resolveModulePath
 JalankanPerintah = jalankan_perintah
 FileAda = file_ada
 BacaFile = baca_file
@@ -91,9 +93,9 @@ func guarded(fn):
         fail(str(e))
 
 func findModule(name):
-    for c in [name, name + ".ns", name + "/main.ns", "std/" + name + ".ns", "core/" + name + ".ns", "core/virtual/" + name + ".ns", "core/interpreter/" + name + ".ns", "core/parser/" + name + ".ns", "core/types/" + name + ".ns", "lib/" + name + ".ns", "lib/system/" + name + ".ns", "lib/async/" + name + ".ns", "lib/collections/" + name + ".ns", "lib/math/" + name + ".ns", "lib/types/" + name + ".ns", "lib/text/" + name + ".ns", "lib/utils/" + name + ".ns"]:
-        if FileAda(c):
-            return c
+    resolved = resolveModulePath(name, FileAda)
+    if resolved != None:
+        return resolved
     fail("no module named " + name)
 
 func readStdin():
