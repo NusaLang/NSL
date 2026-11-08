@@ -13,6 +13,12 @@ ifeq ($(UNAME_S),Linux)
 	else ifeq ($(UNAME_M),aarch64)
 		BOOTSTRAP_ASSET := nusa-linux-arm64
 	endif
+else ifeq ($(UNAME_S),Darwin)
+	ifeq ($(UNAME_M),arm64)
+		BOOTSTRAP_ASSET := nusa-darwin-arm64
+	else
+		BOOTSTRAP_ASSET := nusa-darwin-x86_64
+	endif
 endif
 
 HOST_NUSA ?= $(shell if [ -x ./$(ENGINE) ]; then echo ./$(ENGINE); elif [ -x ../NSL/nusantara ]; then echo ../NSL/nusantara; elif [ -x $(HOME)/.local/bin/nusantara ]; then echo $(HOME)/.local/bin/nusantara; elif command -v nusantara >/dev/null 2>&1; then command -v nusantara; else command -v nusa 2>/dev/null; fi)
