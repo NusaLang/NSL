@@ -1,0 +1,65 @@
+name: Build Bootstrap Engines
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-android:
+    name: Rebuild Android Bootstrap Engine
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch engine source from tag
+        run: |
+          git fetch origin tag bootstrap-source
+          git checkout bootstrap-source -- engine
+
+      - name: Compile Android ARM64 engine
+        run: |
+          NDK_TOOLCHAIN="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          $NDK_TOOLCHAIN/aarch64-linux-android24-clang++ \
+            -std=gnu++17 -O3 -flto -D_GNU_SOURCE -D_USE_MATH_DEFINES -DNDEBUG -Wall -Wextra \
+            -static-libstdc++ \
+            -Iengine/include engine/src/*.cpp -o nusa-android-arm64 -ldl -lm
+          $NDK_TOOLCHAIN/llvm-strip nusa-android-arm64
+
+      - name: Verify static libc++ linkage
+        run: |
+          readelf -d nusa-android-arm64
+          if readelf -d nusa-android-arm64 | grep -q "libc++_shared"; then
+            echo "ERROR: libc++_shared.so is dynamically linked" >&2
+            exit 1
+          fi
+
+      - name: Compute checksums and package
+        run: |
+          sha256sum nusa-android-arm64 > nusa-android-arm64.sha256
+          mkdir -p dist/bundle
+          cp nusa-android-arm64 dist/bundle/nusa-engine
+          printf '#!/bin/sh\nDIR="$(cd "$(dirname "$0")" && pwd)"\nexec "$DIR/nusa-engine" "$DIR/core/main.ns" "$@"\n' > dist/bundle/nusa
+          chmod +x dist/bundle/nusa dist/bundle/nusa-engine
+          cp -r core compiler std net crypto media lib Makefile README.md LICENSE NOTICE dist/bundle/
+          tar -czf dist/nusa-android-arm64.tar.gz -C dist/bundle .
+          cp nusa-android-arm64 dist/nusa-android-arm64
+          cp nusa-android-arm64.sha256 dist/nusa-android-arm64.sha256
+          cd dist
+          sha256sum nusa-android-arm64.tar.gz > nusa-android-arm64.tar.gz.sha256
+
+      - name: Update v0.0.1-build release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload v0.0.1-build --clobber nusa-android-arm64 nusa-android-arm64.sha256
+
+      - name: Update v0.0.2-rc2 release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload v0.0.2-rc2 --clobber dist/nusa-android-arm64 dist/nusa-android-arm64.sha256 dist/nusa-android-arm64.tar.gz dist/nusa-android-arm64.tar.gz.sha256
+          gh release edit v0.0.1-build --prerelease --latest=false
+          gh release edit v0.0.2-rc2 --latest=true
