@@ -484,7 +484,7 @@ class NativeCompiler:
         return lbl
 
     func resolveImportPath(self, name):
-        for c in [name, name + ".ns", name + "/main.ns", "std/" + name + ".ns", "core/" + name + ".ns", "core/virtual/" + name + ".ns", "core/interpreter/" + name + ".ns", "core/parser/" + name + ".ns", "core/types/" + name + ".ns", "lib/" + name + ".ns"]:
+        for c in [name, name + ".ns", name + "/main.ns", "std/" + name + ".ns", "core/" + name + ".ns", "core/virtual/" + name + ".ns", "core/interpreter/" + name + ".ns", "core/parser/" + name + ".ns", "core/types/" + name + ".ns", "lib/" + name + ".ns", "lib/system/" + name + ".ns", "lib/async/" + name + ".ns", "lib/collections/" + name + ".ns", "lib/math/" + name + ".ns", "lib/types/" + name + ".ns", "lib/text/" + name + ".ns", "lib/utils/" + name + ".ns"]:
             if FileAda(c):
                 return c
         return None

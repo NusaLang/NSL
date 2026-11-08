@@ -1,5 +1,5 @@
 import os
-import glob as _glob
+import glob as globMod
 import fnmatch
 import shutil
 
@@ -125,10 +125,10 @@ class Path:
         for n in os.listdir(self._p):
             yield Path(self._p, n)
     def glob(self, pattern):
-        for p in _glob.glob(self._p + "/" + pattern, recursive=True):
+        for p in globMod.glob(self._p + "/" + pattern, recursive=True):
             yield Path(p)
     def rglob(self, pattern):
-        for p in _glob.glob(self._p + "/**/" + pattern, recursive=True):
+        for p in globMod.glob(self._p + "/**/" + pattern, recursive=True):
             yield Path(p)
     def resolve(self):
         return Path(os.path.abspath(self._p))
