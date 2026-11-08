@@ -67,14 +67,16 @@ case "$UNAME_S" in
         bold "Nusantara -- Windows"
         INSTALL_DIR="${NUSA_INSTALL_DIR:-$HOME/.nusa}"
         mkdir -p "$INSTALL_DIR"
-        info "Ambil binary jadi ..."
-        curl -fsSL "$RELEASE_BASE/nusa-windows-x86_64.exe" -o "$INSTALL_DIR/nusa.exe" ||
+        info "Ambil bundle ($RELEASE_BASE/nusa-windows-x86_64.tar.gz) ..."
+        TMP_TGZ="$(mktemp)"
+        curl -fsSL "$RELEASE_BASE/nusa-windows-x86_64.tar.gz" -o "$TMP_TGZ" ||
             fail "gagal download -- cek koneksi, atau lihat rilis manual di github.com/NusaLang/NSL/releases"
-        chmod +x "$INSTALL_DIR/nusa.exe"
+        tar -xzf "$TMP_TGZ" -C "$INSTALL_DIR" || fail "gagal ekstrak bundle"
+        rm -f "$TMP_TGZ"
         setx PATH "%PATH%;$(cygpath -w "$INSTALL_DIR" 2>/dev/null || echo "$INSTALL_DIR")" >/dev/null 2>&1 || true
         echo
         bold "Selesai."
-        info "Terpasang di $INSTALL_DIR/nusa.exe -- buka terminal baru, terus:"
+        info "Terpasang di $INSTALL_DIR -- buka terminal baru, terus:"
         info "  nusa run examples/hello.ns"
         info ""
         info "PowerShell native (bukan Git Bash/MSYS)? Pakai install.ps1 langsung."
