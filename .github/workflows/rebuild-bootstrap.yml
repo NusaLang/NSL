@@ -12,6 +12,7 @@ on:
           - all
           - android
           - windows
+          - macos
 
 permissions:
   contents: write
@@ -158,5 +159,66 @@ jobs:
         shell: bash
         run: |
           gh release upload v0.0.2-rc2 --clobber dist/nusa-windows-x86_64.exe dist/nusa-windows-x86_64.exe.sha256 dist/nusa-windows-x86_64.tar.gz dist/nusa-windows-x86_64.tar.gz.sha256 dist/msys-2.0.dll dist/msys-2.0.dll.sha256
+          gh release edit v0.0.1-build --prerelease --latest=false
+          gh release edit v0.0.2-rc2 --latest=true
+
+  build-macos:
+    name: Rebuild macOS Bootstrap Engine
+    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'all' || github.event.inputs.target == 'macos')
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch engine source from tag
+        run: |
+          git fetch origin tag bootstrap-source
+          git checkout bootstrap-source -- engine
+
+      - name: Compile macOS ARM64 and x86_64 engines
+        run: |
+          clang++ -std=gnu++17 -O3 -flto -target arm64-apple-macos11 -D_GNU_SOURCE -D_USE_MATH_DEFINES -DNDEBUG -Wall -Wextra -Iengine/include engine/src/*.cpp -o nusa-darwin-arm64 -ldl -lm
+          clang++ -std=gnu++17 -O3 -flto -target x86_64-apple-macos11 -D_GNU_SOURCE -D_USE_MATH_DEFINES -DNDEBUG -Wall -Wextra -Iengine/include engine/src/*.cpp -o nusa-darwin-x86_64 -ldl -lm
+          strip nusa-darwin-arm64 nusa-darwin-x86_64
+          file nusa-darwin-arm64 nusa-darwin-x86_64
+
+      - name: Compute checksums and package
+        run: |
+          shasum -a 256 nusa-darwin-arm64 > nusa-darwin-arm64.sha256
+          shasum -a 256 nusa-darwin-x86_64 > nusa-darwin-x86_64.sha256
+
+          mkdir -p dist/bundle-arm64 dist/bundle-x86_64
+          cp nusa-darwin-arm64 dist/bundle-arm64/nusa-engine
+          printf '#!/bin/sh\nDIR="$(cd "$(dirname "$0")" && pwd)"\nexec "$DIR/nusa-engine" "$DIR/core/main.ns" "$@"\n' > dist/bundle-arm64/nusa
+          chmod +x dist/bundle-arm64/nusa dist/bundle-arm64/nusa-engine
+          cp -r core compiler std net crypto media lib Makefile README.md LICENSE NOTICE dist/bundle-arm64/
+          tar -czf dist/nusa-darwin-arm64.tar.gz -C dist/bundle-arm64 .
+
+          cp nusa-darwin-x86_64 dist/bundle-x86_64/nusa-engine
+          printf '#!/bin/sh\nDIR="$(cd "$(dirname "$0")" && pwd)"\nexec "$DIR/nusa-engine" "$DIR/core/main.ns" "$@"\n' > dist/bundle-x86_64/nusa
+          chmod +x dist/bundle-x86_64/nusa dist/bundle-x86_64/nusa-engine
+          cp -r core compiler std net crypto media lib Makefile README.md LICENSE NOTICE dist/bundle-x86_64/
+          tar -czf dist/nusa-darwin-x86_64.tar.gz -C dist/bundle-x86_64 .
+
+          cp nusa-darwin-arm64 dist/nusa-darwin-arm64
+          cp nusa-darwin-arm64.sha256 dist/nusa-darwin-arm64.sha256
+          cp nusa-darwin-x86_64 dist/nusa-darwin-x86_64
+          cp nusa-darwin-x86_64.sha256 dist/nusa-darwin-x86_64.sha256
+
+          cd dist
+          shasum -a 256 nusa-darwin-arm64.tar.gz > nusa-darwin-arm64.tar.gz.sha256
+          shasum -a 256 nusa-darwin-x86_64.tar.gz > nusa-darwin-x86_64.tar.gz.sha256
+
+      - name: Update v0.0.1-build release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload v0.0.1-build --clobber nusa-darwin-arm64 nusa-darwin-arm64.sha256 nusa-darwin-x86_64 nusa-darwin-x86_64.sha256
+
+      - name: Update v0.0.2-rc2 release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload v0.0.2-rc2 --clobber dist/nusa-darwin-*
           gh release edit v0.0.1-build --prerelease --latest=false
           gh release edit v0.0.2-rc2 --latest=true

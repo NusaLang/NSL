@@ -93,6 +93,10 @@ elif [ "$UNAME_S" = "Linux" ] && [ "$UNAME_M" = "x86_64" ]; then
     install_prebuilt "nusa-linux-x86_64" "nusantara-plugins-linux-x86_64.tar.gz"
 elif [ "$UNAME_S" = "Linux" ] && [ "$UNAME_M" = "aarch64" ]; then
     install_prebuilt "nusa-linux-arm64" "nusantara-plugins-linux-arm64.tar.gz"
+elif [ "$UNAME_S" = "Darwin" ] && [ "$UNAME_M" = "arm64" ]; then
+    install_prebuilt "nusa-darwin-arm64" ""
+elif [ "$UNAME_S" = "Darwin" ]; then
+    install_prebuilt "nusa-darwin-x86_64" ""
 else
     command -v make >/dev/null 2>&1 || fail "make tidak ditemukan (belum ada binary jadi buat $UNAME_S/$UNAME_M)."
     command -v g++ >/dev/null 2>&1 || fail "g++ tidak ditemukan (belum ada binary jadi buat $UNAME_S/$UNAME_M)."
