@@ -6,6 +6,8 @@
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #include <climits>
+#elif defined(_WIN32)
+#include <windows.h>
 #else
 #include <unistd.h>
 #endif
@@ -37,7 +39,13 @@ inline bool isBareName(const std::string& name) {
 // Real path of the running executable (/proc/self/exe on Linux,
 // _NSGetExecutablePath on macOS -- never argv[0]). "" if undeterminable.
 inline std::string selfExePath() {
-#ifdef __APPLE__
+#if defined(_WIN32)
+    char buf[4096];
+    DWORD n = GetModuleFileNameA(NULL, buf, sizeof(buf));
+    if (n == 0 || n == sizeof(buf)) return "";
+    for (DWORD i = 0; i < n; ++i) if (buf[i] == '\\') buf[i] = '/';
+    return std::string(buf, n);
+#elif defined(__APPLE__)
     char buf[PATH_MAX];
     uint32_t size = sizeof(buf);
     if (_NSGetExecutablePath(buf, &size) != 0) return "";

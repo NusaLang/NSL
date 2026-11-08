@@ -2,11 +2,14 @@
 
 #include <cerrno>
 #include <csignal>
+#include <signal.h>
 #include <stdexcept>
 
 #ifndef __EMSCRIPTEN__
 #include <poll.h>
+#ifndef _WIN32
 #include <sys/wait.h>
+#endif
 #include <unistd.h>
 #endif
 
@@ -190,12 +193,14 @@ std::string readStream(int fd, int maxLen) {
 
 void closeStream(pid_t pid, int fd) {
     if (pid > 0) {
+#ifndef _WIN32
         kill(pid, SIGKILL);
         int status = 0;
         // Release the GIL like every other wait -- never assume a wait
         // call "never blocks", even right after SIGKILL.
         GilRelease release;
         waitpid(pid, &status, 0);
+#endif
     }
     closeIfValid(fd);
 }

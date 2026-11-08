@@ -732,6 +732,9 @@ bool rsaPssVerify(const Bytes& n, const Bytes& e, Hash h, const Bytes& digest, c
 }
 
 // --------------------------------------------------------------- random ----
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 0
+#endif
 void randomBytes(uint8_t* out, size_t n) {
     int fd = ::open("/dev/urandom", O_RDONLY | O_CLOEXEC);
     if (fd < 0) throw std::runtime_error("no entropy source available");

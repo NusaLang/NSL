@@ -22,6 +22,11 @@ std::string shellQuote(const std::string& s) {
     return out + "'";
 }
 
+#if defined(_WIN32) && !defined(popen)
+#define popen _popen
+#define pclose _pclose
+#endif
+
 std::string versionOf(const std::string& binary) {
     std::string cmd = shellQuote(binary) + " --version 2>/dev/null";
     FILE* p = popen(cmd.c_str(), "r");
