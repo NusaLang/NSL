@@ -11,7 +11,13 @@
 #include <cmath>
 #include <ctime>
 #include <iostream>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+#ifndef _WIN32
 #include <sys/wait.h>
+#endif
 #include <functional>
 #include <mutex>
 #include <random>

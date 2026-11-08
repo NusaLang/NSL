@@ -1,6 +1,6 @@
 CXX ?= g++
 CC ?= cc
-CXXFLAGS ?= -std=c++17 -O3 -flto=auto -DNDEBUG -Wall -Wextra -Iinclude -pthread
+CXXFLAGS ?= -std=gnu++17 -O3 -flto=auto -D_GNU_SOURCE -D_USE_MATH_DEFINES -DNDEBUG -Wall -Wextra -Iinclude -pthread
 SRC := $(wildcard src/*.cpp)
 BIN := nusantara
 LDFLAGS ?= -ldl -lm
