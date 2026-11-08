@@ -134,6 +134,9 @@ jobs:
           cp nusa-engine.exe dist/bundle/nusa-engine.exe
           cp nusa-engine.exe dist/nusa-windows-x86_64.exe
           cp nusa-engine.exe dist/nusa-windows-x86_64
+          cp /c/msys64/usr/bin/msys-2.0.dll dist/bundle/ 2>/dev/null || curl -fsSL "$BOOTSTRAP_RELEASE/msys-2.0.dll" -o dist/bundle/msys-2.0.dll
+          cp /c/msys64/usr/bin/msys-stdc++-6.dll dist/bundle/ 2>/dev/null || true
+          cp /c/msys64/usr/bin/msys-gcc_s-seh-1.dll dist/bundle/ 2>/dev/null || true
           cat << 'EOF' > dist/bundle/nusa.cmd
           @echo off
           "%~dp0nusa-engine.exe" "%~dp0core\main.ns" %*
@@ -147,9 +150,11 @@ jobs:
           cp -r core compiler std net crypto media lib Makefile README.md LICENSE NOTICE install.ps1 dist/bundle/
           tar -czf dist/nusa-windows-x86_64.tar.gz -C dist/bundle .
           cd dist
+          cp bundle/msys-2.0.dll ./msys-2.0.dll 2>/dev/null || true
           sha256sum nusa-windows-x86_64 > nusa-windows-x86_64.sha256
           sha256sum nusa-windows-x86_64.exe > nusa-windows-x86_64.exe.sha256
           sha256sum nusa-windows-x86_64.tar.gz > nusa-windows-x86_64.tar.gz.sha256
+          sha256sum msys-2.0.dll > msys-2.0.dll.sha256 2>/dev/null || true
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4

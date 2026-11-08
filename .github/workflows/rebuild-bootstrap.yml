@@ -2,6 +2,16 @@ name: Build Bootstrap Engines
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target to rebuild'
+        required: true
+        default: 'windows'
+        type: choice
+        options:
+          - all
+          - android
+          - windows
 
 permissions:
   contents: write
@@ -9,6 +19,7 @@ permissions:
 jobs:
   build-android:
     name: Rebuild Android Bootstrap Engine
+    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'all' || github.event.inputs.target == 'android')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -61,5 +72,83 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload v0.0.2-rc2 --clobber dist/nusa-android-arm64 dist/nusa-android-arm64.sha256 dist/nusa-android-arm64.tar.gz dist/nusa-android-arm64.tar.gz.sha256
+          gh release edit v0.0.1-build --prerelease --latest=false
+          gh release edit v0.0.2-rc2 --latest=true
+
+  build-windows:
+    name: Rebuild Windows Bootstrap Engine
+    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'all' || github.event.inputs.target == 'windows')
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch engine source from tag
+        shell: bash
+        run: |
+          git fetch origin tag bootstrap-source
+          git checkout bootstrap-source -- engine
+
+      - name: Compile Windows x86_64 engine
+        shell: bash
+        run: |
+          export PATH="/c/msys64/usr/bin:$PATH"
+          g++ -std=gnu++17 -O3 -flto=auto -D_GNU_SOURCE -D_USE_MATH_DEFINES -DNDEBUG -Wall -Wextra \
+            -static-libgcc -static-libstdc++ \
+            -Iengine/include engine/src/*.cpp -o nusa-windows-x86_64.exe
+          strip nusa-windows-x86_64.exe
+          cp /c/msys64/usr/bin/msys-2.0.dll ./
+          cp /c/msys64/usr/bin/msys-stdc++-6.dll ./ 2>/dev/null || true
+          cp /c/msys64/usr/bin/msys-gcc_s-seh-1.dll ./ 2>/dev/null || true
+
+      - name: Verify DLL dependencies
+        shell: bash
+        run: |
+          export PATH="/c/msys64/usr/bin:$PATH"
+          objdump -p nusa-windows-x86_64.exe | grep -i "DLL Name"
+
+      - name: Compute checksums and package
+        shell: bash
+        run: |
+          sha256sum nusa-windows-x86_64.exe > nusa-windows-x86_64.exe.sha256
+          cp nusa-windows-x86_64.exe nusa-windows-x86_64
+          sha256sum nusa-windows-x86_64 > nusa-windows-x86_64.sha256
+          mkdir -p dist/bundle
+          cp nusa-windows-x86_64.exe dist/bundle/nusa-engine.exe
+          cp msys-2.0.dll dist/bundle/
+          cp msys-stdc++-6.dll dist/bundle/ 2>/dev/null || true
+          cp msys-gcc_s-seh-1.dll dist/bundle/ 2>/dev/null || true
+          cat << 'EOF' > dist/bundle/nusa.cmd
+          @echo off
+          "%~dp0nusa-engine.exe" "%~dp0core\main.ns" %*
+          EOF
+          cat << 'EOF' > dist/bundle/nusa
+          #!/bin/sh
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          exec "$DIR/nusa-engine.exe" "$DIR/core/main.ns" "$@"
+          EOF
+          chmod +x dist/bundle/nusa dist/bundle/nusa-engine.exe
+          cp -r core compiler std net crypto media lib Makefile README.md LICENSE NOTICE install.ps1 dist/bundle/
+          tar -czf dist/nusa-windows-x86_64.tar.gz -C dist/bundle .
+          cd dist
+          cp ../nusa-windows-x86_64.exe ./nusa-windows-x86_64.exe
+          cp ../nusa-windows-x86_64 ./nusa-windows-x86_64
+          cp ../msys-2.0.dll ./msys-2.0.dll 2>/dev/null || true
+          sha256sum nusa-windows-x86_64.tar.gz > nusa-windows-x86_64.tar.gz.sha256
+          sha256sum msys-2.0.dll > msys-2.0.dll.sha256 2>/dev/null || true
+
+      - name: Update v0.0.1-build release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release upload v0.0.1-build --clobber nusa-windows-x86_64.exe nusa-windows-x86_64.exe.sha256 nusa-windows-x86_64 nusa-windows-x86_64.sha256 msys-2.0.dll
+
+      - name: Update v0.0.2-rc2 release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release upload v0.0.2-rc2 --clobber dist/nusa-windows-x86_64* dist/msys-2.0.dll*
           gh release edit v0.0.1-build --prerelease --latest=false
           gh release edit v0.0.2-rc2 --latest=true
