@@ -1,33 +1,41 @@
-HOST_NUSA ?= $(shell if [ -x ./nusa-engine ]; then echo ./nusa-engine; elif [ -x engine/nusantara ]; then echo engine/nusantara; elif [ -x ../NSL/nusantara ]; then echo ../NSL/nusantara; elif [ -x $(HOME)/.local/bin/nusantara ]; then echo $(HOME)/.local/bin/nusantara; elif command -v nusantara >/dev/null 2>&1; then command -v nusantara; else command -v nusa 2>/dev/null; fi)
 BIN := nusa
 ENGINE := nusa-engine
+BOOTSTRAP_URL := https://github.com/NusaLang/NSL/releases/download/v0.0.1-build
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
 
-.PHONY: all build engine run clean install
+UNAME_S := $(shell uname -s 2>/dev/null)
+UNAME_M := $(shell uname -m 2>/dev/null)
+
+ifeq ($(UNAME_S),Linux)
+	ifeq ($(UNAME_M),x86_64)
+		BOOTSTRAP_ASSET := nusa-linux-x86_64
+	else ifeq ($(UNAME_M),aarch64)
+		BOOTSTRAP_ASSET := nusa-linux-arm64
+	endif
+endif
+
+HOST_NUSA ?= $(shell if [ -x ./$(ENGINE) ]; then echo ./$(ENGINE); elif [ -x ../NSL/nusantara ]; then echo ../NSL/nusantara; elif [ -x $(HOME)/.local/bin/nusantara ]; then echo $(HOME)/.local/bin/nusantara; elif command -v nusantara >/dev/null 2>&1; then command -v nusantara; else command -v nusa 2>/dev/null; fi)
+
+.PHONY: all build bootstrap test run clean install
 
 all: $(BIN)
 
-engine:
-	@if [ -d engine ]; then \
-		$(MAKE) -C engine nusantara; \
-		cp -f engine/nusantara $(ENGINE); \
-		chmod +x $(ENGINE); \
+bootstrap:
+	@if [ ! -x "./$(ENGINE)" ] && [ -n "$(BOOTSTRAP_ASSET)" ]; then \
+		echo "Downloading bootstrap engine ($(BOOTSTRAP_ASSET))..."; \
+		curl -fsSL "$(BOOTSTRAP_URL)/$(BOOTSTRAP_ASSET)" -o ./$(ENGINE) || true; \
+		chmod +x ./$(ENGINE) 2>/dev/null || true; \
 	fi
 
 $(BIN): core/main.ns $(wildcard core/*.ns) $(wildcard core/*/*.ns)
 	@echo "Building $(BIN)..."
-	@if [ ! -x "./$(ENGINE)" ] && [ ! -x "engine/nusantara" ] && [ -d "engine" ]; then \
-		$(MAKE) -C engine nusantara >/dev/null 2>&1 || true; \
+	@if [ ! -x "./$(ENGINE)" ] && [ -n "$(BOOTSTRAP_ASSET)" ]; then \
+		curl -fsSL "$(BOOTSTRAP_URL)/$(BOOTSTRAP_ASSET)" -o ./$(ENGINE) 2>/dev/null || true; \
+		chmod +x ./$(ENGINE) 2>/dev/null || true; \
 	fi
-	@if [ -x "engine/nusantara" ] && [ ! -x "./$(ENGINE)" ]; then \
-		cp -f engine/nusantara ./$(ENGINE); \
-		chmod +x ./$(ENGINE); \
-	fi
-	@if [ -x "./$(ENGINE)" ]; then \
+	@if [ -x "./$(ENGINE)" ] || [ -n "$(HOST_NUSA)" ]; then \
 		printf '#!/bin/sh\nDIR="$$(cd "$$(dirname "$$0")" && pwd)"\nif [ -x "$$DIR/$(ENGINE)" ]; then\n    exec "$$DIR/$(ENGINE)" "$$DIR/core/main.ns" "$$@"\nfi\nexec nusa "$$DIR/core/main.ns" "$$@"\n' > $(BIN); \
-	elif [ -n "$(HOST_NUSA)" ] && [ -x "$(HOST_NUSA)" ] && $(HOST_NUSA) -V >/dev/null 2>&1; then \
-		$(HOST_NUSA) core/main.ns build -o $(BIN) . 2>/dev/null || (printf "#!/usr/bin/env nusa\n" > $(BIN) && cat core/main.ns >> $(BIN)); \
 	else \
 		printf "#!/usr/bin/env nusa\n" > $(BIN); \
 		cat core/main.ns >> $(BIN); \
@@ -52,7 +60,6 @@ run: $(BIN)
 
 clean:
 	rm -f $(BIN) $(ENGINE) a.out
-	@if [ -d engine ]; then $(MAKE) -C engine clean >/dev/null 2>&1 || true; fi
 	find . -name ".nusa-cache" -exec rm -rf {} + 2>/dev/null || true
 
 install: $(BIN)
