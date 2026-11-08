@@ -20,36 +20,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Checkout bootstrap host (main)
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          path: nsl-host
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y binutils gcc g++ make
-
-      - name: Build bootstrap host interpreter
-        run: |
-          make -C nsl-host nusantara
-
-      - name: Build self-hosted toolchain
+      - name: Build toolchain
         run: |
           make clean
-          make build HOST_NUSA="$GITHUB_WORKSPACE/nsl-host/nusantara"
+          make build
 
       - name: Package Linux artifact
         run: |
-          mkdir -p dist/bundle
-          cp nsl-host/nusantara dist/bundle/nusa-engine
-          printf '#!/bin/sh\nDIR="$(cd "$(dirname "$0")" && pwd)"\nexec "$DIR/nusa-engine" "$DIR/core/main.ns" "$@"\n' > dist/bundle/nusa
-          chmod +x dist/bundle/nusa-engine dist/bundle/nusa
-          cp -r core compiler std net crypto media lib dist/bundle/
-          cp Makefile README.md LICENSE NOTICE dist/bundle/
-          tar -czf dist/nusa-linux-x86_64.tar.gz -C dist/bundle .
-          cd dist && sha256sum nusa-linux-x86_64.tar.gz > nusa-linux-x86_64.tar.gz.sha256
+          mkdir -p dist
+          cp nusa dist/nusa-linux-x86_64
+          chmod +x dist/nusa-linux-x86_64
+          tar -czf dist/nusa-linux-x86_64.tar.gz nusa core/ compiler/ std/ net/ crypto/ media/ lib/ Makefile README.md LICENSE NOTICE
+          cd dist && sha256sum nusa-linux-x86_64 > nusa-linux-x86_64.sha256
+          sha256sum nusa-linux-x86_64.tar.gz > nusa-linux-x86_64.tar.gz.sha256
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
@@ -163,7 +146,7 @@ jobs:
       - name: Generate release notes
         run: |
           cat << 'EOF' > release_notes.md
-          ## NSL 0.0.2
+          ## NSL 0.0.2-rc2
 
           This toolchain compiles and runs itself: the lexer, parser, interpreter, bytecode VM, and native x86-64 AOT compiler are all written in NSL, bootstrapped once by a small C++ host. The native compiler emits standalone ELF binaries straight through the system assembler and linker, with no bundled runtime and no external dependencies, and lands within ~2x of Go's speed on arithmetic, array, and object workloads.
 
@@ -179,4 +162,4 @@ jobs:
           body_path: release_notes.md
           files: release-assets/*
           draft: false
-          prerelease: false
+          prerelease: true

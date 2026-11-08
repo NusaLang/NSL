@@ -109,7 +109,7 @@ func readStdin():
 
 func repl(runtime, banner):
     if banner:
-        print("nusa 0.0.2-rc1 - type exit to quit")
+        print("nusa 0.0.2-rc2 - type exit to quit")
     if runtime == None:
         runtime = Interpreter()
     buf = ""
@@ -330,7 +330,7 @@ func main():
             print(USAGE)
             sys.exit(0)
         elif a == "-V" or a == "-v" or a == "--version" or a == "version":
-            print("nusa 0.0.2-rc1")
+            print("nusa 0.0.2-rc2")
             sys.exit(0)
         elif a == "build":
             build(args)
