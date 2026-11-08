@@ -194,3 +194,4 @@ jobs:
           files: release-assets/*
           draft: false
           prerelease: false
+          make_latest: true
