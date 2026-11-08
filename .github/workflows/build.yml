@@ -20,17 +20,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y binutils gcc g++ make
+
       - name: Build toolchain
         run: |
           make clean
           make build
+          strip nusa-engine
 
       - name: Package Linux artifact
         run: |
-          mkdir -p dist
-          cp nusa dist/nusa-linux-x86_64
-          chmod +x dist/nusa-linux-x86_64
-          tar -czf dist/nusa-linux-x86_64.tar.gz nusa core/ compiler/ std/ net/ crypto/ media/ lib/ Makefile README.md LICENSE NOTICE
+          mkdir -p dist/bundle
+          cp nusa-engine dist/nusa-linux-x86_64
+          cp nusa-engine dist/bundle/nusa-engine
+          cp nusa dist/bundle/nusa
+          chmod +x dist/nusa-linux-x86_64 dist/bundle/nusa-engine dist/bundle/nusa
+          cp -r core compiler std net crypto media lib Makefile README.md LICENSE NOTICE dist/bundle/
+          tar -czf dist/nusa-linux-x86_64.tar.gz -C dist/bundle .
           cd dist && sha256sum nusa-linux-x86_64 > nusa-linux-x86_64.sha256
           sha256sum nusa-linux-x86_64.tar.gz > nusa-linux-x86_64.tar.gz.sha256
 
@@ -47,17 +56,30 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install cross-compiler
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y g++-aarch64-linux-gnu binutils-aarch64-linux-gnu make
+
       - name: Build toolchain
         run: |
           make clean
-          make build
+          make -C engine clean
+          make -C engine nusantara CXX=aarch64-linux-gnu-g++
+          aarch64-linux-gnu-strip engine/nusantara
+          cp engine/nusantara nusa-engine
+          printf '#!/bin/sh\nDIR="$(cd "$(dirname "$0")" && pwd)"\nexec "$DIR/nusa-engine" "$DIR/core/main.ns" "$@"\n' > nusa
+          chmod +x nusa nusa-engine
 
       - name: Package Linux ARM64 artifact
         run: |
-          mkdir -p dist
-          cp nusa dist/nusa-linux-arm64
-          chmod +x dist/nusa-linux-arm64
-          tar -czf dist/nusa-linux-arm64.tar.gz nusa core/ compiler/ std/ net/ crypto/ media/ lib/ Makefile README.md LICENSE NOTICE
+          mkdir -p dist/bundle
+          cp nusa-engine dist/nusa-linux-arm64
+          cp nusa-engine dist/bundle/nusa-engine
+          cp nusa dist/bundle/nusa
+          chmod +x dist/nusa-linux-arm64 dist/bundle/nusa-engine dist/bundle/nusa
+          cp -r core compiler std net crypto media lib Makefile README.md LICENSE NOTICE dist/bundle/
+          tar -czf dist/nusa-linux-arm64.tar.gz -C dist/bundle .
           cd dist && sha256sum nusa-linux-arm64 > nusa-linux-arm64.sha256
           sha256sum nusa-linux-arm64.tar.gz > nusa-linux-arm64.tar.gz.sha256
 
@@ -77,14 +99,23 @@ jobs:
       - name: Build toolchain
         run: |
           make clean
-          make build
+          make -C engine clean
+          NDK_TOOLCHAIN="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          $NDK_TOOLCHAIN/aarch64-linux-android24-clang++ -std=c++17 -O3 -flto -DNDEBUG -Wall -Wextra -Iengine/include engine/src/*.cpp -o engine/nusantara -ldl -lm
+          $NDK_TOOLCHAIN/llvm-strip engine/nusantara
+          cp engine/nusantara nusa-engine
+          printf '#!/bin/sh\nDIR="$(cd "$(dirname "$0")" && pwd)"\nexec "$DIR/nusa-engine" "$DIR/core/main.ns" "$@"\n' > nusa
+          chmod +x nusa nusa-engine
 
       - name: Package Android ARM64 package
         run: |
-          mkdir -p dist
-          cp nusa dist/nusa-android-arm64
-          chmod +x dist/nusa-android-arm64
-          tar -czf dist/nusa-android-arm64.tar.gz nusa core/ compiler/ std/ net/ crypto/ media/ lib/ Makefile README.md LICENSE NOTICE
+          mkdir -p dist/bundle
+          cp nusa-engine dist/nusa-android-arm64
+          cp nusa-engine dist/bundle/nusa-engine
+          cp nusa dist/bundle/nusa
+          chmod +x dist/nusa-android-arm64 dist/bundle/nusa-engine dist/bundle/nusa
+          cp -r core compiler std net crypto media lib Makefile README.md LICENSE NOTICE dist/bundle/
+          tar -czf dist/nusa-android-arm64.tar.gz -C dist/bundle .
           cd dist && sha256sum nusa-android-arm64 > nusa-android-arm64.sha256
           sha256sum nusa-android-arm64.tar.gz > nusa-android-arm64.tar.gz.sha256
 
@@ -101,16 +132,46 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MSYS
+          update: false
+          install: >-
+            base-devel
+            gcc
+
       - name: Build on Windows
-        shell: bash
+        shell: msys2 {0}
         run: |
-          export PATH="/c/msys64/usr/bin:$PATH"
           make clean
-          make build
-          mkdir -p dist
-          cp nusa dist/nusa-windows-x86_64
-          tar -czf dist/nusa-windows-x86_64.tar.gz nusa core/ compiler/ std/ net/ crypto/ media/ lib/ Makefile README.md LICENSE NOTICE install.ps1
-          cd dist && sha256sum nusa-windows-x86_64 > nusa-windows-x86_64.sha256
+          make -C engine clean
+          make -C engine nusantara
+          strip engine/nusantara.exe
+
+      - name: Package Windows artifact
+        shell: msys2 {0}
+        run: |
+          mkdir -p dist/bundle
+          cp /usr/bin/msys-2.0.dll dist/bundle/ 2>/dev/null || true
+          cp engine/nusantara.exe dist/bundle/nusa-engine.exe
+          cp engine/nusantara.exe dist/nusa-windows-x86_64.exe
+          cp engine/nusantara.exe dist/nusa-windows-x86_64
+          cat << 'EOF' > dist/bundle/nusa.cmd
+          @echo off
+          "%~dp0nusa-engine.exe" "%~dp0core\main.ns" %*
+          EOF
+          cat << 'EOF' > dist/bundle/nusa
+          #!/bin/sh
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          exec "$DIR/nusa-engine.exe" "$DIR/core/main.ns" "$@"
+          EOF
+          chmod +x dist/bundle/nusa dist/bundle/nusa-engine.exe dist/nusa-windows-x86_64.exe dist/nusa-windows-x86_64
+          cp -r core compiler std net crypto media lib Makefile README.md LICENSE NOTICE install.ps1 dist/bundle/
+          tar -czf dist/nusa-windows-x86_64.tar.gz -C dist/bundle .
+          cd dist
+          sha256sum nusa-windows-x86_64 > nusa-windows-x86_64.sha256
+          sha256sum nusa-windows-x86_64.exe > nusa-windows-x86_64.exe.sha256
           sha256sum nusa-windows-x86_64.tar.gz > nusa-windows-x86_64.tar.gz.sha256
 
       - name: Upload Windows artifact

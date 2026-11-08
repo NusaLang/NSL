@@ -19,6 +19,9 @@ func getModuleCandidates(name):
         candidates.append(n)
         candidates.append(n + ".ns")
         candidates.append(n + "/main.ns")
+        if n.startswith("../"):
+            candidates.append(n[3:])
+            candidates.append(n[3:] + ".ns")
     prefixes = [
         "std/",
         "core/",
