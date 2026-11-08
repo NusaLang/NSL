@@ -120,8 +120,7 @@ jobs:
         shell: bash
         run: |
           sha256sum nusa-windows-x86_64.exe > nusa-windows-x86_64.exe.sha256
-          cp nusa-windows-x86_64.exe nusa-windows-x86_64
-          sha256sum nusa-windows-x86_64 > nusa-windows-x86_64.sha256
+          sha256sum msys-2.0.dll > msys-2.0.dll.sha256
           mkdir -p dist/bundle
           cp nusa-windows-x86_64.exe dist/bundle/nusa-engine.exe
           cp msys-2.0.dll dist/bundle/
@@ -141,23 +140,23 @@ jobs:
           tar -czf dist/nusa-windows-x86_64.tar.gz -C dist/bundle .
           cd dist
           cp ../nusa-windows-x86_64.exe ./nusa-windows-x86_64.exe
-          cp ../nusa-windows-x86_64 ./nusa-windows-x86_64
-          cp ../msys-2.0.dll ./msys-2.0.dll 2>/dev/null || true
+          cp ../nusa-windows-x86_64.exe.sha256 ./nusa-windows-x86_64.exe.sha256
+          cp ../msys-2.0.dll ./msys-2.0.dll
+          cp ../msys-2.0.dll.sha256 ./msys-2.0.dll.sha256
           sha256sum nusa-windows-x86_64.tar.gz > nusa-windows-x86_64.tar.gz.sha256
-          sha256sum msys-2.0.dll > msys-2.0.dll.sha256 2>/dev/null || true
 
       - name: Update v0.0.1-build release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          gh release upload v0.0.1-build --clobber nusa-windows-x86_64.exe nusa-windows-x86_64.exe.sha256 nusa-windows-x86_64 nusa-windows-x86_64.sha256 msys-2.0.dll
+          gh release upload v0.0.1-build --clobber nusa-windows-x86_64.exe nusa-windows-x86_64.exe.sha256 msys-2.0.dll msys-2.0.dll.sha256
 
       - name: Update v0.0.2-rc2 release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          gh release upload v0.0.2-rc2 --clobber dist/nusa-windows-x86_64* dist/msys-2.0.dll*
+          gh release upload v0.0.2-rc2 --clobber dist/nusa-windows-x86_64.exe dist/nusa-windows-x86_64.exe.sha256 dist/nusa-windows-x86_64.tar.gz dist/nusa-windows-x86_64.tar.gz.sha256 dist/msys-2.0.dll dist/msys-2.0.dll.sha256
           gh release edit v0.0.1-build --prerelease --latest=false
           gh release edit v0.0.2-rc2 --latest=true
