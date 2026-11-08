@@ -1,13 +1,22 @@
 import sys
 
 func loadModule(name):
-    try:
-        return impor(name)
-    except e:
-        return impor("core/" + name)
+    candidates = [
+        name,
+        "core/" + name,
+        "core/parser/" + name,
+        "core/virtual/" + name,
+        "core/interpreter/" + name
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor("core/" + name)
 
-Lexer = loadModule("lexer").Lexer
-Parser = loadModule("parser").Parser
+Lexer = loadModule("parser/lexer").Lexer
+Parser = loadModule("parser/parser").Parser
 JalankanPerintah = jalankan_perintah
 FileAda = file_ada
 BacaFile = baca_file

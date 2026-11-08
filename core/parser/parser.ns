@@ -1,8 +1,15 @@
 func loadModule(name):
-    try:
-        return impor(name)
-    except e:
-        return impor("core/" + name)
+    candidates = [
+        name,
+        "core/parser/" + name,
+        "core/" + name
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor(name)
 
 tokenModule = loadModule("token")
 astModule = loadModule("ast")

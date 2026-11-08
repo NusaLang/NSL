@@ -73,12 +73,25 @@ Op = {
     "GETARGCOUNT": 58,
     "SUPER": 59,
     "TRYSTART": 60,
-    "TRYEND": 61
+    "TRYEND": 61,
+    "GETUPVALUE": 62,
+    "SETUPVALUE": 63,
+    "TOITER": 64
 }
 
 opNames = {}
 for k in Op:
     opNames[Op[k]] = k
+
+class VmCell:
+    func __init__(self, val):
+        self.val = val
+
+class VmClosure:
+    func __init__(self, fn):
+        self.isClosure = True
+        self.fn = fn
+        self.upvalues = []
 
 class VmFunction:
     func __init__(self, name, params):
@@ -90,6 +103,7 @@ class VmFunction:
         self.code = []
         self.constants = []
         self.numLocals = self.arity
+        self.upvalues = []
 
     func addConstant(self, val):
         self.constants.append(val)
@@ -118,6 +132,19 @@ class VmFunction:
                 slot = self.code[i] | (self.code[i + 1] << 8)
                 i += 2
                 detail = "slot " + str(slot)
+            elif op == Op.GETUPVALUE or op == Op.SETUPVALUE:
+                idx = self.code[i] | (self.code[i + 1] << 8)
+                i += 2
+                detail = "upvalue " + str(idx)
+            elif op == Op.MAKECLOSURE:
+                fnIdx = self.code[i] | (self.code[i + 1] << 8)
+                cnt = self.code[i + 2] | (self.code[i + 3] << 8)
+                i += 4
+                detail = "fn=" + str(fnIdx) + " count=" + str(cnt)
+                k = 0
+                while k < cnt:
+                    i += 3
+                    k += 1
             elif op == Op.ADDLOCAL:
                 slot = self.code[i] | (self.code[i + 1] << 8)
                 idx = self.code[i + 2] | (self.code[i + 3] << 8)
@@ -144,10 +171,13 @@ class VmFunction:
         return "\n".join(lines)
 
 class CallFrame:
-    func __init__(self, fn, args):
+    func __init__(self, fn, args, closure = None):
         self.fn = fn
+        self.closure = closure
         self.ip = 0
         self.handlers = []
+        self.cells = {}
+        self.hasCells = False
         self.providedCount = len(args)
         maxLoc = fn.numLocals if hasattr(fn, "numLocals") else fn.arity
         diff = maxLoc - len(args)
@@ -175,14 +205,14 @@ class VmInstance:
         self.fields = {}
         self.bidang = self.fields
 
-class VmCompiler:
-    func __init__(self):
-        self.currentFn = None
-        self.fnStack = []
-        self.scopeDepth = 0
+class FnCompiler:
+    func __init__(self, enclosing, fn):
+        self.enclosing = enclosing
+        self.fn = fn
         self.locals = []
+        self.scopeDepth = 0
         self.loopStack = []
-        self.programFunctions = []
+        self.upvalues = []
 
     func beginScope(self):
         self.scopeDepth += 1
@@ -195,8 +225,8 @@ class VmCompiler:
     func addLocal(self, name):
         slot = len(self.locals)
         self.locals.append({"name": name, "depth": self.scopeDepth, "slot": slot})
-        if slot + 1 > self.currentFn.numLocals:
-            self.currentFn.numLocals = slot + 1
+        if slot + 1 > self.fn.numLocals:
+            self.fn.numLocals = slot + 1
         return slot
 
     func resolveLocal(self, name):
@@ -207,8 +237,75 @@ class VmCompiler:
             i -= 1
         return -1
 
+    func addUpvalue(self, isLocal, index, name):
+        i = 0
+        while i < len(self.upvalues):
+            u = self.upvalues[i]
+            if u["isLocal"] == isLocal and u["index"] == index:
+                return i
+            i += 1
+        self.upvalues.append({"isLocal": isLocal, "index": index, "name": name})
+        self.fn.upvalues = self.upvalues
+        return len(self.upvalues) - 1
+
+    func resolveUpvalue(self, name):
+        if self.enclosing == None:
+            return -1
+        localIdx = self.enclosing.resolveLocal(name)
+        if localIdx != -1:
+            return self.addUpvalue(True, localIdx, name)
+        upIdx = self.enclosing.resolveUpvalue(name)
+        if upIdx != -1:
+            return self.addUpvalue(False, upIdx, name)
+        return -1
+
+class VmCompiler:
+    func __init__(self):
+        self.current = None
+        self.currentFn = None
+        self.fnStack = []
+        self.scopeDepth = 0
+        self.locals = []
+        self.loopStack = []
+        self.programFunctions = []
+        self.globalNames = {
+            "print": True, "cetak": True, "len": True, "panjang": True,
+            "str": True, "ke_teks": True, "int": True, "float": True,
+            "ke_angka": True, "type": True, "tipe": True, "range": True,
+            "rentang": True, "list": True, "larik": True, "map": True,
+            "peta": True, "readFile": True, "baca_file": True,
+            "writeFile": True, "tulis_file": True, "fileExists": True,
+            "file_ada": True, "import": True, "impor": True,
+            "time": True, "waktu": True, "gcInfo": True, "gc_info": True,
+            "gcForce": True, "gc_paksa": True, "env": True, "ambil_env": True,
+            "push": True, "tambah": True, "pop": True, "hapus_akhir": True,
+            "split": True, "pisah": True, "join": True, "gabung": True,
+            "runCommand": True, "JalankanPerintah": True, "jalankanPerintah": True,
+            "callable": True, "input": True, "sys": True
+        }
+
+    func beginScope(self):
+        self.current.beginScope()
+        self.scopeDepth = self.current.scopeDepth
+
+    func endScope(self):
+        self.current.endScope()
+        self.scopeDepth = self.current.scopeDepth
+        self.locals = self.current.locals
+
+    func addLocal(self, name):
+        slot = self.current.addLocal(name)
+        self.locals = self.current.locals
+        return slot
+
+    func resolveLocal(self, name):
+        return self.current.resolveLocal(name)
+
+    func resolveUpvalue(self, name):
+        return self.current.resolveUpvalue(name)
+
     func emitByte(self, b):
-        self.currentFn.code.append(b)
+        self.current.fn.code.append(b)
 
     func emitOp(self, op):
         self.emitByte(op)
@@ -218,7 +315,7 @@ class VmCompiler:
         self.emitByte((v >> 8) & 255)
 
     func addConstant(self, val):
-        return self.currentFn.addConstant(val)
+        return self.current.fn.addConstant(val)
 
     func emitConstant(self, val):
         idx = self.addConstant(val)
@@ -228,16 +325,16 @@ class VmCompiler:
     func emitJump(self, op):
         self.emitOp(op)
         self.emitU16(65535)
-        return len(self.currentFn.code) - 2
+        return len(self.current.fn.code) - 2
 
     func patchJump(self, offset):
-        jump = len(self.currentFn.code) - offset - 2
-        self.currentFn.code[offset] = jump & 255
-        self.currentFn.code[offset + 1] = (jump >> 8) & 255
+        jump = len(self.current.fn.code) - offset - 2
+        self.current.fn.code[offset] = jump & 255
+        self.current.fn.code[offset + 1] = (jump >> 8) & 255
 
     func emitLoop(self, loopStart):
         self.emitOp(Op.LOOP)
-        off = len(self.currentFn.code) - loopStart + 2
+        off = len(self.current.fn.code) - loopStart + 2
         self.emitU16(off)
 
     func nodeType(self, node):
@@ -251,11 +348,13 @@ class VmCompiler:
 
     func compile(self, progAst):
         topFn = VmFunction("<script>", [])
+        self.current = FnCompiler(None, topFn)
         self.currentFn = topFn
         self.programFunctions = [topFn]
-        self.locals = []
+        self.locals = self.current.locals
         self.scopeDepth = 0
-        self.loopStack = []
+        self.loopStack = self.current.loopStack
+        self.fnStack = []
 
         stmts = progAst
         if hasattr(progAst, "stmts"):
@@ -270,10 +369,8 @@ class VmCompiler:
         return topFn
 
     func compileBlock(self, stmts):
-        self.beginScope()
         for s in stmts:
             self.compileStmt(s, False)
-        self.endScope()
 
     func compileStmt(self, stmt, isTopLevel):
         if stmt == None:
@@ -288,8 +385,9 @@ class VmCompiler:
             name = stmt.name if hasattr(stmt, "name") else stmt.nama
             valExpr = stmt.value if hasattr(stmt, "value") else stmt.nilai
             self.compileExpr(valExpr)
-            if isTopLevel and len(self.fnStack) == 0 and self.scopeDepth == 0:
+            if isTopLevel and self.current.enclosing == None and self.current.scopeDepth == 0:
                 constIdx = self.addConstant(name)
+                self.globalNames[name] = True
                 self.emitOp(Op.DEFINEGLOBAL)
                 self.emitU16(constIdx)
             else:
@@ -366,6 +464,7 @@ class VmCompiler:
             body = stmt.body if hasattr(stmt, "body") else stmt.badan
             self.beginScope()
             self.compileExpr(iterExpr)
+            self.emitOp(Op.TOITER)
             iterSlot = self.addLocal("$iter")
             self.emitOp(Op.DEFINELOCAL)
             self.emitU16(iterSlot)
@@ -563,8 +662,13 @@ class VmCompiler:
                     hasSelf = len(m.params) > 0 and (m.params[0] == "self" or m.params[0] == "this" or m.params[0] == "ini")
                     mParams = m.params if hasSelf else (["self"] + m.params)
                     mFn = VmFunction(name + "." + mName, mParams)
-                    self.fnStack.append(self.currentFn)
+                    self.programFunctions.append(mFn)
+                    parentCompiler = self.current
+                    fnCompiler = FnCompiler(parentCompiler, mFn)
+                    self.current = fnCompiler
                     self.currentFn = mFn
+                    self.fnStack.append(parentCompiler.fn)
+
                     self.beginScope()
                     mDefaults = m.defaults if hasattr(m, "defaults") else {}
                     i = 0
@@ -593,14 +697,18 @@ class VmCompiler:
                     self.compileBlock(bodyStmts)
                     self.endScope()
                     self.emitOp(Op.RETURNNULL)
-                    self.currentFn = self.fnStack.pop()
+
+                    self.current = parentCompiler
+                    self.currentFn = parentCompiler.fn
+                    self.fnStack.pop()
                     clsFnMap[mName] = mFn
             c = VmClass(name, baseClass)
             c.methods = clsFnMap
             c.metode = clsFnMap
             self.emitConstant(c)
-            if isTopLevel and len(self.fnStack) == 0 and self.scopeDepth == 0:
+            if isTopLevel and self.current.enclosing == None and self.current.scopeDepth == 0:
                 constIdx = self.addConstant(name)
+                self.globalNames[name] = True
                 self.emitOp(Op.DEFINEGLOBAL)
                 self.emitU16(constIdx)
             else:
@@ -614,8 +722,11 @@ class VmCompiler:
         subFn = VmFunction(name, stmt.params)
         self.programFunctions.append(subFn)
 
-        self.fnStack.append(self.currentFn)
+        parentCompiler = self.current
+        fnCompiler = FnCompiler(parentCompiler, subFn)
+        self.current = fnCompiler
         self.currentFn = subFn
+        self.fnStack.append(parentCompiler.fn)
 
         self.beginScope()
         defaults = stmt.defaults if hasattr(stmt, "defaults") else {}
@@ -640,12 +751,24 @@ class VmCompiler:
 
         self.emitOp(Op.RETURNNULL)
 
-        self.currentFn = self.fnStack.pop()
+        self.current = parentCompiler
+        self.currentFn = parentCompiler.fn
+        self.fnStack.pop()
 
-        self.emitConstant(subFn)
+        if len(subFn.upvalues) > 0:
+            fnIdx = self.addConstant(subFn)
+            self.emitOp(Op.MAKECLOSURE)
+            self.emitU16(fnIdx)
+            self.emitU16(len(subFn.upvalues))
+            for uv in subFn.upvalues:
+                self.emitByte(1 if uv["isLocal"] else 0)
+                self.emitU16(uv["index"])
+        else:
+            self.emitConstant(subFn)
 
-        if isTopLevel and len(self.fnStack) == 0 and self.scopeDepth == 0:
+        if isTopLevel and self.current.enclosing == None and self.current.scopeDepth == 0:
             constIdx = self.addConstant(name)
+            self.globalNames[name] = True
             self.emitOp(Op.DEFINEGLOBAL)
             self.emitU16(constIdx)
         else:
@@ -850,8 +973,13 @@ class VmCompiler:
             body = expr.body if hasattr(expr, "body") else expr.badan
             lambdaFn = VmFunction("<lambda>", expr.params)
             self.programFunctions.append(lambdaFn)
-            self.fnStack.append(self.currentFn)
+
+            parentCompiler = self.current
+            fnCompiler = FnCompiler(parentCompiler, lambdaFn)
+            self.current = fnCompiler
             self.currentFn = lambdaFn
+            self.fnStack.append(parentCompiler.fn)
+
             self.beginScope()
             for p in expr.params:
                 self.addLocal(p)
@@ -864,8 +992,21 @@ class VmCompiler:
             else:
                 self.emitOp(Op.RETURNNULL)
             self.endScope()
-            self.currentFn = self.fnStack.pop()
-            self.emitConstant(lambdaFn)
+
+            self.current = parentCompiler
+            self.currentFn = parentCompiler.fn
+            self.fnStack.pop()
+
+            if len(lambdaFn.upvalues) > 0:
+                fnIdx = self.addConstant(lambdaFn)
+                self.emitOp(Op.MAKECLOSURE)
+                self.emitU16(fnIdx)
+                self.emitU16(len(lambdaFn.upvalues))
+                for uv in lambdaFn.upvalues:
+                    self.emitByte(1 if uv["isLocal"] else 0)
+                    self.emitU16(uv["index"])
+            else:
+                self.emitConstant(lambdaFn)
         elif t == "LIST" or t == "LARIK":
             elements = expr.elements if hasattr(expr, "elements") else expr.elemen
             for el in elements:
@@ -942,20 +1083,41 @@ class VmCompiler:
         if slot != -1:
             self.emitOp(Op.GETLOCAL)
             self.emitU16(slot)
-        else:
-            cIdx = self.addConstant(name)
-            self.emitOp(Op.GETGLOBAL)
-            self.emitU16(cIdx)
+            return None
+        upIdx = self.resolveUpvalue(name)
+        if upIdx != -1:
+            self.emitOp(Op.GETUPVALUE)
+            self.emitU16(upIdx)
+            return None
+        cIdx = self.addConstant(name)
+        self.emitOp(Op.GETGLOBAL)
+        self.emitU16(cIdx)
 
     func compileIdentSet(self, name):
         slot = self.resolveLocal(name)
         if slot != -1:
             self.emitOp(Op.SETLOCAL)
             self.emitU16(slot)
-        else:
-            cIdx = self.addConstant(name)
-            self.emitOp(Op.SETGLOBAL)
-            self.emitU16(cIdx)
+            return None
+        upIdx = self.resolveUpvalue(name)
+        if upIdx != -1:
+            self.emitOp(Op.SETUPVALUE)
+            self.emitU16(upIdx)
+            return None
+        if self.current.enclosing != None:
+            if name in self.globalNames:
+                cIdx = self.addConstant(name)
+                self.emitOp(Op.SETGLOBAL)
+                self.emitU16(cIdx)
+                return None
+            slot = self.addLocal(name)
+            self.emitOp(Op.SETLOCAL)
+            self.emitU16(slot)
+            return None
+        self.globalNames[name] = True
+        cIdx = self.addConstant(name)
+        self.emitOp(Op.SETGLOBAL)
+        self.emitU16(cIdx)
 
 class VmRunner:
     func __init__(self):
@@ -983,6 +1145,8 @@ class VmRunner:
         self.globals["larik"] = lambda: []
         self.globals["map"] = lambda: {}
         self.globals["peta"] = lambda: {}
+        self.globals["PetaBaru"] = peta_baru
+        self.globals["petaBaru"] = peta_baru
         self.globals["peta_baru"] = peta_baru
         self.globals["newMap"] = peta_baru
         self.globals["readFile"] = baca_file
@@ -1017,6 +1181,17 @@ class VmRunner:
         self.globals["sys"] = sys
 
     func callBuiltin(self, fn, args):
+        nA = len(args)
+        if nA == 0:
+            return fn()
+        elif nA == 1:
+            return fn(args[0])
+        elif nA == 2:
+            return fn(args[0], args[1])
+        elif nA == 3:
+            return fn(args[0], args[1], args[2])
+        elif nA == 4:
+            return fn(args[0], args[1], args[2], args[3])
         return fn(*args)
 
     func panggilBawaan(self, fn, args):
@@ -1065,6 +1240,21 @@ class VmRunner:
                 return m
         return None
 
+    func handleException(self, val):
+        while len(self.frames) > 0:
+            f = self.frames[-1]
+            if len(f.handlers) > 0:
+                entry = f.handlers.pop()
+                self.stack = self.stack[:entry[1]]
+                self.push(val)
+                f.ip = entry[0]
+                self.frame = f
+                return True
+            self.frames.pop()
+            if len(self.frames) > 0:
+                self.frame = self.frames[-1]
+        return False
+
     func run(self, topFn):
         initFrame = CallFrame(topFn, [])
         self.frames = [initFrame]
@@ -1090,546 +1280,646 @@ class VmRunner:
         opLoop = Op.LOOP
         opGetIndex = Op.GETINDEX
         opIncLocal = Op.INCLOCAL
+        opGetUpvalue = Op.GETUPVALUE
+        opSetUpvalue = Op.SETUPVALUE
         globalVars = self.globals
 
         while len(self.frames) > 0:
-            frame = self.frame
-            fnObj = frame.fn
-            code = fnObj.code
-            consts = fnObj.constants
-            slots = frame.locals
-            stack = self.stack
-            ip = frame.ip
-            codeLen = len(code)
-            op = -1
-            cold = False
-
-            while ip < codeLen:
-                op = code[ip]
-                ip += 1
-                if op == opGetLocal:
-                    stack.append(slots[code[ip] | (code[ip + 1] << 8)])
-                    ip += 2
-                elif op == opConst:
-                    stack.append(consts[code[ip] | (code[ip + 1] << 8)])
-                    ip += 2
-                elif op == opSetLocal:
-                    if len(stack) > 0:
-                        slots[code[ip] | (code[ip + 1] << 8)] = stack[-1]
-                    ip += 2
-                elif op == opAdd:
-                    if len(stack) < 2:
-                        cold = True
-                        break
-                    b = stack.pop()
-                    stack[-1] = stack[-1] + b
-                elif op == opSub:
-                    if len(stack) < 2:
-                        cold = True
-                        break
-                    b = stack.pop()
-                    stack[-1] = stack[-1] - b
-                elif op == opLt:
-                    if len(stack) < 2:
-                        cold = True
-                        break
-                    b = stack.pop()
-                    stack[-1] = stack[-1] < b
-                elif op == opLte:
-                    if len(stack) < 2:
-                        cold = True
-                        break
-                    b = stack.pop()
-                    stack[-1] = stack[-1] <= b
-                elif op == opGt:
-                    if len(stack) < 2:
-                        cold = True
-                        break
-                    b = stack.pop()
-                    stack[-1] = stack[-1] > b
-                elif op == opGte:
-                    if len(stack) < 2:
-                        cold = True
-                        break
-                    b = stack.pop()
-                    stack[-1] = stack[-1] >= b
-                elif op == opEq:
-                    if len(stack) < 2:
-                        cold = True
-                        break
-                    b = stack.pop()
-                    stack[-1] = stack[-1] == b
-                elif op == opJumpIfFalse:
-                    if len(stack) == 0:
-                        cold = True
-                        break
-                    val = stack.pop()
-                    if val == None or val == False or val == 0 or val == "":
-                        ip += 2 + (code[ip] | (code[ip + 1] << 8))
-                    else:
-                        ip += 2
-                elif op == opLoop:
-                    ip -= (code[ip] | (code[ip + 1] << 8)) - 2
-                elif op == opJump:
-                    ip += 2 + (code[ip] | (code[ip + 1] << 8))
-                elif op == opIncLocal:
-                    slot = code[ip] | (code[ip + 1] << 8)
-                    slots[slot] = slots[slot] + 1
-                    ip += 2
-                elif op == opPop:
-                    if len(stack) > 0:
-                        stack.pop()
-                elif op == opDefineLocal:
-                    slots[code[ip] | (code[ip + 1] << 8)] = stack.pop() if len(stack) > 0 else None
-                    ip += 2
-                elif op == opGetIndex:
-                    if len(stack) < 2:
-                        cold = True
-                        break
-                    idx = stack.pop()
-                    stack[-1] = stack[-1][idx]
-                elif op == opGetGlobal:
-                    name = consts[code[ip] | (code[ip + 1] << 8)]
-                    ip += 2
-                    if name in globalVars:
-                        stack.append(globalVars[name])
-                    else:
-                        print("RuntimeError: Undefined variable '" + name + "'")
-                        sys.exit(1)
-                        stack.append(None)
-                elif op == opSetGlobal:
-                    if len(stack) > 0:
-                        globalVars[consts[code[ip] | (code[ip + 1] << 8)]] = stack[-1]
-                    ip += 2
-                else:
-                    cold = True
-                    break
-
-            frame.ip = ip
-            if not cold:
+            try:
+                frame = self.frame
+                fnObj = frame.fn
+                code = fnObj.code
+                consts = fnObj.constants
+                slots = frame.locals
+                stack = self.stack
+                ip = frame.ip
+                codeLen = len(code)
                 op = -1
+                cold = False
 
-            if op == -1 and ip >= codeLen:
-                isInit = hasattr(self.frame, "isInit") and self.frame.isInit
-                retVal = self.frame.initInstance if isInit else None
-                self.frames.pop()
-                if len(self.frames) > 0:
-                    self.frame = self.frames[-1]
-                    self.push(retVal)
-                continue
+                if frame.hasCells and ip < codeLen:
+                    op = code[ip]
+                    ip += 1
+                    cold = True
 
-            if op == Op.CONST:
-                idx = self.readU16()
-                self.push(self.frame.fn.constants[idx])
-            elif op == Op.NULL:
-                self.push(None)
-            elif op == Op.TRUE:
-                self.push(True)
-            elif op == Op.FALSE:
-                self.push(False)
-            elif op == Op.POP:
-                self.pop()
-            elif op == Op.ADD:
-                b = self.pop()
-                a = self.pop()
-                if (type(a) == "larik" or type(a) == "list") and (type(b) == "larik" or type(b) == "list"):
-                    res = []
-                    for el in a:
-                        res.append(el)
-                    for el in b:
-                        res.append(el)
-                    self.push(res)
-                else:
-                    self.push(a + b)
-            elif op == Op.SUB:
-                b = self.pop()
-                a = self.pop()
-                self.push(a - b)
-            elif op == Op.MUL:
-                b = self.pop()
-                a = self.pop()
-                if (type(a) == "string" or type(a) == "str" or type(a) == "teks") and (type(b) == "angka" or type(b) == "int"):
-                    s = ""
-                    cnt = int(b)
-                    while cnt > 0:
-                        s += a
-                        cnt -= 1
-                    self.push(s)
-                else:
-                    self.push(a * b)
-            elif op == Op.DIV:
-                b = self.pop()
-                a = self.pop()
-                if b == 0:
-                    print("RuntimeError: Division by zero")
-                    sys.exit(1)
-                    self.push(0)
-                else:
-                    self.push(a / b)
-            elif op == Op.MOD:
-                b = self.pop()
-                a = self.pop()
-                self.push(a % b)
-            elif op == Op.NEG:
-                a = self.pop()
-                self.push(-a)
-            elif op == Op.NOT:
-                a = self.pop()
-                self.push(not self.truthy(a))
-            elif op == Op.EQ:
-                b = self.pop()
-                a = self.pop()
-                self.push(a == b)
-            elif op == Op.NEQ:
-                b = self.pop()
-                a = self.pop()
-                self.push(a != b)
-            elif op == Op.LT:
-                b = self.pop()
-                a = self.pop()
-                self.push(a < b)
-            elif op == Op.LTE:
-                b = self.pop()
-                a = self.pop()
-                self.push(a <= b)
-            elif op == Op.GT:
-                b = self.pop()
-                a = self.pop()
-                self.push(a > b)
-            elif op == Op.GTE:
-                b = self.pop()
-                a = self.pop()
-                self.push(a >= b)
-            elif op == Op.IN:
-                b = self.pop()
-                a = self.pop()
-                self.push(a in b)
-            elif op == Op.BITAND:
-                b = self.pop()
-                a = self.pop()
-                self.push(a & b)
-            elif op == Op.BITOR:
-                b = self.pop()
-                a = self.pop()
-                self.push(a | b)
-            elif op == Op.BITXOR:
-                b = self.pop()
-                a = self.pop()
-                self.push(a ^ b)
-            elif op == Op.SHL:
-                b = self.pop()
-                a = self.pop()
-                self.push(a << b)
-            elif op == Op.SHR:
-                b = self.pop()
-                a = self.pop()
-                self.push(a >> b)
-            elif op == Op.BITNOT:
-                a = self.pop()
-                self.push(~a)
-            elif op == Op.GETARGCOUNT:
-                self.push(self.frame.providedCount)
-            elif op == Op.SUPER:
-                selfVal = self.frame.locals[0]
-                definingName = self.frame.fn.name.split(".")[0]
-                cls = self.globals[definingName] if definingName in self.globals else None
-                parentName = cls.baseClass if cls != None and hasattr(cls, "baseClass") else None
-                self.push({"isSuperProc": True, "self": selfVal, "parentName": parentName})
-            elif op == Op.GETLOCAL:
-                slot = self.readU16()
-                self.push(self.frame.locals[slot])
-            elif op == Op.SETLOCAL:
-                slot = self.readU16()
-                self.frame.locals[slot] = self.stack[-1]
-            elif op == Op.DEFINELOCAL:
-                slot = self.readU16()
-                self.frame.locals[slot] = self.pop()
-            elif op == Op.INCLOCAL:
-                slot = self.readU16()
-                self.frame.locals[slot] = self.frame.locals[slot] + 1
-            elif op == Op.DECLOCAL:
-                slot = self.readU16()
-                self.frame.locals[slot] = self.frame.locals[slot] - 1
-            elif op == Op.ADDLOCAL:
-                slot = self.readU16()
-                cIdx = self.readU16()
-                self.frame.locals[slot] = self.frame.locals[slot] + self.frame.fn.constants[cIdx]
-            elif op == Op.TOSTRING:
-                val = self.pop()
-                self.push(str(val))
-            elif op == Op.GETGLOBAL:
-                idx = self.readU16()
-                name = self.frame.fn.constants[idx]
-                if name in self.globals:
-                    self.push(self.globals[name])
-                else:
-                    print("RuntimeError: Undefined variable '" + name + "'")
-                    sys.exit(1)
-                    self.push(None)
-            elif op == Op.SETGLOBAL:
-                idx = self.readU16()
-                name = self.frame.fn.constants[idx]
-                self.globals[name] = self.stack[-1]
-            elif op == Op.DEFINEGLOBAL:
-                idx = self.readU16()
-                name = self.frame.fn.constants[idx]
-                self.globals[name] = self.pop()
-            elif op == Op.JUMP:
-                off = self.readU16()
-                self.frame.ip += off
-            elif op == Op.JUMPIFFALSE:
-                off = self.readU16()
-                val = self.pop()
-                if not self.truthy(val):
-                    self.frame.ip += off
-            elif op == Op.JUMPIFFALSEKEEP:
-                off = self.readU16()
-                if not self.truthy(self.stack[-1]):
-                    self.frame.ip += off
-            elif op == Op.JUMPIFTRUEKEEP:
-                off = self.readU16()
-                if self.truthy(self.stack[-1]):
-                    self.frame.ip += off
-            elif op == Op.LOOP:
-                off = self.readU16()
-                self.frame.ip -= off
-            elif op == Op.PRINT:
-                argCount = self.readByte()
-                args = []
-                k = 0
-                while k < argCount:
-                    args.append(self.pop())
-                    k += 1
-                args.reverse()
-                print(*args)
-                self.push(None)
-            elif op == Op.LENGTH:
-                val = self.pop()
-                self.push(len(val))
-            elif op == Op.PUSH:
-                val = self.pop()
-                target = self.pop()
-                target.append(val)
-                self.push(len(target))
-            elif op == Op.NEWARRAY:
-                cnt = self.readU16()
-                if cnt == 0:
-                    self.push([])
-                else:
-                    elems = self.stack[-cnt:]
-                    self.stack = self.stack[:-cnt]
-                    self.push(elems)
-            elif op == Op.NEWMAP:
-                cnt = self.readU16()
-                m = {}
-                k = 0
-                while k < cnt:
-                    v = self.pop()
-                    kKey = self.pop()
-                    m[kKey] = v
-                    k += 1
-                self.push(m)
-            elif op == Op.GETINDEX:
-                idx = self.pop()
-                target = self.pop()
-                self.push(target[idx])
-            elif op == Op.SETINDEX:
-                val = self.pop()
-                idx = self.pop()
-                target = self.pop()
-                target[idx] = val
-                self.push(val)
-            elif op == Op.SLICE:
-                stop = self.pop()
-                start = self.pop()
-                target = self.pop()
-                if start == None:
-                    start = 0
-                if stop == None:
-                    stop = len(target)
-                self.push(target[start:stop])
-            elif op == Op.GETFIELD:
-                nameIdx = self.readU16()
-                name = self.frame.fn.constants[nameIdx]
-                target = self.pop()
-                if isinstance(target, dict) and "isSuperProc" in target:
-                    parentName = target["parentName"]
-                    parentCls = self.globals[parentName] if parentName != None and parentName in self.globals else None
-                    m = self.resolveMethodChainVm(parentCls, name) if parentCls != None else None
-                    if m != None:
-                        self.push({"isMethod": True, "instance": target["self"], "method": m})
-                    else:
-                        print("RuntimeError: super has no method '" + name + "'")
-                        sys.exit(1)
-                        self.push(None)
-                elif hasattr(target, "fields"):
-                    f = target.fields
-                    if name in f:
-                        self.push(f[name])
-                    else:
-                        m = None
-                        if hasattr(target, "cls"):
-                            m = self.resolveMethodChainVm(target.cls, name)
-                        elif hasattr(target, "kelas"):
-                            m = self.resolveMethodChainVm(target.kelas, name)
-                        if m != None:
-                            self.push({"isMethod": True, "instance": target, "method": m})
+                while not cold and ip < codeLen:
+                    op = code[ip]
+                    ip += 1
+                    if op == opGetLocal:
+                        stack.append(slots[code[ip] | (code[ip + 1] << 8)])
+                        ip += 2
+                    elif op == opGetUpvalue:
+                        uIdx = code[ip] | (code[ip + 1] << 8)
+                        stack.append(frame.closure.upvalues[uIdx].val)
+                        ip += 2
+                    elif op == opSetUpvalue:
+                        uIdx = code[ip] | (code[ip + 1] << 8)
+                        if len(stack) > 0:
+                            frame.closure.upvalues[uIdx].val = stack[-1]
+                        ip += 2
+                    elif op == opConst:
+                        stack.append(consts[code[ip] | (code[ip + 1] << 8)])
+                        ip += 2
+                    elif op == opSetLocal:
+                        if len(stack) > 0:
+                            slots[code[ip] | (code[ip + 1] << 8)] = stack[-1]
+                        ip += 2
+                    elif op == opAdd:
+                        if len(stack) < 2:
+                            cold = True
+                            break
+                        b = stack.pop()
+                        stack[-1] = stack[-1] + b
+                    elif op == opSub:
+                        if len(stack) < 2:
+                            cold = True
+                            break
+                        b = stack.pop()
+                        stack[-1] = stack[-1] - b
+                    elif op == opLt:
+                        if len(stack) < 2:
+                            cold = True
+                            break
+                        b = stack.pop()
+                        stack[-1] = stack[-1] < b
+                    elif op == opLte:
+                        if len(stack) < 2:
+                            cold = True
+                            break
+                        b = stack.pop()
+                        stack[-1] = stack[-1] <= b
+                    elif op == opGt:
+                        if len(stack) < 2:
+                            cold = True
+                            break
+                        b = stack.pop()
+                        stack[-1] = stack[-1] > b
+                    elif op == opGte:
+                        if len(stack) < 2:
+                            cold = True
+                            break
+                        b = stack.pop()
+                        stack[-1] = stack[-1] >= b
+                    elif op == opEq:
+                        if len(stack) < 2:
+                            cold = True
+                            break
+                        b = stack.pop()
+                        stack[-1] = stack[-1] == b
+                    elif op == opJumpIfFalse:
+                        if len(stack) == 0:
+                            cold = True
+                            break
+                        val = stack.pop()
+                        if val == None or val == False or val == 0 or val == "":
+                            ip += 2 + (code[ip] | (code[ip + 1] << 8))
                         else:
-                            print("RuntimeError: Field '" + name + "' not found")
+                            ip += 2
+                    elif op == opLoop:
+                        ip -= (code[ip] | (code[ip + 1] << 8)) - 2
+                    elif op == opJump:
+                        ip += 2 + (code[ip] | (code[ip + 1] << 8))
+                    elif op == opIncLocal:
+                        slot = code[ip] | (code[ip + 1] << 8)
+                        slots[slot] = slots[slot] + 1
+                        ip += 2
+                    elif op == opPop:
+                        if len(stack) > 0:
+                            stack.pop()
+                    elif op == opDefineLocal:
+                        slots[code[ip] | (code[ip + 1] << 8)] = stack.pop() if len(stack) > 0 else None
+                        ip += 2
+                    elif op == opGetIndex:
+                        if len(stack) < 2:
+                            cold = True
+                            break
+                        idx = stack.pop()
+                        stack[-1] = stack[-1][idx]
+                    elif op == opGetGlobal:
+                        name = consts[code[ip] | (code[ip + 1] << 8)]
+                        ip += 2
+                        if name in globalVars:
+                            stack.append(globalVars[name])
+                        else:
+                            print("RuntimeError: undefined variable '" + name + "'")
                             sys.exit(1)
-                            self.push(None)
-                elif (type(target) == "peta" or type(target) == "dict") and name in target:
-                    self.push(target[name])
-                elif hasattr(target, name):
-                    self.push(getattr(target, name))
-                else:
-                    print("RuntimeError: Field '" + name + "' not found")
-                    sys.exit(1)
-                    self.push(None)
-            elif op == Op.SETFIELD:
-                nameIdx = self.readU16()
-                name = self.frame.fn.constants[nameIdx]
-                val = self.pop()
-                target = self.pop()
-                if hasattr(target, "fields"):
-                    target.fields[name] = val
-                elif type(target) == "peta" or type(target) == "dict":
-                    target[name] = val
-                elif hasattr(target, "bidang"):
-                    target.bidang[name] = val
-                elif hasattr(target, name):
-                    setattr(target, name, val)
-                self.push(val)
-            elif op == Op.CALLMETHOD:
-                nameIdx = self.readU16()
-                name = self.frame.fn.constants[nameIdx]
-                argCount = self.readByte()
-                if argCount == 0:
-                    callArgs = []
-                else:
-                    callArgs = self.stack[-argCount:]
-                    self.stack = self.stack[:-argCount]
-                target = self.pop()
-
-                if isinstance(target, dict) and "isSuperProc" in target:
-                    parentName = target["parentName"]
-                    parentCls = self.globals[parentName] if parentName != None and parentName in self.globals else None
-                    m = self.resolveMethodChainVm(parentCls, name) if parentCls != None else None
-                    if m != None:
-                        newFrame = CallFrame(m, [target["self"]] + callArgs)
-                        self.frames.append(newFrame)
-                        self.frame = newFrame
-                        continue
-                    print("RuntimeError: super has no method '" + name + "'")
-                    sys.exit(1)
-                    self.push(None)
-                    continue
-                if hasattr(target, "cls"):
-                    m = self.resolveMethodChainVm(target.cls, name)
-                    if m != None:
-                        newFrame = CallFrame(m, [target] + callArgs)
-                        self.frames.append(newFrame)
-                        self.frame = newFrame
-                        continue
-                if hasattr(target, "kelas"):
-                    m = self.resolveMethodChainVm(target.kelas, name)
-                    if m != None:
-                        newFrame = CallFrame(m, [target] + callArgs)
-                        self.frames.append(newFrame)
-                        self.frame = newFrame
-                        continue
-                if hasattr(target, name):
-                    fnTarget = getattr(target, name)
-                    res = fnTarget(*callArgs)
-                    self.push(res)
-                else:
-                    print("RuntimeError: Method '" + name + "' not found")
-                    sys.exit(1)
-                    self.push(None)
-            elif op == Op.CALL:
-                argCount = self.readByte()
-                if argCount == 0:
-                    callArgs = []
-                else:
-                    callArgs = self.stack[-argCount:]
-                    self.stack = self.stack[:-argCount]
-                callee = self.pop()
-
-                if hasattr(callee, "code"):
-                    newFrame = CallFrame(callee, callArgs)
-                    self.frames.append(newFrame)
-                    self.frame = newFrame
-                elif isinstance(callee, dict) and "isMethod" in callee:
-                    inst = callee["instance"]
-                    mFn = callee["method"]
-                    callArgs.insert(0, inst)
-                    newFrame = CallFrame(mFn, callArgs)
-                    self.frames.append(newFrame)
-                    self.frame = newFrame
-                elif hasattr(callee, "isClass") or hasattr(callee, "isKelas"):
-                    inst = VmInstance(callee)
-                    initFn = self.resolveInitVm(callee)
-                    if initFn != None:
-                        initArgs = [inst]
-                        for a in callArgs:
-                            initArgs.append(a)
-                        newFrame = CallFrame(initFn, initArgs)
-                        newFrame.isInit = True
-                        newFrame.initInstance = inst
-                        self.frames.append(newFrame)
-                        self.frame = newFrame
+                            stack.append(None)
+                    elif op == opSetGlobal:
+                        if len(stack) > 0:
+                            globalVars[consts[code[ip] | (code[ip + 1] << 8)]] = stack[-1]
+                        ip += 2
                     else:
-                        self.push(inst)
-                elif callable(callee):
-                    res = callee(*callArgs)
-                    self.push(res)
-                else:
-                    print("RuntimeError: Object is not callable:", callee)
-                    sys.exit(1)
-                    self.push(None)
-            elif op == Op.RETURN:
-                val = self.pop()
-                isInit = hasattr(self.frame, "isInit") and self.frame.isInit
-                retVal = self.frame.initInstance if isInit else val
-                self.frames.pop()
-                if len(self.frames) == 0:
-                    return retVal
-                self.frame = self.frames[-1]
-                self.push(retVal)
-            elif op == Op.RETURNNULL:
-                isInit = hasattr(self.frame, "isInit") and self.frame.isInit
-                retVal = self.frame.initInstance if isInit else None
-                self.frames.pop()
-                if len(self.frames) == 0:
-                    return retVal
-                self.frame = self.frames[-1]
-                self.push(retVal)
-            elif op == Op.THROW:
-                val = self.pop()
-                handled = False
-                while len(self.frames) > 0:
-                    f = self.frames[-1]
-                    if len(f.handlers) > 0:
-                        entry = f.handlers.pop()
-                        self.stack = self.stack[:entry[1]]
-                        self.push(val)
-                        f.ip = entry[0]
-                        self.frame = f
-                        handled = True
+                        cold = True
                         break
+
+                frame.ip = ip
+                if not cold:
+                    op = -1
+
+                if op == -1 and ip >= codeLen:
+                    isInit = hasattr(self.frame, "isInit") and self.frame.isInit
+                    retVal = self.frame.initInstance if isInit else None
                     self.frames.pop()
                     if len(self.frames) > 0:
                         self.frame = self.frames[-1]
-                if not handled:
-                    raise val
-            elif op == Op.TRYSTART:
-                off = self.readU16()
-                target = self.frame.ip + off
-                self.frame.handlers.append([target, len(self.stack)])
-            elif op == Op.TRYEND:
-                if len(self.frame.handlers) > 0:
-                    self.frame.handlers.pop()
+                        self.push(retVal)
+                    continue
 
+                if op == Op.CONST:
+                    idx = self.readU16()
+                    self.push(self.frame.fn.constants[idx])
+                elif op == Op.NULL:
+                    self.push(None)
+                elif op == Op.TRUE:
+                    self.push(True)
+                elif op == Op.FALSE:
+                    self.push(False)
+                elif op == Op.POP:
+                    self.pop()
+                elif op == Op.ADD:
+                    b = self.pop()
+                    a = self.pop()
+                    if (type(a) == "larik" or type(a) == "list") and (type(b) == "larik" or type(b) == "list"):
+                        res = []
+                        for el in a:
+                            res.append(el)
+                        for el in b:
+                            res.append(el)
+                        self.push(res)
+                    else:
+                        self.push(a + b)
+                elif op == Op.SUB:
+                    b = self.pop()
+                    a = self.pop()
+                    self.push(a - b)
+                elif op == Op.MUL:
+                    b = self.pop()
+                    a = self.pop()
+                    if (type(a) == "string" or type(a) == "str" or type(a) == "teks") and (type(b) == "angka" or type(b) == "int"):
+                        s = ""
+                        cnt = int(b)
+                        while cnt > 0:
+                            s += a
+                            cnt -= 1
+                        self.push(s)
+                    else:
+                        self.push(a * b)
+                elif op == Op.DIV:
+                    b = self.pop()
+                    a = self.pop()
+                    if b == 0:
+                        print("RuntimeError: Division by zero")
+                        sys.exit(1)
+                        self.push(0)
+                    else:
+                        self.push(a / b)
+                elif op == Op.MOD:
+                    b = self.pop()
+                    a = self.pop()
+                    self.push(a % b)
+                elif op == Op.NEG:
+                    a = self.pop()
+                    self.push(-a)
+                elif op == Op.NOT:
+                    a = self.pop()
+                    self.push(not self.truthy(a))
+                elif op == Op.EQ:
+                    b = self.pop()
+                    a = self.pop()
+                    self.push(a == b)
+                elif op == Op.NEQ:
+                    b = self.pop()
+                    a = self.pop()
+                    self.push(a != b)
+                elif op == Op.LT:
+                    b = self.pop()
+                    a = self.pop()
+                    self.push(a < b)
+                elif op == Op.LTE:
+                    b = self.pop()
+                    a = self.pop()
+                    self.push(a <= b)
+                elif op == Op.GT:
+                    b = self.pop()
+                    a = self.pop()
+                    self.push(a > b)
+                elif op == Op.GTE:
+                    b = self.pop()
+                    a = self.pop()
+                    self.push(a >= b)
+                elif op == Op.IN:
+                    b = self.pop()
+                    a = self.pop()
+                    self.push(a in b)
+                elif op == Op.BITAND:
+                    b = self.pop()
+                    a = self.pop()
+                    self.push(a & b)
+                elif op == Op.BITOR:
+                    b = self.pop()
+                    a = self.pop()
+                    self.push(a | b)
+                elif op == Op.BITXOR:
+                    b = self.pop()
+                    a = self.pop()
+                    self.push(a ^ b)
+                elif op == Op.SHL:
+                    b = self.pop()
+                    a = self.pop()
+                    self.push(a << b)
+                elif op == Op.SHR:
+                    b = self.pop()
+                    a = self.pop()
+                    self.push(a >> b)
+                elif op == Op.BITNOT:
+                    a = self.pop()
+                    self.push(~a)
+                elif op == Op.GETARGCOUNT:
+                    self.push(self.frame.providedCount)
+                elif op == Op.SUPER:
+                    selfVal = self.frame.locals[0]
+                    definingName = self.frame.fn.name.split(".")[0]
+                    cls = self.globals[definingName] if definingName in self.globals else None
+                    parentName = cls.baseClass if cls != None and hasattr(cls, "baseClass") else None
+                    self.push({"isSuperProc": True, "self": selfVal, "parentName": parentName})
+                elif op == Op.GETLOCAL:
+                    slot = self.readU16()
+                    if slot in self.frame.cells:
+                        self.push(self.frame.cells[slot].val)
+                    else:
+                        self.push(self.frame.locals[slot])
+                elif op == Op.SETLOCAL:
+                    slot = self.readU16()
+                    val = self.stack[-1]
+                    self.frame.locals[slot] = val
+                    if slot in self.frame.cells:
+                        self.frame.cells[slot].val = val
+                elif op == Op.DEFINELOCAL:
+                    slot = self.readU16()
+                    val = self.pop()
+                    self.frame.locals[slot] = val
+                    if slot in self.frame.cells:
+                        self.frame.cells[slot].val = val
+                elif op == Op.INCLOCAL:
+                    slot = self.readU16()
+                    val = (self.frame.cells[slot].val if slot in self.frame.cells else self.frame.locals[slot]) + 1
+                    self.frame.locals[slot] = val
+                    if slot in self.frame.cells:
+                        self.frame.cells[slot].val = val
+                elif op == Op.DECLOCAL:
+                    slot = self.readU16()
+                    val = (self.frame.cells[slot].val if slot in self.frame.cells else self.frame.locals[slot]) - 1
+                    self.frame.locals[slot] = val
+                    if slot in self.frame.cells:
+                        self.frame.cells[slot].val = val
+                elif op == Op.ADDLOCAL:
+                    slot = self.readU16()
+                    cIdx = self.readU16()
+                    delta = self.frame.fn.constants[cIdx]
+                    val = (self.frame.cells[slot].val if slot in self.frame.cells else self.frame.locals[slot]) + delta
+                    self.frame.locals[slot] = val
+                    if slot in self.frame.cells:
+                        self.frame.cells[slot].val = val
+                elif op == Op.GETUPVALUE:
+                    idx = self.readU16()
+                    self.push(self.frame.closure.upvalues[idx].val)
+                elif op == Op.SETUPVALUE:
+                    idx = self.readU16()
+                    self.frame.closure.upvalues[idx].val = self.stack[-1]
+                elif op == Op.MAKECLOSURE:
+                    fnIdx = self.readU16()
+                    targetFn = self.frame.fn.constants[fnIdx]
+                    closure = VmClosure(targetFn)
+                    uvCount = self.readU16()
+                    k = 0
+                    while k < uvCount:
+                        isLocal = self.readByte()
+                        index = self.readU16()
+                        if isLocal == 1:
+                            if index not in self.frame.cells:
+                                self.frame.cells[index] = VmCell(self.frame.locals[index])
+                                self.frame.hasCells = True
+                            closure.upvalues.append(self.frame.cells[index])
+                        else:
+                            closure.upvalues.append(self.frame.closure.upvalues[index])
+                        k += 1
+                    self.push(closure)
+                elif op == Op.TOITER:
+                    val = self.pop()
+                    if type(val) == "peta" or type(val) == "dict":
+                        self.push(list(val.keys()))
+                    elif type(val) == "larik" or type(val) == "list":
+                        self.push(val)
+                    elif type(val) == "string" or type(val) == "str" or type(val) == "teks":
+                        self.push(val)
+                    else:
+                        res = []
+                        for x in val:
+                            res.append(x)
+                        self.push(res)
+                elif op == Op.TOSTRING:
+                    val = self.pop()
+                    self.push(str(val))
+                elif op == Op.GETGLOBAL:
+                    idx = self.readU16()
+                    name = self.frame.fn.constants[idx]
+                    if name in self.globals:
+                        self.push(self.globals[name])
+                    else:
+                        print("RuntimeError: undefined variable '" + name + "'")
+                        sys.exit(1)
+                        self.push(None)
+                elif op == Op.SETGLOBAL:
+                    idx = self.readU16()
+                    name = self.frame.fn.constants[idx]
+                    self.globals[name] = self.stack[-1]
+                elif op == Op.DEFINEGLOBAL:
+                    idx = self.readU16()
+                    name = self.frame.fn.constants[idx]
+                    self.globals[name] = self.pop()
+                elif op == Op.JUMP:
+                    off = self.readU16()
+                    self.frame.ip += off
+                elif op == Op.JUMPIFFALSE:
+                    off = self.readU16()
+                    val = self.pop()
+                    if not self.truthy(val):
+                        self.frame.ip += off
+                elif op == Op.JUMPIFFALSEKEEP:
+                    off = self.readU16()
+                    if not self.truthy(self.stack[-1]):
+                        self.frame.ip += off
+                elif op == Op.JUMPIFTRUEKEEP:
+                    off = self.readU16()
+                    if self.truthy(self.stack[-1]):
+                        self.frame.ip += off
+                elif op == Op.LOOP:
+                    off = self.readU16()
+                    self.frame.ip -= off
+                elif op == Op.PRINT:
+                    argCount = self.readByte()
+                    args = []
+                    k = 0
+                    while k < argCount:
+                        args.append(self.pop())
+                        k += 1
+                    args.reverse()
+                    print(*args)
+                    self.push(None)
+                elif op == Op.LENGTH:
+                    val = self.pop()
+                    self.push(len(val))
+                elif op == Op.PUSH:
+                    val = self.pop()
+                    target = self.pop()
+                    target.append(val)
+                    self.push(len(target))
+                elif op == Op.NEWARRAY:
+                    cnt = self.readU16()
+                    if cnt == 0:
+                        self.push([])
+                    else:
+                        elems = self.stack[-cnt:]
+                        self.stack = self.stack[:-cnt]
+                        self.push(elems)
+                elif op == Op.NEWMAP:
+                    cnt = self.readU16()
+                    m = {}
+                    k = 0
+                    while k < cnt:
+                        v = self.pop()
+                        kKey = self.pop()
+                        m[kKey] = v
+                        k += 1
+                    self.push(m)
+                elif op == Op.GETINDEX:
+                    idx = self.pop()
+                    target = self.pop()
+                    self.push(target[idx])
+                elif op == Op.SETINDEX:
+                    val = self.pop()
+                    idx = self.pop()
+                    target = self.pop()
+                    target[idx] = val
+                    self.push(val)
+                elif op == Op.SLICE:
+                    stop = self.pop()
+                    start = self.pop()
+                    target = self.pop()
+                    if start == None:
+                        start = 0
+                    if stop == None:
+                        stop = len(target)
+                    self.push(target[start:stop])
+                elif op == Op.GETFIELD:
+                    nameIdx = self.readU16()
+                    name = self.frame.fn.constants[nameIdx]
+                    target = self.pop()
+                    if isinstance(target, dict) and "isSuperProc" in target:
+                        parentName = target["parentName"]
+                        parentCls = self.globals[parentName] if parentName != None and parentName in self.globals else None
+                        m = self.resolveMethodChainVm(parentCls, name) if parentCls != None else None
+                        if m != None:
+                            self.push({"isMethod": True, "instance": target["self"], "method": m})
+                        else:
+                            print("RuntimeError: super has no method '" + name + "'")
+                            sys.exit(1)
+                            self.push(None)
+                    elif hasattr(target, "fields"):
+                        f = target.fields
+                        if name in f:
+                            self.push(f[name])
+                        else:
+                            m = None
+                            if hasattr(target, "cls"):
+                                m = self.resolveMethodChainVm(target.cls, name)
+                            elif hasattr(target, "kelas"):
+                                m = self.resolveMethodChainVm(target.kelas, name)
+                            if m != None:
+                                self.push({"isMethod": True, "instance": target, "method": m})
+                            else:
+                                print("RuntimeError: Field '" + name + "' not found")
+                                sys.exit(1)
+                                self.push(None)
+                    elif (type(target) == "peta" or type(target) == "dict") and name in target:
+                        self.push(target[name])
+                    elif hasattr(target, name):
+                        self.push(getattr(target, name))
+                    else:
+                        print("RuntimeError: Field '" + name + "' not found")
+                        sys.exit(1)
+                        self.push(None)
+                elif op == Op.SETFIELD:
+                    nameIdx = self.readU16()
+                    name = self.frame.fn.constants[nameIdx]
+                    val = self.pop()
+                    target = self.pop()
+                    if hasattr(target, "fields"):
+                        target.fields[name] = val
+                    elif type(target) == "peta" or type(target) == "dict":
+                        target[name] = val
+                    elif hasattr(target, "bidang"):
+                        target.bidang[name] = val
+                    elif hasattr(target, name):
+                        setattr(target, name, val)
+                    self.push(val)
+                elif op == Op.CALLMETHOD:
+                    nameIdx = self.readU16()
+                    name = self.frame.fn.constants[nameIdx]
+                    argCount = self.readByte()
+                    if argCount == 0:
+                        callArgs = []
+                    else:
+                        callArgs = self.stack[-argCount:]
+                        self.stack = self.stack[:-argCount]
+                    target = self.pop()
+
+                    if isinstance(target, dict) and "isSuperProc" in target:
+                        parentName = target["parentName"]
+                        parentCls = self.globals[parentName] if parentName != None and parentName in self.globals else None
+                        m = self.resolveMethodChainVm(parentCls, name) if parentCls != None else None
+                        if m != None:
+                            newFrame = CallFrame(m, [target["self"]] + callArgs)
+                            self.frames.append(newFrame)
+                            self.frame = newFrame
+                            continue
+                        print("RuntimeError: super has no method '" + name + "'")
+                        sys.exit(1)
+                        self.push(None)
+                        continue
+                    if hasattr(target, "cls"):
+                        m = self.resolveMethodChainVm(target.cls, name)
+                        if m != None:
+                            if hasattr(m, "isClosure"):
+                                newFrame = CallFrame(m.fn, [target] + callArgs, m)
+                            else:
+                                newFrame = CallFrame(m, [target] + callArgs)
+                            self.frames.append(newFrame)
+                            self.frame = newFrame
+                            continue
+                    if hasattr(target, "kelas"):
+                        m = self.resolveMethodChainVm(target.kelas, name)
+                        if m != None:
+                            if hasattr(m, "isClosure"):
+                                newFrame = CallFrame(m.fn, [target] + callArgs, m)
+                            else:
+                                newFrame = CallFrame(m, [target] + callArgs)
+                            self.frames.append(newFrame)
+                            self.frame = newFrame
+                            continue
+                    if tipe(target) == "teks" or tipe(target) == "string" or type(target) == "str":
+                        if name == "strip":
+                            self.push(target.strip())
+                            continue
+                        elif name == "lower":
+                            self.push(target.lower())
+                            continue
+                        elif name == "upper":
+                            self.push(target.upper())
+                            continue
+                        elif name == "split":
+                            sep = callArgs[0] if len(callArgs) > 0 else " "
+                            self.push(target.split(sep))
+                            continue
+                        elif name == "startswith":
+                            self.push(target.startswith(callArgs[0]))
+                            continue
+                        elif name == "endswith":
+                            self.push(target.endswith(callArgs[0]))
+                            continue
+                        elif name == "find":
+                            self.push(target.find(callArgs[0]))
+                            continue
+                    if hasattr(target, name):
+                        fnTarget = getattr(target, name)
+                        res = self.callBuiltin(fnTarget, callArgs)
+                        self.push(res)
+                    else:
+                        print("RuntimeError: Method '" + name + "' not found")
+                        sys.exit(1)
+                        self.push(None)
+                elif op == Op.CALL:
+                    argCount = self.readByte()
+                    if argCount == 0:
+                        callArgs = []
+                    else:
+                        callArgs = self.stack[-argCount:]
+                        self.stack = self.stack[:-argCount]
+                    callee = self.pop()
+
+                    if hasattr(callee, "isClosure"):
+                        newFrame = CallFrame(callee.fn, callArgs, callee)
+                        self.frames.append(newFrame)
+                        self.frame = newFrame
+                    elif hasattr(callee, "code"):
+                        newFrame = CallFrame(callee, callArgs)
+                        self.frames.append(newFrame)
+                        self.frame = newFrame
+                    elif isinstance(callee, dict) and "isMethod" in callee:
+                        inst = callee["instance"]
+                        mFn = callee["method"]
+                        callArgs.insert(0, inst)
+                        if hasattr(mFn, "isClosure"):
+                            newFrame = CallFrame(mFn.fn, callArgs, mFn)
+                        else:
+                            newFrame = CallFrame(mFn, callArgs)
+                        self.frames.append(newFrame)
+                        self.frame = newFrame
+                    elif hasattr(callee, "isClass") or hasattr(callee, "isKelas"):
+                        inst = VmInstance(callee)
+                        initFn = self.resolveInitVm(callee)
+                        if initFn != None:
+                            initArgs = [inst]
+                            for a in callArgs:
+                                initArgs.append(a)
+                            if hasattr(initFn, "isClosure"):
+                                newFrame = CallFrame(initFn.fn, initArgs, initFn)
+                            else:
+                                newFrame = CallFrame(initFn, initArgs)
+                            newFrame.isInit = True
+                            newFrame.initInstance = inst
+                            self.frames.append(newFrame)
+                            self.frame = newFrame
+                        else:
+                            self.push(inst)
+                    elif callable(callee):
+                        res = self.callBuiltin(callee, callArgs)
+                        self.push(res)
+                    else:
+                        print("RuntimeError: Object is not callable:", callee)
+                        sys.exit(1)
+                        self.push(None)
+                elif op == Op.RETURN:
+                    val = self.pop()
+                    isInit = hasattr(self.frame, "isInit") and self.frame.isInit
+                    retVal = self.frame.initInstance if isInit else val
+                    self.frames.pop()
+                    if len(self.frames) == 0:
+                        return retVal
+                    self.frame = self.frames[-1]
+                    self.push(retVal)
+                elif op == Op.RETURNNULL:
+                    isInit = hasattr(self.frame, "isInit") and self.frame.isInit
+                    retVal = self.frame.initInstance if isInit else None
+                    self.frames.pop()
+                    if len(self.frames) == 0:
+                        return retVal
+                    self.frame = self.frames[-1]
+                    self.push(retVal)
+                elif op == Op.THROW:
+                    val = self.pop()
+                    if not self.handleException(val):
+                        raise val
+                elif op == Op.TRYSTART:
+                    off = self.readU16()
+                    target = self.frame.ip + off
+                    self.frame.handlers.append([target, len(self.stack)])
+                elif op == Op.TRYEND:
+                    if len(self.frame.handlers) > 0:
+                        self.frame.handlers.pop()
+            except e:
+                if not self.handleException(e):
+                    raise e
         if len(self.stack) > 0:
             return self.pop()
         return None

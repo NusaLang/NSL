@@ -7,7 +7,7 @@ BINDIR ?= $(PREFIX)/bin
 
 all: $(BIN)
 
-$(BIN): core/main.ns $(wildcard core/*.ns)
+$(BIN): core/main.ns $(wildcard core/*.ns) $(wildcard core/*/*.ns)
 	@echo "Building $(BIN)..."
 	@if [ -n "$(HOST_NUSA)" ] && [ -x "$(HOST_NUSA)" ] && $(HOST_NUSA) -V >/dev/null 2>&1; then \
 		$(HOST_NUSA) core/main.ns build -o $(BIN) . 2>/dev/null || (printf "#!/usr/bin/env nusa\n" > $(BIN) && cat core/main.ns >> $(BIN)); \

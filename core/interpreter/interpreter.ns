@@ -1,5 +1,20 @@
 import sys
-Scope = impor("env").Scope
+
+func loadModule(name):
+    candidates = [
+        name,
+        "core/interpreter/" + name,
+        "core/" + name
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor(name)
+
+Scope = loadModule("env").Scope
+
 
 class ReturnSignal:
     func __init__(self, val):
@@ -47,6 +62,10 @@ class Interpreter:
         g.define("larik", lambda: [])
         g.define("map", lambda: {})
         g.define("peta", lambda: {})
+        g.define("PetaBaru", peta_baru)
+        g.define("petaBaru", peta_baru)
+        g.define("peta_baru", peta_baru)
+        g.define("newMap", peta_baru)
         g.define("readFile", baca_file)
         g.define("baca_file", baca_file)
         g.define("writeFile", tulis_file)

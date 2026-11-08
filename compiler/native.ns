@@ -9,9 +9,9 @@ func loadModule(path):
         except e2:
             return impor(path.split("/")[-1])
 
-Lexer = loadModule("core/lexer.ns").Lexer
-Parser = loadModule("core/parser.ns").Parser
-astModule = loadModule("core/ast.ns")
+Lexer = loadModule("core/parser/lexer.ns").Lexer
+Parser = loadModule("core/parser/parser.ns").Parser
+astModule = loadModule("core/parser/ast.ns")
 BinaryExpr = astModule.BinaryExpr
 FuncStmt = astModule.FuncStmt
 BlockStmt = astModule.BlockStmt
@@ -484,7 +484,7 @@ class NativeCompiler:
         return lbl
 
     func resolveImportPath(self, name):
-        for c in [name, name + ".ns", name + "/main.ns", "std/" + name + ".ns", "core/" + name + ".ns", "lib/" + name + ".ns"]:
+        for c in [name, name + ".ns", name + "/main.ns", "std/" + name + ".ns", "core/" + name + ".ns", "core/virtual/" + name + ".ns", "core/interpreter/" + name + ".ns", "core/parser/" + name + ".ns", "core/types/" + name + ".ns", "lib/" + name + ".ns"]:
             if FileAda(c):
                 return c
         return None
