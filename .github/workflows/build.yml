@@ -101,17 +101,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up MSYS2
-        uses: msys2/setup-msys2@v2
-        with:
-          update: true
-          install: >-
-            base-devel
-            git
-
-      - name: Build on Windows MSYS2
-        shell: msys2 {0}
+      - name: Build on Windows
+        shell: bash
         run: |
+          export PATH="/c/msys64/usr/bin:$PATH"
           make clean
           make build
           mkdir -p dist
