@@ -1,0 +1,73 @@
+procStreamStart = proc_stream_mulai
+procStreamRead = proc_stream_baca
+procStreamClose = proc_stream_tutup
+runCommandRaw = JalankanPerintah
+
+class ExecutionResult:
+    func constructor(self, status, output, error):
+        self.status = status
+        self.output = output
+        self.error = error
+        self.returncode = status
+        self.stdout = output
+        self.stderr = error
+
+    func isSuccess(self):
+        return self.status == 0
+
+    func sukses(self):
+        return self.status == 0
+
+class ProcessStream:
+    func constructor(self, pid, fd, command = ""):
+        self.pid = pid
+        self.fd = fd
+        self.command = command
+        self.isClosed = False
+
+    func read(self, maxLen = 4096):
+        if self.isClosed or self.fd < 0:
+            return ""
+        return procStreamRead(self.fd, maxLen)
+
+    func close(self):
+        if not self.isClosed:
+            procStreamClose(self.pid, self.fd)
+            self.isClosed = True
+
+    func baca(self, maxLen = 4096):
+        return self.read(maxLen)
+
+    func tutup(self):
+        self.close()
+
+func runCommand(cmd, args = []):
+    res = runCommandRaw(cmd, args)
+    return ExecutionResult(res.status, res.keluaran, res.error)
+
+func runShell(cmdStr):
+    return runCommand("sh", ["-c", cmdStr])
+
+func startStream(cmd, args = []):
+    h = procStreamStart(cmd, args)
+    return ProcessStream(h.pid, h.fd, cmd)
+
+func readStream(fd, maxLen = 4096):
+    return procStreamRead(fd, maxLen)
+
+func closeStream(pid, fd):
+    procStreamClose(pid, fd)
+
+class Proc:
+    func constructor(self):
+        pass
+
+run = runCommand
+runShell = runShell
+jalankan = runCommand
+jalankanShell = runShell
+mulaiStream = startStream
+bacaStream = readStream
+tutupStream = closeStream
+HasilEksekusi = ExecutionResult
+StreamProses = ProcessStream

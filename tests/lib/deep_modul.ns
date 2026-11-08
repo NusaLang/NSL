@@ -1,4 +1,0 @@
-fungsi proses(arr) {
-    buat first = arr[0];
-    return first;
-}

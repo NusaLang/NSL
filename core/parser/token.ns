@@ -1,0 +1,81 @@
+class TokenType:
+    NUMBER = "NUMBER"
+    STRING = "STRING"
+    IDENT = "IDENT"
+
+    VAR = "VAR"
+    FUNC = "FUNC"
+    IF = "IF"
+    ELSE = "ELSE"
+    WHILE = "WHILE"
+    FOR = "FOR"
+    IN = "IN"
+    RETURN = "RETURN"
+    BREAK = "BREAK"
+    CONTINUE = "CONTINUE"
+    TRUE = "TRUE"
+    FALSE = "FALSE"
+    NULL = "NULL"
+    CLASS = "CLASS"
+    THIS = "THIS"
+    SUPER = "SUPER"
+    TRY = "TRY"
+    CATCH = "CATCH"
+    FINALLY = "FINALLY"
+    THROW = "THROW"
+    PASS = "PASS"
+
+    PLUS = "+"
+    MINUS = "-"
+    STAR = "*"
+    SLASH = "/"
+    PERCENT = "%"
+    ASSIGN = "="
+    EQ = "=="
+    NEQ = "!="
+    LT = "<"
+    LTE = "<="
+    GT = ">"
+    GTE = ">="
+    AND = "and"
+    OR = "or"
+    NOT = "not"
+    AMP = "&"
+    PIPE = "|"
+    CARET = "^"
+    TILDE = "~"
+    SHL = "<<"
+    SHR = ">>"
+
+    LPAREN = "("
+    RPAREN = ")"
+    LBRACE = "{"
+    RBRACE = "}"
+    LBRACKET = "["
+    RBRACKET = "]"
+    COMMA = ","
+    SEMICOLON = ";"
+    DOT = "."
+    COLON = ":"
+    EOF = "EOF"
+
+TipeToken = TokenType
+
+class Token:
+    func __init__(self, tokenType, text, number, line, col):
+        self.type = tokenType
+        self.text = text
+        self.number = number
+        self.line = line
+        self.col = col
+        self.tipe = tokenType
+        self.teks = text
+        self.angka = number
+        self.baris = line
+        self.kolom = col
+
+    func toString(self):
+        return "Token(" + self.type + ", '" + self.text + "', line=" + str(self.line) + ")"
+
+    func keTeks(self):
+        return self.toString()

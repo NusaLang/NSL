@@ -1,143 +1,97 @@
 <p align="center">
-  <img src="docs/hero.svg" width="720" alt="nsl Nusantara" />
+  <img src="docs/hero.svg" width="720" alt="NSL" />
 </p>
 
 # Nusantara
 
-Bahasa pemrograman dengan keyword Bahasa Indonesia. Ditulis native di C++17, dikompilasi jadi satu binary, dan gak perlu install runtime apa pun buat menjalankannya. Ekstensi filenya `.ns`.
+Nusantara is a programming language that compiles and runs itself — the lexer, parser, interpreter, bytecode VM, and native x86-64 compiler are all written in Nusantara, bootstrapped once by a small C++ host. You can write keywords in English (`func`, `if`, `return`) or Indonesian (`fungsi`, `jika`, `hasil`) and mix them freely in the same file; blocks can use colons or braces.
 
+```python
+func fib(n):
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+for i in range(10):
+    print(fib(i))
 ```
-fungsi fib(n) {
-    jika n < 2 { hasil n; }
-    hasil fib(n - 1) + fib(n - 2);
-}
 
-untuk (buat i = 0; i < 10; i = i + 1) {
-    cetak(fib(i));
-}
-```
-
-Tiap keyword ada padanan Inggrisnya (`buat`/`let`, `fungsi`/`func`, `jika`/`if`, dan seterusnya). Dua-duanya boleh dicampur dalam satu file, karena token-nya sama persis di lexer. Daftar lengkap ada di bagian [Bahasa](#bahasa).
-
-## Kenapa
-
-Awalnya iseng pengen bahasa yang keyword-nya Bahasa Indonesia tapi gak berasa mainan. Jadi dikompilasi ke native binary beneran (bukan di-interpret runtime lain seperti Python), punya garbage collector sendiri, ada goroutine dan channel, dan sintaksnya dijaga simpel kayak Python/JS biar gampang dipelajari.
-
-## Pasang
+## Three ways to run a program
 
 ```bash
-./install.sh
+./nusa run main.ns                    # tree-walking interpreter (reference implementation)
+./nusa --vm main.ns                   # stack-based bytecode VM
+./nusa build --native main.ns -o app  # compile straight to a native ELF binary
+./app                                 # no runtime, no dependencies
 ```
 
-Skrip ini mengambil binary jadi (Linux x86-64/ARM64, Android/Termux) lalu memasangnya ke `~/.local/bin`, tanpa compiler. Platform lain build dari source (butuh `g++`).
+The native AOT compiler is the one that matters for speed. It turns `.ns` source into x86-64 assembly by hand — tagged 63-bit integers, fixed-offset structs for classes, inline caches for field and method lookups — and hands the result to the system `as` and `ld`. The interpreter and VM are slower, simpler references that exist mainly to check the language behaves the same way everywhere.
 
-Windows: `install.sh` lewat Git Bash/MSYS, atau PowerShell native: `.\install.ps1`.
+## Benchmarks
 
-Build manual:
+Five workloads — `fib(20)`, a 20k-element array build, a 10k-entry map insert+lookup, a 5k-iteration string build, and a 10k object create+method call loop — run in every language below, min-of-N wall-clock milliseconds, log scale:
+
+![benchmark results](docs/benchmark.png)
+
+Native AOT lands within ~2x of Go on `fib20`, `array`, and `oop`, and ahead of every other language here except LuaJIT on `oop`. `map` and `string` are the current weak points.
+
+## Install
 
 ```bash
-make
-./nusantara run examples/hello.ns
+make build    # bootstrap core/main.ns into ./nusa
+make test     # run the interpreter, VM, and native AOT test suites
+make install  # copy the binary to ~/.local/bin
 ```
 
-Dipakai begini:
+## The language
 
-```bash
-nusa run main.ns        # jalankan file
-nusa                    # REPL
-nusa watch main.ns      # jalankan ulang tiap file disimpan
-```
-
-## Bahasa
-
-| Indonesia | Inggris | | Indonesia | Inggris |
+| Indonesian | English | | Indonesian | English |
 |---|---|---|---|---|
-| `buat` | `let` | | `kelas` | `class` |
+| `buat` | `let` / `var` | | `kelas` | `class` |
 | `fungsi` | `func` | | `turunan` | `extends` |
-| `jika` / `lain` | `if` / `else` | | `bentuk` | `struct` |
-| `selama` | `while` | | `jenis` | `enum` |
-| `untuk` | `for` | | `coba` / `tangkap` | `try` / `catch` |
-| `hasil` | `return` | | `lempar` | `throw` |
-| `berhenti` / `lanjut` | `break` / `continue` | | `benar` / `salah` | `true` / `false` |
+| `jika` / `lain` / `kalau` | `if` / `else` / `elif` | | `dalam` | `in` |
+| `selama` | `while` | | `coba` / `tangkap` | `try` / `except` |
+| `untuk` | `for` | | `lempar` | `throw` |
+| `hasil` | `return` | | `benar` / `salah` | `true` / `false` |
+| `berhenti` / `lanjut` | `break` / `continue` | | `kosong` | `null` / `None` |
+| `dan` / `atau` / `bukan` | `and` / `or` / `not` | | | |
 
-Tipe: `angka` (double), `teks`, `boolean`, `kosong`, `larik` (array), `peta` (map). Anotasi tipe bersifat opsional, gaya TypeScript, dan dicek sebelum program jalan:
+Classes support default parameter values, inheritance, and three interchangeable names for the instance reference (`self`, `this`, `ini`):
 
-```
-fungsi luas(p: angka, l: angka): angka {
-    hasil p * l;
-}
-```
+```python
+class Animal:
+    func __init__(self, name, sound = "a sound"):
+        self.name = name
+        self.sound = sound
+    func speak(self):
+        print(self.name, "makes", self.sound)
 
-OOP:
+class Dog(Animal):
+    func __init__(self, name):
+        self.name = name
+        self.sound = "a bark"
 
-```
-kelas Hewan {
-    fungsi konstruktor(nama) { ini.nama = nama; }
-    fungsi bicara() { cetak(ini.nama + " bersuara"); }
-}
-
-kelas Anjing turunan Hewan {
-    fungsi bicara() { cetak(ini.nama + " menggonggong"); }
-}
-
-buat a = Anjing("Rex");
-a.bicara();   // "Rex menggonggong"
+Dog("Rex").speak()  # Rex makes a bark
 ```
 
-Ada juga `bentuk` (struct data polos), `jenis` (enum), exception (`coba`/`tangkap`/`akhirnya`/`lempar`, boleh melempar nilai apa saja), template string (`` `halo ${nama}` ``), dan fungsi anonim (`fungsi(x) { hasil x*2; }`).
+## Standard library highlights
 
-## Concurrency
+`runCommand(cmd, args)` spawns a process straight through `fork`/`execve`/`pipe`/`waitpid` in the native backend, with no shell in between — argument lists can't be reinterpreted as shell syntax. File access is `readFile`, `writeFile`, and `fileExists`. `impor()` pulls in another `.ns` file, and the native compiler resolves and inlines it statically at compile time. `gcInfo()` and `gcForce()` let you inspect and trigger the garbage collector directly.
 
-Goroutine (`jalan`) dan channel (`kanal`) berjalan di atas satu GIL yang otomatis lepas saat menunggu I/O. Jadi berguna buat kerjaan network dan background, walau bukan paralel CPU murni.
-
-```
-buat c = kanal_baru();
-untuk (buat i = 0; i < 5; i = i + 1) {
-    jalan(fungsi(n) { kanal_kirim(c, n * n); }, i);
-}
-buat total = 0;
-untuk (buat i = 0; i < 5; i = i + 1) {
-    total = total + kanal_terima(c);
-}
-cetak(total);   // 30
-```
-
-Memori dikelola GC mark-sweep otomatis, tanpa alokasi atau pembebasan manual.
-
-## Builtin
-
-- `http_get` / `http_post` (HTTPS sungguhan, TLS lewat BearSSL yang divendor), `tcp_konek` / `tcp_kirim` / `tcp_terima`, `http_dengar` untuk bikin server
-- `json_encode` / `json_decode`, `base64_encode` / `decode`
-- `sha256_hex`, `hmac_sha256_hex`, `jwt_buat` / `jwt_verifikasi`
-- `qr_baca`: baca QR code dari gambar (PNG, JPEG, BMP, dan lainnya)
-- `jalankan_perintah`: jalankan proses eksternal, argv-safe (tidak lewat shell)
-- `impor()` untuk modul lokal, `muat_plugin()` untuk plugin native (`.so` lewat dlopen). Plugin bawaan: SQLite, HTTP+TLS, WebSocket, crypto lanjutan, forensik gambar BMP
-
-Daftar lengkap dan signature-nya ada di `src/interpreter.cpp` (cari `callBuiltin`).
-
-## Package manager
-
-Murni git, tanpa registry terpisah. Paket cuma repo git biasa:
-
-```bash
-nusa get github.com/user/repo
-nusa get github.com/user/repo#dev   # branch atau tag tertentu
-```
-
-`impor("nama")` mencari `nusantara_modules/nama/index.ns` relatif ke folder kerja, mirip `node_modules`.
-
-## Struktur
+## Repository layout
 
 ```
-include/    header (.hpp)
-src/        implementasi (.cpp) + main.cpp (CLI)
-examples/   contoh program
-plugins/    plugin native (muat_plugin, .so lewat dlopen)
-tests/      regression/golden test suite
+core/        lexer, parser, AST, interpreter, bytecode VM, CLI entry point
+compiler/    native x86-64 AOT compiler and its hand-written runtime
+std/         standard library (process, filesystem, i18n, ...)
+net/         HTTP and socket modules
+crypto/      hashing and crypto modules
+media/       audio/image processing modules
+lib/         additional pure-.ns utility modules
+bench/       cross-language benchmark suite and native micro-benchmark
+tests/       interpreter/VM/native test suites
 ```
 
-Eksekusi lewat bytecode VM dulu (`src/vm.cpp`, dengan JIT untuk fungsi dan loop aritmatika murni di `src/jit.cpp`). Konstruksi yang belum didukung VM (kelas, struct, enum, try/catch, fungsi anonim) jatuh ke tree-walking langsung di AST (`src/interpreter.cpp`).
+## License
 
-## Lisensi
-
-Apache-2.0, lihat [LICENSE](LICENSE). Kode pihak ketiga di `third_party/` memakai lisensinya masing-masing, daftarnya ada di [NOTICE](NOTICE).
+Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).

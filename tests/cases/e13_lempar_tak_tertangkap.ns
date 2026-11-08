@@ -1,3 +1,0 @@
-fungsi dalam() { lempar "meledak di dalam"; }
-fungsi luar() { dalam(); }
-luar();

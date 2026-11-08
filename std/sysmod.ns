@@ -1,0 +1,371 @@
+loadedModules = {}
+loadPluginRaw = muat_plugin
+readFileRaw = baca_file
+writeFileRaw = tulis_file
+runCommandRaw = JalankanPerintah
+fileExistsRaw = file_ada
+envRaw = ambil_env
+
+func loadPlugin(pluginName):
+    if pluginName in loadedModules:
+        return loadedModules[pluginName]
+    try:
+        mod = loadPluginRaw(pluginName)
+        loadedModules[pluginName] = mod
+        return mod
+    except e:
+        lempar "system module '" + pluginName + "' not found: " + str(e)
+
+load = loadPlugin
+muat = loadPlugin
+muatPlugin = loadPlugin
+
+func callPlugin(pluginName, funcName, args = []):
+    mod = loadPlugin(pluginName)
+    if not (funcName in mod):
+        lempar "system module '" + pluginName + "' does not have function '" + funcName + "'"
+    fn = mod[funcName]
+    return fn(args)
+
+call = callPlugin
+panggil = callPlugin
+panggilPlugin = callPlugin
+
+func isAbs(path):
+    return len(path) > 0 and path[0] == "/"
+
+isabs = isAbs
+apakahMutlak = isAbs
+
+func baseName(path):
+    n = len(path)
+    pos = -1
+    i = n - 1
+    while i >= 0:
+        if path[i] == "/":
+            pos = i
+            break
+        i -= 1
+    if pos == -1:
+        return path
+    return path[pos + 1:]
+
+basename = baseName
+namaDasar = baseName
+
+func dirName(path):
+    n = len(path)
+    pos = -1
+    i = n - 1
+    while i >= 0:
+        if path[i] == "/":
+            pos = i
+            break
+        i -= 1
+    if pos == -1:
+        return ""
+    if pos == 0:
+        return "/"
+    return path[:pos]
+
+dirname = dirName
+namaDirektori = dirName
+
+func splitExt(path):
+    n = len(path)
+    slash = -1
+    dot = -1
+    i = n - 1
+    while i >= 0:
+        if path[i] == "." and dot == -1:
+            dot = i
+        if path[i] == "/":
+            slash = i
+            break
+        i -= 1
+    if dot == -1 or (slash != -1 and dot < slash) or dot == 0 or (slash != -1 and dot == slash + 1):
+        return [path, ""]
+    return [path[:dot], path[dot:]]
+
+splitext = splitExt
+pisahEkstensi = splitExt
+
+func joinPath(parts):
+    resultPath = ""
+    for part in parts:
+        p = str(part)
+        if isAbs(p):
+            resultPath = p
+        elif resultPath == "" or resultPath[len(resultPath) - 1] == "/":
+            resultPath += p
+        else:
+            resultPath = resultPath + "/" + p
+    return resultPath
+
+joinpath = joinPath
+gabungPath = joinPath
+
+func normPath(path):
+    if path == "":
+        return "."
+    absolute = isAbs(path)
+    parts = []
+    cur = ""
+    n = len(path)
+    i = 0
+    while i < n:
+        if path[i] == "/":
+            if cur != "":
+                parts.append(cur)
+                cur = ""
+        else:
+            cur += path[i]
+        i += 1
+    if cur != "":
+        parts.append(cur)
+
+    stack = []
+    for b in parts:
+        if b == ".":
+            pass
+        elif b == "..":
+            if len(stack) > 0 and stack[len(stack) - 1] != "..":
+                stack.pop()
+            elif not absolute:
+                stack.append("..")
+        else:
+            stack.append(b)
+
+    resultPath = ""
+    m = len(stack)
+    k = 0
+    while k < m:
+        if k > 0:
+            resultPath += "/"
+        resultPath += stack[k]
+        k += 1
+
+    if absolute:
+        return "/" + resultPath
+    if resultPath == "":
+        return "."
+    return resultPath
+
+normpath = normPath
+normalkanPath = normPath
+
+func expandUser(path):
+    if len(path) > 0 and path[0] == "~":
+        home = envRaw("HOME")
+        if home != "":
+            return home + path[1:]
+    return path
+
+expanduser = expandUser
+perluasUser = expandUser
+
+func getEnv(key, defaultVal = None):
+    val = envRaw(key)
+    if val == "":
+        return defaultVal
+    return val
+
+getenv = getEnv
+ambilEnv = getEnv
+
+func getCwd():
+    res = runCommand("pwd", [])
+    if res.status == 0:
+        out = res.keluaran
+        if len(out) > 0 and out[len(out) - 1] == "\n":
+            out = out[:len(out) - 1]
+        return out
+    return "."
+
+getcwd = getCwd
+ambilCwd = getCwd
+
+func absPath(path):
+    if isAbs(path):
+        return normPath(path)
+    return normPath(getCwd() + "/" + path)
+
+abspath = absPath
+pathMutlak = absPath
+
+func exists(path):
+    return fileExistsRaw(path)
+
+berkasAda = exists
+
+func readFile(path):
+    return readFileRaw(path)
+
+readfile = readFile
+bacaBerkas = readFile
+
+func writeFile(path, content):
+    writeFileRaw(path, content)
+
+writefile = writeFile
+tulisBerkas = writeFile
+
+func appendFile(path, content):
+    oldContent = ""
+    if exists(path):
+        oldContent = readFile(path)
+    writeFile(path, oldContent + content)
+
+appendfile = appendFile
+tambahBerkas = appendFile
+
+func mkDir(path):
+    res = runCommand("mkdir", [path])
+    if res.status != 0:
+        lempar "OSError: failed to create directory '" + path + "': " + res.error
+
+mkdir = mkDir
+buatDir = mkDir
+
+func makeDirs(path):
+    res = runCommand("mkdir", ["-p", path])
+    if res.status != 0:
+        lempar "OSError: failed to create directories '" + path + "': " + res.error
+
+makedirs = makeDirs
+buatBanyakDir = makeDirs
+
+func remove(path):
+    res = runCommand("rm", ["-f", path])
+    if res.status != 0:
+        lempar "OSError: failed to remove file '" + path + "': " + res.error
+
+hapusBerkas = remove
+
+func rmDir(path):
+    res = runCommand("rmdir", [path])
+    if res.status != 0:
+        lempar "OSError: failed to remove directory '" + path + "': " + res.error
+
+rmdir = rmDir
+hapusDir = rmDir
+
+func rmTree(path):
+    res = runCommand("rm", ["-rf", path])
+    if res.status != 0:
+        lempar "OSError: failed to remove tree '" + path + "': " + res.error
+
+rmtree = rmTree
+hapusSemua = rmTree
+
+func rename(oldPath, newPath):
+    res = runCommand("mv", [oldPath, newPath])
+    if res.status != 0:
+        lempar "OSError: failed to rename '" + oldPath + "' to '" + newPath + "': " + res.error
+
+gantiNama = rename
+
+func copyFile(src, dst):
+    res = runCommand("cp", [src, dst])
+    if res.status != 0:
+        lempar "OSError: failed to copy '" + src + "' to '" + dst + "': " + res.error
+
+copyfile = copyFile
+salinBerkas = copyFile
+
+func listDir(dir = "."):
+    res = runCommand("ls", ["-1", dir])
+    if res.status != 0:
+        lempar "OSError: cannot open directory '" + dir + "': " + res.error
+    text = res.keluaran
+    files = []
+    cur = ""
+    n = len(text)
+    i = 0
+    while i < n:
+        if text[i] == "\n":
+            if cur != "" and cur != "." and cur != "..":
+                files.append(cur)
+            cur = ""
+        else:
+            cur += text[i]
+        i += 1
+    if cur != "" and cur != "." and cur != "..":
+        files.append(cur)
+    return files
+
+listdir = listDir
+daftarDir = listDir
+
+func isFile(path):
+    res = runCommand("test", ["-f", path])
+    return res.status == 0
+
+isfile = isFile
+apakahBerkas = isFile
+
+func isDir(path):
+    res = runCommand("test", ["-d", path])
+    return res.status == 0
+
+isdir = isDir
+apakahDirektori = isDir
+
+func getSize(path):
+    res = runCommand("wc", ["-c", path])
+    if res.status == 0:
+        out = res.keluaran
+        s = ""
+        n = len(out)
+        i = 0
+        while i < n and (out[i] == " " or out[i] == "\t"):
+            i += 1
+        while i < n and out[i] in "0123456789":
+            s += out[i]
+            i += 1
+        if s != "":
+            return float(s)
+    lempar "OSError: failed to get file size for '" + path + "'"
+
+getsize = getSize
+ukuranBerkas = getSize
+
+func pid():
+    res = runCommand("sh", ["-c", "echo $$"])
+    if res.status == 0:
+        out = res.keluaran
+        s = ""
+        n = len(out)
+        i = 0
+        while i < n and (out[i] == " " or out[i] == "\t"):
+            i += 1
+        while i < n and out[i] in "0123456789":
+            s += out[i]
+            i += 1
+        if s != "":
+            return float(s)
+    return 0
+
+getPid = pid
+
+func platform():
+    return "linux"
+
+getPlatform = platform
+
+func runCommand(cmd, args = []):
+    return runCommandRaw(cmd, args)
+
+run = runCommand
+jalankan = runCommand
+
+func runSystem(cmd):
+    res = runCommand("sh", ["-c", cmd])
+    return res.status
+
+system = runSystem
+sistem = runSystem
+
+class SysMod:
+    func constructor(self):
+        pass

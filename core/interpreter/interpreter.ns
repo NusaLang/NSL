@@ -1,0 +1,629 @@
+import sys
+
+func loadModule(name):
+    candidates = [
+        name,
+        "core/interpreter/" + name,
+        "core/" + name
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor(name)
+
+Scope = loadModule("env").Scope
+
+
+class ReturnSignal:
+    func __init__(self, val):
+        self.isReturn = True
+        self.val = val
+
+class BreakSignal:
+    func __init__(self):
+        self.isBreak = True
+
+class ContinueSignal:
+    func __init__(self):
+        self.isContinue = True
+
+class UserFunction:
+    func __init__(self, name, params, body, closure, defaults = None):
+        self.isFunction = True
+        self.name = name
+        self.params = params
+        self.body = body
+        self.closure = closure
+        self.defaults = defaults if defaults != None else {}
+
+class Interpreter:
+    func __init__(self):
+        self.globalScope = Scope(None)
+        self.registerBuiltins()
+
+    func registerBuiltins(self):
+        g = self.globalScope
+        g.define("print", print)
+        g.define("cetak", cetak)
+        g.define("len", len)
+        g.define("panjang", panjang)
+        g.define("str", str)
+        g.define("ke_teks", ke_teks)
+        g.define("int", int)
+        g.define("float", float)
+        g.define("ke_angka", ke_angka)
+        g.define("type", type)
+        g.define("tipe", tipe)
+        g.define("range", range)
+        g.define("rentang", range)
+        g.define("list", lambda: [])
+        g.define("larik", lambda: [])
+        g.define("map", lambda: {})
+        g.define("peta", lambda: {})
+        g.define("PetaBaru", peta_baru)
+        g.define("petaBaru", peta_baru)
+        g.define("peta_baru", peta_baru)
+        g.define("newMap", peta_baru)
+        g.define("readFile", baca_file)
+        g.define("baca_file", baca_file)
+        g.define("writeFile", tulis_file)
+        g.define("tulis_file", tulis_file)
+        g.define("fileExists", file_ada)
+        g.define("file_ada", file_ada)
+        g.define("import", impor)
+        g.define("impor", impor)
+        g.define("time", waktu)
+        g.define("waktu", waktu)
+        g.define("gcInfo", gc_info)
+        g.define("gc_info", gc_info)
+        g.define("gcForce", gc_paksa)
+        g.define("gc_paksa", gc_paksa)
+        g.define("env", ambil_env)
+        g.define("ambil_env", ambil_env)
+        g.define("push", tambah)
+        g.define("tambah", tambah)
+        g.define("pop", hapus_akhir)
+        g.define("hapus_akhir", hapus_akhir)
+        g.define("split", pisah)
+        g.define("pisah", pisah)
+        g.define("join", gabung)
+        g.define("gabung", gabung)
+        g.define("runCommand", jalankan_perintah)
+        g.define("JalankanPerintah", jalankan_perintah)
+        g.define("jalankanPerintah", jalankan_perintah)
+        g.define("jalankan_perintah", jalankan_perintah)
+        g.define("callable", callable)
+        g.define("input", input)
+        g.define("sys", sys)
+
+    func run(self, program):
+        lastResult = None
+        for stmt in program:
+            lastResult = self.execute(stmt, self.globalScope)
+        return lastResult
+
+    func nodeType(self, node):
+        if node == None:
+            return ""
+        if hasattr(node, "type"):
+            return node.type
+        if hasattr(node, "jenis"):
+            return node.jenis
+        return ""
+
+    func resolveMethodChain(self, clsObj, methodName, env):
+        cur = clsObj
+        while cur != None:
+            if methodName in cur["methods"]:
+                return [cur["methods"][methodName], cur]
+            parentName = cur["parent"]
+            if parentName == None:
+                return [None, None]
+            cur = env.get(parentName)
+        return [None, None]
+
+    func execInline(self, node, env):
+        if node == None:
+            return None
+        t = self.nodeType(node)
+        if t == "BLOCK" or t == "BLOK":
+            for s in node.stmts:
+                self.execute(s, env)
+            return None
+        return self.execute(node, env)
+
+    func execute(self, stmt, env):
+        if stmt == None:
+            return None
+
+        t = self.nodeType(stmt)
+
+        if t == "BLOCK" or t == "BLOK":
+            childScope = Scope(env)
+            for s in stmt.stmts:
+                self.execute(s, childScope)
+            return None
+        elif t == "VAR" or t == "BUAT":
+            name = stmt.name if hasattr(stmt, "name") else stmt.nama
+            valExpr = stmt.value if hasattr(stmt, "value") else stmt.nilai
+            val = self.evaluate(valExpr, env)
+            env.define(name, val)
+            return val
+        elif t == "FUNC" or t == "FUNGSI":
+            name = stmt.name if hasattr(stmt, "name") else stmt.nama
+            body = stmt.body if hasattr(stmt, "body") else stmt.badan
+            fnObj = UserFunction(name, stmt.params, body, env, stmt.defaults)
+            env.define(name, fnObj)
+            return fnObj
+        elif t == "IF" or t == "JIKA":
+            condExpr = stmt.condition if hasattr(stmt, "condition") else stmt.kondisi
+            condVal = self.evaluate(condExpr, env)
+            thenBranch = stmt.thenBranch if hasattr(stmt, "thenBranch") else stmt.maka
+            elseBranch = stmt.elseBranch if hasattr(stmt, "elseBranch") else stmt.lain
+            if self.isTruthy(condVal):
+                self.execInline(thenBranch, env)
+            elif elseBranch != None:
+                self.execInline(elseBranch, env)
+            return None
+        elif t == "WHILE" or t == "SELAMA":
+            condExpr = stmt.condition if hasattr(stmt, "condition") else stmt.kondisi
+            body = stmt.body if hasattr(stmt, "body") else stmt.badan
+            while self.isTruthy(self.evaluate(condExpr, env)):
+                try:
+                    self.execInline(body, env)
+                except sig:
+                    if hasattr(sig, "isBreak"):
+                        break
+                    elif hasattr(sig, "isContinue"):
+                        continue
+                    else:
+                        raise sig
+            return None
+        elif t == "FOR" or t == "UNTUK":
+            loopScope = Scope(env)
+            initStmt = stmt.init if hasattr(stmt, "init") else stmt.inisialisasi
+            condExpr = stmt.condition if hasattr(stmt, "condition") else stmt.kondisi
+            postExpr = stmt.post if hasattr(stmt, "post") else stmt.pasca
+            body = stmt.body if hasattr(stmt, "body") else stmt.badan
+            if initStmt != None:
+                self.execute(initStmt, loopScope)
+            while self.isTruthy(self.evaluate(condExpr, loopScope)):
+                try:
+                    self.execInline(body, loopScope)
+                except sig:
+                    if hasattr(sig, "isBreak"):
+                        break
+                    elif hasattr(sig, "isContinue"):
+                        pass
+                    else:
+                        raise sig
+                if postExpr != None:
+                    self.evaluate(postExpr, loopScope)
+            return None
+        elif t == "FOR_IN" or t == "UNTUK_DALAM":
+            iterExpr = stmt.iterable if hasattr(stmt, "iterable") else stmt.iter
+            varName = stmt.variable if hasattr(stmt, "variable") else stmt.variabel
+            body = stmt.body if hasattr(stmt, "body") else stmt.badan
+            collection = self.evaluate(iterExpr, env)
+            for item in collection:
+                iterScope = Scope(env)
+                iterScope.define(varName, item)
+                try:
+                    self.execInline(body, iterScope)
+                except sig:
+                    if hasattr(sig, "isBreak"):
+                        break
+                    elif hasattr(sig, "isContinue"):
+                        continue
+                    else:
+                        raise sig
+            return None
+        elif t == "RETURN" or t == "HASIL":
+            valExpr = stmt.value if hasattr(stmt, "value") else stmt.nilai
+            val = self.evaluate(valExpr, env)
+            raise ReturnSignal(val)
+        elif t == "BREAK" or t == "BERHENTI":
+            raise BreakSignal()
+        elif t == "CONTINUE" or t == "LANJUT":
+            raise ContinueSignal()
+        elif t == "TRY" or t == "COBA":
+            tryBlock = stmt.tryBlock if hasattr(stmt, "tryBlock") else stmt.coba_blok
+            catchVar = stmt.catchVar if hasattr(stmt, "catchVar") else stmt.tangkap_var
+            catchBlock = stmt.catchBlock if hasattr(stmt, "catchBlock") else stmt.tangkap_blok
+            finallyBlock = stmt.finallyBlock if hasattr(stmt, "finallyBlock") else stmt.akhirnya_blok
+            try:
+                self.execInline(tryBlock, env)
+            except e:
+                if hasattr(e, "isReturn") or hasattr(e, "isBreak") or hasattr(e, "isContinue"):
+                    raise e
+                if catchBlock != None:
+                    catchScope = Scope(env)
+                    catchScope.define(catchVar, e)
+                    self.execInline(catchBlock, catchScope)
+                else:
+                    if finallyBlock != None:
+                        self.execInline(finallyBlock, env)
+                    raise e
+            if finallyBlock != None:
+                self.execInline(finallyBlock, env)
+            return None
+        elif t == "THROW" or t == "LEMPAR":
+            valExpr = stmt.value if hasattr(stmt, "value") else stmt.nilai
+            val = self.evaluate(valExpr, env)
+            raise val
+        elif t == "CLASS" or t == "KELAS":
+            clsName = stmt.name if hasattr(stmt, "name") else stmt.nama
+            parentName = stmt.baseClass if hasattr(stmt, "baseClass") else stmt.induk
+            methods = stmt.methods if hasattr(stmt, "methods") else stmt.metode
+            clsObj = {"isClass": True, "name": clsName, "parent": parentName, "methods": {}}
+            for m in methods:
+                mName = m.name if hasattr(m, "name") else m.nama
+                mBody = m.body if hasattr(m, "body") else m.badan
+                fnObj = UserFunction(mName, m.params, mBody, env, m.defaults)
+                clsObj["methods"][mName] = fnObj
+                if mName == "__init__" or mName == "konstruktor" or mName == "init" or mName == "constructor":
+                    clsObj["methods"]["constructor"] = fnObj
+            env.define(clsName, clsObj)
+            return None
+        elif t == "EXPR" or t == "EKSPRESI":
+            return self.evaluate(stmt.expr, env)
+        return None
+
+    func evaluate(self, expr, env):
+        if expr == None:
+            return None
+
+        t = self.nodeType(expr)
+
+        if t == "NUMBER" or t == "ANGKA" or t == "STRING" or t == "TEKS" or t == "BOOL":
+            return expr.value if hasattr(expr, "value") else expr.nilai
+        elif t == "NULL" or t == "KOSONG":
+            return None
+        elif t == "IDENT" or t == "PENGENAL":
+            name = expr.name if hasattr(expr, "name") else expr.nama
+            return env.get(name)
+        elif t == "LIST" or t == "LARIK":
+            res = []
+            elements = expr.elements if hasattr(expr, "elements") else expr.elemen
+            for el in elements:
+                res.append(self.evaluate(el, env))
+            return res
+        elif t == "MAP" or t == "PETA":
+            res = {}
+            keys = expr.keys if hasattr(expr, "keys") else expr.kunci
+            values = expr.values if hasattr(expr, "values") else expr.nilai
+            m = panjang(keys)
+            idx = 0
+            while idx < m:
+                k = keys[idx]
+                v = self.evaluate(values[idx], env)
+                res[k] = v
+                idx = idx + 1
+            return res
+        elif t == "BINARY" or t == "BINER":
+            op = expr.op
+            leftExpr = expr.left if hasattr(expr, "left") else expr.kiri
+            rightExpr = expr.right if hasattr(expr, "right") else expr.kanan
+
+            if op == "atau" or op == "or":
+                k = self.evaluate(leftExpr, env)
+                if self.isTruthy(k):
+                    return k
+                return self.evaluate(rightExpr, env)
+            if op == "dan" or op == "and":
+                k = self.evaluate(leftExpr, env)
+                if not self.isTruthy(k):
+                    return k
+                return self.evaluate(rightExpr, env)
+
+            leftVal = self.evaluate(leftExpr, env)
+            rightVal = self.evaluate(rightExpr, env)
+
+            if op == "+":
+                return leftVal + rightVal
+            elif op == "-":
+                return leftVal - rightVal
+            elif op == "*":
+                if (tipe(leftVal) == "teks" or tipe(leftVal) == "string") and tipe(rightVal) == "angka":
+                    r = ""
+                    cnt = int(rightVal)
+                    while cnt > 0:
+                        r = r + leftVal
+                        cnt = cnt - 1
+                    return r
+                return leftVal * rightVal
+            elif op == "/":
+                if rightVal == 0:
+                    print("RuntimeError: Division by zero")
+                    sys.exit(1)
+                    return 0
+                return leftVal / rightVal
+            elif op == "%":
+                return leftVal % rightVal
+            elif op == "==":
+                return leftVal == rightVal
+            elif op == "!=":
+                return leftVal != rightVal
+            elif op == "<":
+                return leftVal < rightVal
+            elif op == "<=":
+                return leftVal <= rightVal
+            elif op == ">":
+                return leftVal > rightVal
+            elif op == ">=":
+                return leftVal >= rightVal
+            elif op == "&":
+                return leftVal & rightVal
+            elif op == "|":
+                return leftVal | rightVal
+            elif op == "^":
+                return leftVal ^ rightVal
+            elif op == "<<":
+                return leftVal << rightVal
+            elif op == ">>":
+                return leftVal >> rightVal
+            elif op == "in" or op == "dalam":
+                if tipe(rightVal) == "peta" or tipe(rightVal) == "larik" or tipe(rightVal) == "teks" or tipe(rightVal) == "string":
+                    return leftVal in rightVal
+                return False
+            return None
+        elif t == "TERNARY" or t == "TERNER":
+            condExpr = expr.condition if hasattr(expr, "condition") else expr.kondisi
+            if self.isTruthy(self.evaluate(condExpr, env)):
+                return self.evaluate(expr.thenVal, env)
+            return self.evaluate(expr.elseVal, env)
+        elif t == "LAMBDA":
+            body = expr.body if hasattr(expr, "body") else expr.badan
+            return UserFunction("lambda", expr.params, body, env)
+        elif t == "UNARY" or t == "UNER":
+            val = self.evaluate(expr.operand, env)
+            if expr.op == "-":
+                return -val
+            elif expr.op == "!" or expr.op == "bukan" or expr.op == "not":
+                return not self.isTruthy(val)
+            return val
+        elif t == "CALL" or t == "PANGGIL":
+            calleeType = self.nodeType(expr.callee)
+            if calleeType == "IDENT" and (expr.callee.name == "super" or expr.callee.name == "induk") and len(expr.args) == 0:
+                selfVal = env.get("self")
+                ownerClass = env.get("__kelasAktif__")
+                return {"isSuperProxy": True, "self": selfVal, "fromClass": ownerClass}
+
+            fnTarget = self.evaluate(expr.callee, env)
+            args = []
+            for a in expr.args:
+                args.append(self.evaluate(a, env))
+
+            if hasattr(fnTarget, "isFunction"):
+                fnScope = Scope(fnTarget.closure)
+                nParams = panjang(fnTarget.params)
+                nArgs = panjang(args)
+                i = 0
+                while i < nParams:
+                    pName = fnTarget.params[i]
+                    if i < nArgs:
+                        fnScope.define(pName, args[i])
+                    elif pName in fnTarget.defaults:
+                        fnScope.define(pName, self.evaluate(fnTarget.defaults[pName], fnScope))
+                    else:
+                        fnScope.define(pName, None)
+                    i = i + 1
+
+                try:
+                    self.execute(fnTarget.body, fnScope)
+                except sig:
+                    if hasattr(sig, "isReturn"):
+                        return sig.val
+                    raise sig
+                return None
+
+            if tipe(fnTarget) == "peta" and "isClass" in fnTarget:
+                instance = {"isInstance": True, "class": fnTarget, "fields": {}}
+                found = self.resolveMethodChain(fnTarget, "constructor", env)
+                ctor = found[0]
+                definingClass = found[1]
+                if ctor != None:
+                    lk = Scope(ctor.closure)
+                    lk.define("self", instance)
+                    lk.define("ini", instance)
+                    lk.define("__kelasAktif__", definingClass)
+                    nP = panjang(ctor.params)
+                    nA = panjang(args)
+                    idx = 0
+                    while idx < nP:
+                        pName = ctor.params[idx]
+                        if pName != "self" and pName != "ini":
+                            argIdx = idx
+                            if "self" in ctor.params or "ini" in ctor.params:
+                                argIdx = idx - 1
+                            val = None
+                            if argIdx >= 0 and argIdx < nA:
+                                val = args[argIdx]
+                            elif pName in ctor.defaults:
+                                val = self.evaluate(ctor.defaults[pName], lk)
+                            lk.define(pName, val)
+                        idx = idx + 1
+                    self.execute(ctor.body, lk)
+                return instance
+
+            if tipe(fnTarget) == "peta" and "isBoundMethod" in fnTarget:
+                m = fnTarget["method"]
+                inst = fnTarget["instance"]
+                lk = Scope(m.closure)
+                lk.define("self", inst)
+                lk.define("ini", inst)
+                lk.define("__kelasAktif__", fnTarget["definingClass"] if "definingClass" in fnTarget else None)
+                nP = panjang(m.params)
+                nA = panjang(args)
+                idx = 0
+                while idx < nP:
+                    pName = m.params[idx]
+                    if pName != "self" and pName != "ini":
+                        argIdx = idx
+                        if "self" in m.params or "ini" in m.params:
+                            argIdx = idx - 1
+                        val = None
+                        if argIdx >= 0 and argIdx < nA:
+                            val = args[argIdx]
+                        elif pName in m.defaults:
+                            val = self.evaluate(m.defaults[pName], lk)
+                        lk.define(pName, val)
+                    idx = idx + 1
+                try:
+                    self.execute(m.body, lk)
+                except sig:
+                    if hasattr(sig, "isReturn"):
+                        return sig.val
+                    raise sig
+                return None
+
+            if hasattr(fnTarget, "__call__"):
+                callFn = getattr(fnTarget, "__call__")
+                nA = panjang(args)
+                if nA == 0:
+                    return callFn()
+                elif nA == 1:
+                    return callFn(args[0])
+                elif nA == 2:
+                    return callFn(args[0], args[1])
+                elif nA == 3:
+                    return callFn(args[0], args[1], args[2])
+                elif nA == 4:
+                    return callFn(args[0], args[1], args[2], args[3])
+                elif nA == 5:
+                    return callFn(args[0], args[1], args[2], args[3], args[4])
+                return callFn(*args)
+
+            isCallableObj = callable(fnTarget)
+            if not isCallableObj and hasattr(fnTarget, "tipe"):
+                tVal = getattr(fnTarget, "tipe")
+                isCallableObj = (tVal == "fungsi" or tVal == "func" or tVal == "function")
+            if isCallableObj:
+                nA = panjang(args)
+                if nA == 0:
+                    return fnTarget()
+                elif nA == 1:
+                    return fnTarget(args[0])
+                elif nA == 2:
+                    return fnTarget(args[0], args[1])
+                elif nA == 3:
+                    return fnTarget(args[0], args[1], args[2])
+                elif nA == 4:
+                    return fnTarget(args[0], args[1], args[2], args[3])
+                elif nA == 5:
+                    return fnTarget(args[0], args[1], args[2], args[3], args[4])
+                return fnTarget(*args)
+
+            print("RuntimeError: Object is not callable")
+            sys.exit(1)
+            return None
+        elif t == "MEMBER":
+            target = self.evaluate(expr.target, env)
+            name = expr.name if hasattr(expr, "name") else expr.nama
+            if tipe(target) == "peta" and "isSuperProxy" in target:
+                ownerClass = target["fromClass"]
+                parentName = ownerClass["parent"] if ownerClass != None else None
+                parentClass = env.get(parentName) if parentName != None else None
+                if parentClass != None:
+                    found = self.resolveMethodChain(parentClass, name, env)
+                    if found[0] != None:
+                        return {"isBoundMethod": True, "instance": target["self"], "method": found[0], "definingClass": found[1]}
+                print("RuntimeError: super has no method '" + str(name) + "'")
+                sys.exit(1)
+            if tipe(target) == "peta" and "isInstance" in target:
+                if name in target["fields"]:
+                    return target["fields"][name]
+                found = self.resolveMethodChain(target["class"], name, env)
+                if found[0] != None:
+                    return {"isBoundMethod": True, "instance": target, "method": found[0], "definingClass": found[1]}
+            if tipe(target) == "peta" and name in target:
+                return target[name]
+            if tipe(target) == "teks" or tipe(target) == "string":
+                if name == "isdigit":
+                    return lambda: target.isdigit()
+                elif name == "isalpha":
+                    return lambda: target.isalpha()
+                elif name == "isalnum":
+                    return lambda: target.isalnum()
+                elif name == "startswith":
+                    return lambda p: target.startswith(p)
+                elif name == "endswith":
+                    return lambda p: target.endswith(p)
+                elif name == "find":
+                    return lambda sub: target.find(sub)
+                elif name == "strip":
+                    return lambda: target.strip()
+                elif name == "lower":
+                    return lambda: target.lower()
+                elif name == "upper":
+                    return lambda: target.upper()
+                elif name == "split":
+                    return lambda sep: target.split(sep)
+            if tipe(target) == "larik" or tipe(target) == "list":
+                if name == "append":
+                    return lambda x: target.append(x)
+                elif name == "pop":
+                    return lambda: target.pop()
+            if hasattr(target, name):
+                return getattr(target, name)
+            return None
+        elif t == "INDEX":
+            target = self.evaluate(expr.target, env)
+            idx = self.evaluate(expr.index, env)
+            return target[idx]
+        elif t == "SLICE" or t == "IRISAN":
+            target = self.evaluate(expr.target, env)
+            s = 0
+            e = panjang(target)
+            startExpr = expr.start if hasattr(expr, "start") else expr.awal
+            stopExpr = expr.stop if hasattr(expr, "stop") else expr.sampai
+            if startExpr != None:
+                s = self.evaluate(startExpr, env)
+            if stopExpr != None:
+                e = self.evaluate(stopExpr, env)
+            return target[s:e]
+        elif t == "ASSIGN" or t == "TUGAS":
+            valExpr = expr.value if hasattr(expr, "value") else expr.nilai
+            val = self.evaluate(valExpr, env)
+            targetType = self.nodeType(expr.target)
+
+            if targetType == "IDENT" or targetType == "PENGENAL":
+                name = expr.target.name if hasattr(expr.target, "name") else expr.target.nama
+                if expr.op == "=":
+                    env.set(name, val)
+                elif expr.op == "+=":
+                    env.set(name, env.get(name) + val)
+                elif expr.op == "-=":
+                    env.set(name, env.get(name) - val)
+                elif expr.op == "*=":
+                    env.set(name, env.get(name) * val)
+                elif expr.op == "/=":
+                    env.set(name, env.get(name) / val)
+                return val
+            elif targetType == "INDEX":
+                t = self.evaluate(expr.target.target, env)
+                idx = self.evaluate(expr.target.index, env)
+                t[idx] = val
+                return val
+            elif targetType == "MEMBER":
+                obj = self.evaluate(expr.target.target, env)
+                mName = expr.target.name if hasattr(expr.target, "name") else expr.target.nama
+                if tipe(obj) == "peta" and "isInstance" in obj:
+                    obj["fields"][mName] = val
+                    return val
+                elif tipe(obj) == "peta":
+                    obj[mName] = val
+                    return val
+
+            print("RuntimeError: Invalid assignment target")
+            sys.exit(1)
+            return None
+
+        return None
+
+    func isTruthy(self, val):
+        if val == None or val == False or val == 0 or val == "":
+            return False
+        return True

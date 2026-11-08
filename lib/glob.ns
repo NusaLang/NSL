@@ -1,0 +1,69 @@
+import os
+import fnmatch
+
+def _has_magic(s):
+    return "*" in s or "?" in s or "[" in s
+
+def _walk(top):
+    out = []
+    try:
+        names = os.listdir(top)
+    except Exception:
+        return out
+    for n in names:
+        p = top + "/" + n if top != "" else n
+        out.append(p)
+        if os.path.isdir(p):
+            out.extend(_walk(p))
+    return out
+
+def glob(pattern, recursive=False):
+    if not _has_magic(pattern):
+        return [pattern] if os.path.exists(pattern) else []
+    parts = pattern.split("/")
+    results = [""] if not pattern.startswith("/") else ["/"]
+    if pattern.startswith("/"):
+        parts = parts[1:]
+    for idx in range(len(parts)):
+        part = parts[idx]
+        last = idx == len(parts) - 1
+        nxt = []
+        for base in results:
+            if part == "**" and recursive:
+                nxt.append(base)
+                top = base if base != "" else "."
+                for p in _walk(top):
+                    if os.path.isdir(p):
+                        nxt.append(p[2:] if p.startswith("./") else p)
+            elif _has_magic(part):
+                d = base if base != "" else "."
+                try:
+                    names = os.listdir(d)
+                except Exception:
+                    names = []
+                for n in names:
+                    if n.startswith(".") and not part.startswith("."):
+                        continue
+                    if fnmatch.fnmatch(n, part):
+                        p = n if base == "" else (base + n if base.endswith("/") else base + "/" + n)
+                        if last or os.path.isdir(p):
+                            nxt.append(p)
+            else:
+                p = part if base == "" else (base + part if base.endswith("/") else base + "/" + part)
+                if os.path.exists(p):
+                    nxt.append(p)
+        results = nxt
+    return sorted(set(results))
+
+def iglob(pattern, recursive=False):
+    for p in glob(pattern, recursive):
+        yield p
+
+def escape(pathname):
+    out = ""
+    for c in pathname:
+        if c in "*?[":
+            out += "[" + c + "]"
+        else:
+            out += c
+    return out

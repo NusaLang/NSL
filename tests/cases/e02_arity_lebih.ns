@@ -1,2 +1,0 @@
-fungsi tambah(a, b) { hasil a + b; }
-cetak(tambah(1, 2, 3));

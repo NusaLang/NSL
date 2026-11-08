@@ -18,20 +18,29 @@ install_prebuilt() {
     PLUGIN_ASSET="$2"
     command -v curl >/dev/null 2>&1 || fail "curl tidak ditemukan."
     INSTALL_DIR="${NUSA_INSTALL_DIR:-$HOME/.local/bin}"
+    DATA_DIR="${NUSA_DATA_DIR:-$HOME/.local/share/nusa}"
     mkdir -p "$INSTALL_DIR"
 
-    info "Ambil binary jadi ($ASSET) ..."
-    curl -fsSL "$RELEASE_BASE/$ASSET" -o "$INSTALL_DIR/nusa.new" ||
+    info "Ambil bundle ($ASSET.tar.gz) ..."
+    TMP_TGZ="$(mktemp)"
+    curl -fsSL "$RELEASE_BASE/$ASSET.tar.gz" -o "$TMP_TGZ" ||
         fail "gagal download -- cek koneksi, atau lihat rilis manual di github.com/NusaLang/NSL/releases"
+    rm -rf "$DATA_DIR"
+    mkdir -p "$DATA_DIR"
+    tar -xzf "$TMP_TGZ" -C "$DATA_DIR" || fail "gagal ekstrak bundle"
+    rm -f "$TMP_TGZ"
+    chmod +x "$DATA_DIR/nusa" "$DATA_DIR/nusa-engine" 2>/dev/null || true
+
+    printf '#!/bin/sh\nexec "%s/nusa" "$@"\n' "$DATA_DIR" > "$INSTALL_DIR/nusa.new"
     chmod +x "$INSTALL_DIR/nusa.new"
     mv "$INSTALL_DIR/nusa.new" "$INSTALL_DIR/nusa"
-    info "Terpasang di $INSTALL_DIR/nusa"
+    info "Terpasang di $INSTALL_DIR/nusa (file pendukung di $DATA_DIR)"
 
     if [ -n "$PLUGIN_ASSET" ]; then
         info "Ambil plugin native ($PLUGIN_ASSET) ..."
-        rm -rf "$INSTALL_DIR/nusantara-plugins"
-        mkdir -p "$INSTALL_DIR/nusantara-plugins"
-        curl -fsSL "$RELEASE_BASE/$PLUGIN_ASSET" | tar -xz -C "$INSTALL_DIR/nusantara-plugins" ||
+        rm -rf "$DATA_DIR/nusantara-plugins"
+        mkdir -p "$DATA_DIR/nusantara-plugins"
+        curl -fsSL "$RELEASE_BASE/$PLUGIN_ASSET" | tar -xz -C "$DATA_DIR/nusantara-plugins" ||
             info "Gagal ambil plugin -- nusa tetap jalan, cuma fitur muat_plugin() yang kena."
     fi
 }

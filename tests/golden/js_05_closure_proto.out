@@ -1,5 +1,0 @@
-closure counter: 2
-prototype toString: (0, 0) (3, 4)
-prototype method: 5
-error handling: true true
---- exit: 0

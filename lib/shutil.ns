@@ -1,0 +1,48 @@
+import os
+
+def copyfile(src, dst):
+    _os_copyfile(src, dst)
+    return dst
+
+def copy(src, dst):
+    if os.path.isdir(dst):
+        dst = dst + "/" + os.path.basename(src)
+    _os_copyfile(src, dst)
+    return dst
+
+copy2 = copy
+
+def copytree(src, dst, dirs_exist_ok=False):
+    os.makedirs(dst)
+    for n in os.listdir(src):
+        s = src + "/" + n
+        d = dst + "/" + n
+        if os.path.isdir(s):
+            copytree(s, d)
+        else:
+            _os_copyfile(s, d)
+    return dst
+
+def move(src, dst):
+    if os.path.isdir(dst):
+        dst = dst + "/" + os.path.basename(src)
+    os.rename(src, dst)
+    return dst
+
+def rmtree(path, ignore_errors=False):
+    _os_rmtree(path)
+
+def which(cmd):
+    if "/" in cmd:
+        return cmd if os.path.exists(cmd) else None
+    for d in (os.getenv("PATH") or "").split(":"):
+        p = d + "/" + cmd
+        if os.path.isfile(p):
+            return p
+    return None
+
+def disk_usage(path):
+    return {"total": 0, "used": 0, "free": 0}
+
+def get_terminal_size():
+    return (80, 24)

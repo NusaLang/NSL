@@ -1,0 +1,136 @@
+getcwd = _os_getcwd
+chdir = _os_chdir
+listdir = _os_listdir
+mkdir = _os_mkdir
+makedirs = _os_makedirs
+remove = _os_remove
+unlink = _os_remove
+rmdir = _os_rmdir
+rename = _os_rename
+replace = _os_rename
+system = _os_system
+getpid = _os_getpid
+cpu_count = _os_cpu_count
+environ = _os_environ()
+sep = "/"
+pathsep = ":"
+name = "posix"
+linesep = "\n"
+curdir = "."
+pardir = ".."
+
+def getenv(key, default=None):
+    return _os_getenv(key, default)
+
+def putenv(key, value):
+    environ[key] = value
+
+def getmtime(p):
+    return _os_mtime(p)
+
+def _isabs(p):
+    return p.startswith("/")
+
+def _normpath(p):
+    if p == "":
+        return "."
+    absolute = p.startswith("/")
+    segs = []
+    for s in p.split("/"):
+        if s == "" or s == ".":
+            continue
+        if s == "..":
+            if len(segs) > 0 and segs[-1] != "..":
+                segs.pop()
+            elif not absolute:
+                segs.append("..")
+        else:
+            segs.append(s)
+    out = "/".join(segs)
+    if absolute:
+        return "/" + out
+    return out if out != "" else "."
+
+def _split(p):
+    i = p.rfind("/")
+    if i < 0:
+        return ("", p)
+    head = p[:i + 1]
+    if head != "/" * len(head):
+        head = head.rstrip("/")
+    return (head, p[i + 1:])
+
+def _relpath(p, start="."):
+    a = _normpath(_os_abspath(p)).split("/")
+    b = _normpath(_os_abspath(start)).split("/")
+    i = 0
+    while i < len(a) and i < len(b) and a[i] == b[i]:
+        i += 1
+    parts = [".."] * (len(b) - i) + a[i:]
+    return "/".join(parts) if len(parts) > 0 else "."
+
+def _splitext_all(p):
+    return _os_splitext(p)
+
+path = {"join": _os_join, "exists": _os_exists, "isfile": _os_isfile, "isdir": _os_isdir,
+        "getsize": _os_getsize, "abspath": _os_abspath, "basename": _os_basename,
+        "dirname": _os_dirname, "splitext": _os_splitext, "expanduser": _os_expanduser, "sep": "/",
+        "getmtime": _os_mtime, "isabs": _isabs, "normpath": _normpath, "split": _split,
+        "realpath": _os_abspath, "relpath": _relpath, "lexists": _os_exists,
+        "islink": lambda p: False, "expandvars": lambda p: p}
+
+class DirEntry:
+    def __init__(self, dirpath, n):
+        self.name = n
+        self.path = dirpath + "/" + n if dirpath != "" else n
+    def is_dir(self):
+        return _os_isdir(self.path)
+    def is_file(self):
+        return _os_isfile(self.path)
+    def is_symlink(self):
+        return False
+    def stat(self):
+        return stat(self.path)
+
+def scandir(p="."):
+    return [DirEntry(p, n) for n in _os_listdir(p)]
+
+def walk(top, topdown=True):
+    dirs = []
+    files = []
+    for n in _os_listdir(top):
+        if _os_isdir(top + "/" + n):
+            dirs.append(n)
+        else:
+            files.append(n)
+    if topdown:
+        yield (top, dirs, files)
+    for d in dirs:
+        yield from walk(top + "/" + d, topdown)
+    if not topdown:
+        yield (top, dirs, files)
+
+class stat_result:
+    def __init__(self, p):
+        self.st_size = _os_getsize(p) if _os_isfile(p) else 0
+        self.st_mtime = _os_mtime(p)
+        self.st_mode = 0o40755 if _os_isdir(p) else 0o100644
+
+def stat(p):
+    return stat_result(p)
+
+def chmod(p, mode):
+    _os_system("chmod " + oct(mode)[2:] + " '" + p + "'")
+
+def urandom(n):
+    import random
+    return "".join([chr(random.randint(0, 255)) for i in range(n)])
+
+def get_terminal_size():
+    return (80, 24)
+
+def kill(pid, sig):
+    _os_system("kill -" + str(sig) + " " + str(pid))
+
+def isatty(fd):
+    return False

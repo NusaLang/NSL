@@ -1,0 +1,252 @@
+tcpConnect = tcp_konek
+tcpSend = tcp_kirim
+tcpReceive = tcp_terima
+tcpClose = tcp_tutup
+
+wsOpCont = 0
+wsOpText = 1
+wsOpBinary = 2
+wsOpClose = 8
+wsOpPing = 9
+wsOpPong = 10
+
+func toHexByte(b):
+    hexChars = "0123456789abcdef"
+    return hexChars[(b >> 4) & 15] + hexChars[b & 15]
+
+func packU16Be(val):
+    return chr((val >> 8) & 255) + chr(val & 255)
+
+func wsMakeFrame(payload, opcode = 1, isClient = True):
+    n = len(payload)
+    hdr = chr(128 | (opcode & 15))
+    mbit = 128 if isClient else 0
+
+    if n < 126:
+        hdr += chr(mbit | n)
+    elif n < 65536:
+        hdr += chr(mbit | 126) + packU16Be(n)
+    else:
+        hdr += chr(mbit | 127)
+        i = 7
+        while i >= 0:
+            hdr += chr((n >> (i * 8)) & 255)
+            i -= 1
+
+    if isClient:
+        m0 = 18
+        m1 = 52
+        m2 = 86
+        m3 = 120
+        hdr += chr(m0) + chr(m1) + chr(m2) + chr(m3)
+        mask = [m0, m1, m2, m3]
+        masked = ""
+        i = 0
+        while i < n:
+            b = ord(payload[i]) ^ mask[i % 4]
+            masked += chr(b)
+            i += 1
+        return hdr + masked
+
+    return hdr + payload
+
+wsBuatFrame = wsMakeFrame
+
+func wsParseFrame(data):
+    res = {
+        "ok": False,
+        "fin": False,
+        "opcode": 0,
+        "payload": "",
+        "consumed": 0
+    }
+
+    n = len(data)
+    if n < 2:
+        return res
+
+    b0 = ord(data[0])
+    b1 = ord(data[1])
+
+    fin = (b0 & 128) != 0
+    opcode = b0 & 15
+    masked = (b1 & 128) != 0
+    plen = b1 & 127
+    pos = 2
+
+    if plen == 126:
+        if n < pos + 2:
+            return res
+        plen = (ord(data[pos]) << 8) | ord(data[pos + 1])
+        pos += 2
+    elif plen == 127:
+        if n < pos + 8:
+            return res
+        plen = 0
+        i = 0
+        while i < 8:
+            plen = (plen << 8) | ord(data[pos + i])
+            i += 1
+        pos += 8
+
+    mask = [0, 0, 0, 0]
+    if masked:
+        if n < pos + 4:
+            return res
+        mask[0] = ord(data[pos])
+        mask[1] = ord(data[pos + 1])
+        mask[2] = ord(data[pos + 2])
+        mask[3] = ord(data[pos + 3])
+        pos += 4
+
+    if n < pos + plen:
+        return res
+
+    rawPayload = data[pos:pos + plen]
+    payload = ""
+    if masked:
+        i = 0
+        while i < plen:
+            payload += chr(ord(rawPayload[i]) ^ mask[i % 4])
+            i += 1
+    else:
+        payload = rawPayload
+
+    res["ok"] = True
+    res["fin"] = fin
+    res["opcode"] = opcode
+    res["payload"] = payload
+    res["consumed"] = pos + plen
+    return res
+
+wsUraiFrame = wsParseFrame
+
+wsSessions = {}
+wsNextId = 1
+
+func wsOpen(url, headersJson = "{}"):
+    global wsNextId, wsSessions
+    schema = "ws"
+    rem = url
+    if url.startswith("ws://"):
+        schema = "ws"
+        rem = url[5:]
+    elif url.startswith("wss://"):
+        schema = "wss"
+        rem = url[6:]
+
+    spos = rem.find("/")
+    hostPort = rem if spos == -1 else rem[:spos]
+    path = "/" if spos == -1 else rem[spos:]
+
+    cpos = hostPort.find(":")
+    host = hostPort if cpos == -1 else hostPort[:cpos]
+    port = (80 if schema == "ws" else 443) if cpos == -1 else float(hostPort[cpos + 1:])
+
+    fd = tcpConnect(host, port)
+    if fd < 0:
+        return "{\"ok\": false, \"error\": \"failed to connect to " + host + "\"}"
+
+    key = "dGhlIHNhbXBsZSBub25jZQ=="
+
+    req = (
+        "GET " + path + " HTTP/1.1\r\n" +
+        "Host: " + host + "\r\n" +
+        "Upgrade: websocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        "Sec-WebSocket-Key: " + key + "\r\n" +
+        "Sec-WebSocket-Version: 13\r\n\r\n"
+    )
+
+    tcpSend(fd, req)
+
+    resp = ""
+    while resp.find("\r\n\r\n") == -1:
+        chunk = tcpReceive(fd, 1024)
+        if chunk == "":
+            break
+        resp += chunk
+
+    if resp.find("101 Switching Protocols") == -1 and resp.find("101") == -1:
+        tcpClose(fd)
+        return "{\"ok\": false, \"error\": \"handshake rejected: response not 101\"}"
+
+    id = wsNextId
+    wsNextId += 1
+    wsSessions[id] = {
+        "fd": fd,
+        "buffer": ""
+    }
+
+    return "{\"ok\": true, \"id\": " + str(id) + "}"
+
+wsBuka = wsOpen
+
+func wsSend(id, msg):
+    if not (id in wsSessions):
+        return False
+    s = wsSessions[id]
+    frame = wsMakeFrame(msg, wsOpText, True)
+    res = tcpSend(s["fd"], frame)
+    return res > 0
+
+wsKirim = wsSend
+
+func wsSendBinary(id, hexData):
+    if not (id in wsSessions):
+        return False
+    s = wsSessions[id]
+    binStr = ""
+    n = len(hexData)
+    i = 0
+    while i < n:
+        hi = ord(hexData[i])
+        lo = ord(hexData[i + 1])
+        vhi = (hi - 48) if (hi >= 48 and hi <= 57) else ((hi - 87) if hi >= 97 else (hi - 55))
+        vlo = (lo - 48) if (lo >= 48 and lo <= 57) else ((lo - 87) if lo >= 97 else (lo - 55))
+        binStr += chr((vhi << 4) | vlo)
+        i += 2
+    frame = wsMakeFrame(binStr, wsOpBinary, True)
+    res = tcpSend(s["fd"], frame)
+    return res > 0
+
+wsKirimBiner = wsSendBinary
+
+func wsReceive(id, timeoutMs = 1000):
+    if not (id in wsSessions):
+        return "{\"ok\": false, \"error\": \"session not found\"}"
+    s = wsSessions[id]
+
+    while True:
+        parsed = wsParseFrame(s["buffer"])
+        if parsed["ok"]:
+            s["buffer"] = s["buffer"][parsed["consumed"]:]
+            if parsed["opcode"] == wsOpPing:
+                pong = wsMakeFrame(parsed["payload"], wsOpPong, True)
+                tcpSend(s["fd"], pong)
+                continue
+            elif parsed["opcode"] == wsOpClose:
+                wsClose(id)
+                return "{\"ok\": false, \"error\": \"connection closed by server\"}"
+            return "{\"ok\": true, \"pesan\": \"" + parsed["payload"] + "\", \"opcode\": " + str(parsed["opcode"]) + "}"
+
+        chunk = tcpReceive(s["fd"], 4096)
+        if chunk == "":
+            break
+        s["buffer"] += chunk
+
+    return "{\"ok\": false, \"error\": \"timeout / connection closed\"}"
+
+wsTerima = wsReceive
+
+func wsClose(id):
+    if not (id in wsSessions):
+        return False
+    s = wsSessions[id]
+    closeFrame = wsMakeFrame("", wsOpClose, True)
+    tcpSend(s["fd"], closeFrame)
+    tcpClose(s["fd"])
+    hapus wsSessions[id]
+    return True
+
+wsTutup = wsClose

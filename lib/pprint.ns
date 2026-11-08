@@ -1,0 +1,9 @@
+import json
+
+def pformat(obj, indent=1, width=80, **kw):
+    return json.dumps(obj, indent=max(indent, 2), sort_keys=False)
+
+def pprint(obj, *args, **kw):
+    print(pformat(obj))
+
+pp = pprint

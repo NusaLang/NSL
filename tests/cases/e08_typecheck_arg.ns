@@ -1,2 +1,0 @@
-fungsi luas(p: angka, l: angka): angka { hasil p * l; }
-cetak(luas("delapan", 5));

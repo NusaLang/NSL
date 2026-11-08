@@ -1,0 +1,90 @@
+import sys
+
+func loadModule(name):
+    candidates = [
+        name,
+        "core/" + name,
+        "core/parser/" + name,
+        "core/virtual/" + name,
+        "core/interpreter/" + name
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor("core/" + name)
+
+Lexer = loadModule("parser/lexer").Lexer
+Parser = loadModule("parser/parser").Parser
+JalankanPerintah = jalankan_perintah
+FileAda = file_ada
+BacaFile = baca_file
+TulisFile = tulis_file
+
+func compile(inputFile, outputFile):
+    if not FileAda(inputFile):
+        print("error: file '" + inputFile + "' not found")
+        sys.exit(1)
+
+    try:
+        source = BacaFile(inputFile)
+        lex = Lexer(source)
+        tokens = lex.tokenize()
+        parser = Parser(tokens)
+        parser.parse()
+
+        cleanSource = source
+        if cleanSource.startswith("#!"):
+            nl = cleanSource.find("\n")
+            if nl != -1:
+                cleanSource = cleanSource[nl + 1:]
+
+        bundle = "#!/usr/bin/env nusa\n" + cleanSource
+        TulisFile(outputFile, bundle)
+        JalankanPerintah("chmod", ["+x", outputFile])
+    except e:
+        print("compile error: " + str(e))
+        sys.exit(1)
+
+func compileNative(inputFile, outputFile):
+    NativeCompiler = loadModule("compiler/native.ns").NativeCompiler
+    tree = Parser(Lexer(BacaFile(inputFile)).tokenize()).parse()
+    asm = NativeCompiler().compile(tree)
+    asmPath = outputFile + ".s"
+    objPath = outputFile + ".o"
+    TulisFile(asmPath, asm)
+    JalankanPerintah("as", ["-o", objPath, asmPath])
+    JalankanPerintah("ld", ["-o", outputFile, objPath])
+    JalankanPerintah("rm", ["-f", objPath, asmPath])
+
+func main():
+    args = sys.argv
+    if len(args) < 2:
+        print("usage: nusa compiler/nsc.ns <file.ns> [-o output] [--native]")
+        sys.exit(1)
+
+    inputFile = args[1]
+    outputFile = "a.out"
+    isNative = False
+
+    i = 2
+    while i < len(args):
+        if (args[i] == "-o" or args[i] == "--output") and i + 1 < len(args):
+            outputFile = args[i + 1]
+            i += 2
+        elif args[i] == "-n" or args[i] == "--native":
+            isNative = True
+            i += 1
+        else:
+            i += 1
+
+    if isNative:
+        compileNative(inputFile, outputFile)
+    else:
+        compile(inputFile, outputFile)
+
+if len(sys.argv) > 0:
+    firstArg = sys.argv[0]
+    if "nsc.ns" in firstArg or (len(sys.argv) > 1 and "nsc.ns" in sys.argv[1]):
+        main()

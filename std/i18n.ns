@@ -1,0 +1,23 @@
+currentLang = "id"
+
+func setLang(lang):
+    global currentLang
+    if lang == "en" or lang == "EN":
+        currentLang = "en"
+    else:
+        currentLang = "id"
+
+func getLang():
+    return currentLang
+
+func isEn():
+    return currentLang == "en"
+
+func tr(textId, textEn):
+    if isEn():
+        return textEn
+    return textId
+
+aturBahasa = setLang
+ambilBahasa = getLang
+apakahEn = isEn

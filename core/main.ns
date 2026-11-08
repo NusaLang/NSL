@@ -1,0 +1,405 @@
+import sys
+
+func fail(msg):
+    print("nusa: " + msg)
+    sys.exit(1)
+
+func loadMod(name):
+    candidates = [
+        name,
+        "core/" + name,
+        "core/virtual/" + name,
+        "core/interpreter/" + name,
+        "core/parser/" + name,
+        "core/types/" + name,
+        "virtual/" + name,
+        "interpreter/" + name,
+        "parser/" + name,
+        "types/" + name
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    fail("cannot load module " + name)
+
+Lexer = loadMod("parser/lexer").Lexer
+Parser = loadMod("parser/parser").Parser
+Interpreter = loadMod("interpreter/interpreter").Interpreter
+VmCompiler = loadMod("virtual/vm").VmCompiler
+VmRunner = loadMod("virtual/vm").VmRunner
+JalankanPerintah = jalankan_perintah
+FileAda = file_ada
+BacaFile = baca_file
+TulisFile = tulis_file
+
+USAGE = """usage: nusa [options] [-c code | -m module | file | -] [args]
+  -c code      run code from the command line
+  -m module    run a module by name
+  -            read the program from stdin
+  -i           open a REPL after running
+  -q           no REPL banner
+  -x           skip the first line of the source
+  -k, --check  parse only
+  --vm         run on the bytecode VM
+  --tokens     dump tokens before running
+  --ast        dump the AST before running
+  -V, --version
+  -h, --help
+  build [dir|file] [-o out] [--native] [--watch]   bundle a program into script or native binary, rebuild on save with --watch
+  get <git-url>[@version] [name]   fetch a package into nusa_packages/, record it in nusa.json
+  mod tidy                    fetch everything listed in nusa.json, write nusa-l.json
+  start                       run scripts.start (or main) from nusa.json
+  run file                    same as passing the file directly
+  repl"""
+
+func parse(src, tokens = False, ast = False):
+    toks = Lexer(src).tokenize()
+    if tokens:
+        for t in toks:
+            print(t)
+    tree = Parser(toks).parse()
+    if ast:
+        print(tree)
+    return tree
+
+func exec(src, vm, tokens, ast, runtime = None):
+    tree = parse(src, tokens, ast)
+    if vm:
+        VmRunner().run(VmCompiler().compile(tree))
+        return None
+    if runtime == None:
+        runtime = Interpreter()
+    runtime.run(tree)
+    return runtime
+
+func readSource(path, skipFirst):
+    if not FileAda(path):
+        fail("cannot open " + path)
+    src = BacaFile(path)
+    if skipFirst or src.startswith("#!"):
+        nl = src.find("\n")
+        if nl != -1:
+            src = src[nl + 1:]
+    return src
+
+func guarded(fn):
+    try:
+        return fn()
+    except e:
+        fail(str(e))
+
+func findModule(name):
+    for c in [name, name + ".ns", name + "/main.ns", "std/" + name + ".ns", "core/" + name + ".ns", "core/virtual/" + name + ".ns", "core/interpreter/" + name + ".ns", "core/parser/" + name + ".ns", "core/types/" + name + ".ns", "lib/" + name + ".ns"]:
+        if FileAda(c):
+            return c
+    fail("no module named " + name)
+
+func readStdin():
+    if FileAda("/dev/stdin"):
+        return BacaFile("/dev/stdin")
+    lines = []
+    while True:
+        try:
+            lines.append(input())
+        except e:
+            break
+    return "\n".join(lines)
+
+func repl(runtime, banner):
+    if banner:
+        print("nusa 0.0.2-rc2 - type exit to quit")
+    if runtime == None:
+        runtime = Interpreter()
+    buf = ""
+    while True:
+        try:
+            line = input("... " if len(buf) > 0 else ">>> ")
+        except e:
+            print("")
+            break
+        if line == "exit" or line == "exit()" or line == "quit()":
+            break
+        if line.endswith(":") or (len(buf) > 0 and line != ""):
+            buf = buf + line + "\n"
+            continue
+        code = buf if len(buf) > 0 else line
+        buf = ""
+        if code == "":
+            continue
+        try:
+            runtime.run(parse(code))
+        except e:
+            print("error: " + str(e))
+
+func loadJson():
+    try:
+        return impor("../crypto/json.ns")
+    except e:
+        return impor("crypto/json.ns")
+
+func readManifest(path):
+    if not FileAda(path):
+        return {"dependencies": {}}
+    data = loadJson().parse(BacaFile(path))
+    if not ("dependencies" in data):
+        data["dependencies"] = {}
+    return data
+
+func writeManifest(path, data):
+    TulisFile(path, loadJson().stringify(data))
+
+func splitVersion(url):
+    atIdx = url.rfind("@")
+    slashIdx = url.rfind("/")
+    if atIdx > slashIdx:
+        return [url[:atIdx], url[atIdx + 1:]]
+    return [url, None]
+
+func fetchPackage(urlWithVersion, name):
+    parts = splitVersion(urlWithVersion)
+    url = parts[0]
+    version = parts[1]
+    bare = url[:len(url) - 4] if url.endswith(".git") else url
+    pkgName = name if name != None else bare.split("/")[-1]
+    packagesDir = "nusa_packages"
+    dest = packagesDir + "/" + pkgName
+    if FileAda(dest):
+        return pkgName
+    JalankanPerintah("mkdir", ["-p", packagesDir])
+    cloneArgs = ["clone", "--depth", "1"]
+    if version != None:
+        cloneArgs = cloneArgs + ["--branch", version]
+    cloneArgs = cloneArgs + [url, dest]
+    res = JalankanPerintah("git", cloneArgs)
+    if res.status != 0:
+        fail("gagal clone " + url + ": " + res.error)
+    return pkgName
+
+func get(args):
+    if len(args) < 3:
+        fail("get needs a git url")
+    urlWithVersion = args[2]
+    name = args[3] if len(args) > 3 else None
+    pkgName = fetchPackage(urlWithVersion, name)
+    manifest = readManifest("nusa.json")
+    manifest["dependencies"][pkgName] = urlWithVersion
+    writeManifest("nusa.json", manifest)
+    print("terpasang di nusa_packages/" + pkgName)
+
+func modTidy():
+    manifest = readManifest("nusa.json")
+    deps = manifest["dependencies"]
+    lock = {}
+    for depName in deps:
+        urlWithVersion = deps[depName]
+        pkgName = fetchPackage(urlWithVersion, depName)
+        parts = splitVersion(urlWithVersion)
+        lock[depName] = {"resolved": parts[0], "version": parts[1] if parts[1] != None else "latest"}
+    writeManifest("nusa-l.json", lock)
+    print("nusa_packages/ sinkron dengan nusa.json (" + str(len(deps)) + " dependensi)")
+
+func start(args):
+    manifest = readManifest("nusa.json")
+    scripts = manifest["scripts"] if "scripts" in manifest else {}
+    entry = scripts["start"] if "start" in scripts else (manifest["main"] if "main" in manifest else None)
+    if entry == None:
+        fail("nusa.json tidak punya scripts.start atau main")
+    guarded(lambda: exec(readSource(entry, False), False, False, False))
+
+func doBuild(entry, out, isNative):
+    src = BacaFile(entry)
+    tree = parse(src)
+    if isNative:
+        nativeMod = None
+        try:
+            nativeMod = impor("../compiler/native.ns")
+        except e:
+            try:
+                nativeMod = impor("compiler/native.ns")
+            except e2:
+                nativeMod = impor("native")
+        NativeCompiler = nativeMod.NativeCompiler
+        compiler = NativeCompiler()
+        asm = compiler.compile(tree)
+        asmPath = out + ".s"
+        objPath = out + ".o"
+        TulisFile(asmPath, asm)
+        asRes = JalankanPerintah("as", ["-o", objPath, asmPath])
+        if asRes.status != 0:
+            lempar "as gagal: " + asRes.error
+        if compiler.usesGoBridge:
+            bridgeA = nativeMod.buildGoBridge()
+            linkRes = JalankanPerintah("cc", ["-o", out, objPath, bridgeA, "-lpthread", "-no-pie"])
+        else:
+            linkRes = JalankanPerintah("ld", ["-o", out, objPath])
+        if linkRes.status != 0:
+            lempar "link gagal: " + linkRes.error
+        JalankanPerintah("rm", ["-f", objPath, asmPath])
+    else:
+        TulisFile(out, "#!/usr/bin/env nusa\n" + src)
+        JalankanPerintah("chmod", ["+x", out])
+
+func mtimeOf(path):
+    res = JalankanPerintah("stat", ["-c", "%Y", path])
+    if res.status != 0:
+        return "0"
+    out = res.keluaran
+    if len(out) > 0 and out[len(out) - 1] == "\n":
+        out = out[:len(out) - 1]
+    return out
+
+func watchLoop(entry, out, isNative):
+    print("watch: memantau " + entry + " (ctrl-c buat keluar)")
+    last = mtimeOf(entry)
+    while True:
+        JalankanPerintah("sleep", ["0.3"])
+        cur = mtimeOf(entry)
+        if cur != last:
+            last = cur
+            print("build ulang: " + entry)
+            try:
+                doBuild(entry, out, isNative)
+                print("sukses")
+            except e:
+                print("gagal: " + str(e))
+
+func build(args):
+    target = "."
+    out = ""
+    isNative = False
+    watch = False
+    i = 2
+    while i < len(args):
+        if (args[i] == "-o" or args[i] == "--output") and i + 1 < len(args):
+            out = args[i + 1]
+            i += 2
+        elif args[i] == "-n" or args[i] == "--native":
+            isNative = True
+            i += 1
+        elif args[i] == "--watch":
+            watch = True
+            i += 1
+        else:
+            if target == ".":
+                target = args[i]
+            i += 1
+
+    entry = target
+    if not target.endswith(".ns"):
+        entry = ""
+        for c in [target + "/main.ns", target + "/core/main.ns"]:
+            if FileAda(c):
+                entry = c
+                break
+        if entry == "":
+            fail("no main.ns in " + target)
+        if out == "":
+            out = "a.out" if target == "." else target
+    elif not FileAda(entry):
+        fail("cannot open " + entry)
+    elif out == "":
+        out = entry[:len(entry) - 3]
+
+    try:
+        doBuild(entry, out, isNative)
+    except e:
+        fail(str(e))
+
+    if watch:
+        watchLoop(entry, out, isNative)
+
+func main():
+    args = sys.argv
+    n = len(args)
+    inspect = False
+    quiet = False
+    skipFirst = False
+    vm = False
+    tokens = False
+    ast = False
+    mode = ""
+    arg = ""
+    rest = []
+
+    i = 1
+    while i < n and mode == "":
+        a = args[i]
+        if a == "-h" or a == "--help" or a == "help":
+            print(USAGE)
+            sys.exit(0)
+        elif a == "-V" or a == "-v" or a == "--version" or a == "version":
+            print("nusa 0.0.2-rc2")
+            sys.exit(0)
+        elif a == "build":
+            build(args)
+            sys.exit(0)
+        elif a == "get":
+            get(args)
+            sys.exit(0)
+        elif a == "mod":
+            if i + 1 < n and args[i + 1] == "tidy":
+                modTidy()
+            else:
+                fail("usage: nusa mod tidy")
+            sys.exit(0)
+        elif a == "start":
+            start(args)
+            sys.exit(0)
+        elif a == "repl":
+            mode = "repl"
+        elif a == "run" or a == "-m" or a == "-c" or a == "-e" or a == "--eval" or a == "-k" or a == "--check":
+            if i + 1 >= n:
+                fail(a + " needs an argument")
+            arg = args[i + 1]
+            rest = args[i + 1:]
+            mode = {"run": "file", "-m": "module", "-c": "eval", "-e": "eval", "--eval": "eval", "-k": "check", "--check": "check"}[a]
+            if mode == "eval" or mode == "module":
+                rest = [a] + args[i + 2:]
+        elif a == "-":
+            mode = "stdin"
+            rest = args[i:]
+        elif a == "--vm":
+            vm = True
+        elif a == "--tokens":
+            tokens = True
+        elif a == "--ast":
+            ast = True
+        elif a == "-i":
+            inspect = True
+        elif a == "-q":
+            quiet = True
+        elif a == "-x":
+            skipFirst = True
+        elif a.startswith("-") and len(a) > 1:
+            fail("unknown option " + a)
+        else:
+            mode = "file"
+            arg = a
+            rest = args[i:]
+        i += 1
+
+    if len(rest) > 0:
+        sys.argv = rest
+
+    runtime = None
+    if mode == "file":
+        runtime = guarded(lambda: exec(readSource(arg, skipFirst), vm, tokens, ast))
+    elif mode == "eval":
+        runtime = guarded(lambda: exec(arg, vm, tokens, ast))
+    elif mode == "module":
+        runtime = guarded(lambda: exec(readSource(findModule(arg), skipFirst), vm, tokens, ast))
+    elif mode == "stdin":
+        runtime = guarded(lambda: exec(readStdin(), vm, tokens, ast))
+    elif mode == "check":
+        guarded(lambda: parse(readSource(arg, False)))
+        sys.exit(0)
+    else:
+        repl(None, not quiet)
+        sys.exit(0)
+
+    if inspect:
+        repl(runtime, not quiet)
+
+main()

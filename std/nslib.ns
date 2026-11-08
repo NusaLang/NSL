@@ -1,0 +1,726 @@
+digitChars = "0123456789"
+lowerChars = "abcdefghijklmnopqrstuvwxyz"
+upperChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+spaceChars = " \t\n\r\v\f"
+
+func isSpace(c):
+    return c in spaceChars
+
+func isDigit(c):
+    return c in digitChars
+
+func isAlpha(c):
+    return (c in lowerChars) or (c in upperChars)
+
+func isAlnum(c):
+    return isDigit(c) or isAlpha(c)
+
+isspace = isSpace
+isdigit = isDigit
+isalpha = isAlpha
+isalnum = isAlnum
+apakahSpasi = isSpace
+apakahDigit = isDigit
+apakahAlfabet = isAlpha
+apakahAlfanumerik = isAlnum
+
+func find(s, sub, start = 0):
+    n = len(s)
+    slen = len(sub)
+    if slen == 0:
+        return start
+    i = start
+    while i <= n - slen:
+        if s[i:i + slen] == sub:
+            return i
+        i += 1
+    return -1
+
+func rfind(s, sub, start = 0):
+    n = len(s)
+    slen = len(sub)
+    if slen == 0:
+        return n
+    i = n - slen
+    while i >= start:
+        if s[i:i + slen] == sub:
+            return i
+        i -= 1
+    return -1
+
+func index(s, sub, start = 0):
+    pos = find(s, sub, start)
+    if pos == -1:
+        lempar "ValueError: substring not found"
+    return pos
+
+func count(s, sub):
+    n = len(s)
+    slen = len(sub)
+    if slen == 0:
+        return n + 1
+    cnt = 0
+    i = 0
+    while i <= n - slen:
+        if s[i:i + slen] == sub:
+            cnt += 1
+            i += slen
+        else:
+            i += 1
+    return cnt
+
+func split(s, sep = None, maxSplit = -1):
+    res = []
+    n = len(s)
+    if sep == None or sep == "":
+        i = 0
+        while i < n:
+            while i < n and isSpace(s[i]):
+                i += 1
+            if i >= n:
+                break
+            if maxSplit >= 0 and len(res) >= maxSplit:
+                res.append(s[i:])
+                break
+            j = i
+            while j < n and not isSpace(s[j]):
+                j += 1
+            res.append(s[i:j])
+            i = j
+        return res
+
+    slen = len(sep)
+    start = 0
+    cnt = 0
+    while start <= n:
+        if maxSplit >= 0 and cnt >= maxSplit:
+            res.append(s[start:])
+            break
+        pos = -1
+        i = start
+        while i <= n - slen:
+            if s[i:i + slen] == sep:
+                pos = i
+                break
+            i += 1
+        if pos == -1:
+            res.append(s[start:])
+            break
+        res.append(s[start:pos])
+        start = pos + slen
+        cnt += 1
+        if start == n:
+            res.append("")
+            break
+    return res
+
+func rSplit(s, sep = None, maxSplit = -1):
+    parts = split(s, sep)
+    if maxSplit < 0 or len(parts) <= maxSplit + 1:
+        return parts
+    extra = len(parts) - maxSplit - 1
+    delim = " " if (sep == None or sep == "") else sep
+    firstPart = delim.join(parts[:extra + 1])
+    res = [firstPart]
+    i = extra + 1
+    while i < len(parts):
+        res.append(parts[i])
+        i += 1
+    return res
+
+rsplit = rSplit
+
+func join(sep, arr):
+    return sep.join(arr)
+
+func replace(s, old, new, maxCount = -1):
+    if old == "":
+        return s
+    parts = split(s, old)
+    if maxCount < 0 or maxCount >= len(parts) - 1:
+        return new.join(parts)
+    res = ""
+    i = 0
+    while i < len(parts):
+        if i > 0:
+            if i <= maxCount:
+                res += new
+            else:
+                res += old
+        res += parts[i]
+        i += 1
+    return res
+
+func lStrip(s, chars = None):
+    n = len(s)
+    i = 0
+    if chars == None:
+        while i < n and isSpace(s[i]):
+            i += 1
+    else:
+        while i < n and (s[i] in chars):
+            i += 1
+    return s[i:]
+
+lstrip = lStrip
+
+func rStrip(s, chars = None):
+    n = len(s)
+    i = n - 1
+    if chars == None:
+        while i >= 0 and isSpace(s[i]):
+            i -= 1
+    else:
+        while i >= 0 and (s[i] in chars):
+            i -= 1
+    return s[:i + 1]
+
+rstrip = rStrip
+
+func strip(s, chars = None):
+    return lStrip(rStrip(s, chars), chars)
+
+func upper(s):
+    out = ""
+    for c in s:
+        if c in lowerChars:
+            idx = find(lowerChars, c)
+            out += upperChars[idx]
+        else:
+            out += c
+    return out
+
+func lower(s):
+    out = ""
+    for c in s:
+        if c in upperChars:
+            idx = find(upperChars, c)
+            out += lowerChars[idx]
+        else:
+            out += c
+    return out
+
+func startsWith(s, pfx):
+    n = len(pfx)
+    if n > len(s):
+        return False
+    return s[:n] == pfx
+
+startswith = startsWith
+
+func endsWith(s, sfx):
+    n = len(sfx)
+    if n == 0:
+        return True
+    if n > len(s):
+        return False
+    return s[len(s) - n:] == sfx
+
+endswith = endsWith
+
+func capitalize(s):
+    if len(s) == 0:
+        return s
+    return upper(s[:1]) + lower(s[1:])
+
+func title(s):
+    words = split(s, " ")
+    res = []
+    for w in words:
+        res.append(capitalize(w))
+    return " ".join(res)
+
+func swapCase(s):
+    out = ""
+    for c in s:
+        if c in lowerChars:
+            out += upper(c)
+        elif c in upperChars:
+            out += lower(c)
+        else:
+            out += c
+    return out
+
+swapcase = swapCase
+
+func caseFold(s):
+    return lower(s)
+
+casefold = caseFold
+
+func rJust(s, w, fill = " "):
+    if len(s) >= w:
+        return s
+    pad = ""
+    i = 0
+    diff = w - len(s)
+    while i < diff:
+        pad += fill
+        i += 1
+    return pad + s
+
+rjust = rJust
+
+func lJust(s, w, fill = " "):
+    if len(s) >= w:
+        return s
+    pad = ""
+    i = 0
+    diff = w - len(s)
+    while i < diff:
+        pad += fill
+        i += 1
+    return s + pad
+
+ljust = lJust
+
+func center(s, w, fill = " "):
+    if len(s) >= w:
+        return s
+    total = w - len(s)
+    leftPad = total / 2
+    rightPad = total - leftPad
+    lStr = ""
+    rStr = ""
+    i = 0
+    while i < leftPad:
+        lStr += fill
+        i += 1
+    i = 0
+    while i < rightPad:
+        rStr += fill
+        i += 1
+    return lStr + s + rStr
+
+func zFill(s, w):
+    if len(s) >= w:
+        return s
+    if s.startswith("-"):
+        return "-" + rJust(s[1:], w - 1, "0")
+    return rJust(s, w, "0")
+
+zfill = zFill
+
+func partition(s, sep):
+    pos = find(s, sep)
+    if pos == -1:
+        return [s, "", ""]
+    return [s[:pos], sep, s[pos + len(sep):]]
+
+func rPartition(s, sep):
+    pos = rfind(s, sep)
+    if pos == -1:
+        return ["", "", s]
+    return [s[:pos], sep, s[pos + len(sep):]]
+
+rpartition = rPartition
+
+func splitLines(s):
+    res = []
+    cur = ""
+    n = len(s)
+    i = 0
+    while i < n:
+        c = s[i]
+        if c == "\r":
+            if i + 1 < n and s[i + 1] == "\n":
+                res.append(cur)
+                cur = ""
+                i += 2
+                continue
+            res.append(cur)
+            cur = ""
+        elif c == "\n":
+            res.append(cur)
+            cur = ""
+        else:
+            cur += c
+        i += 1
+    if cur != "":
+        res.append(cur)
+    return res
+
+splitlines = splitLines
+
+func removePrefix(s, pfx):
+    if startsWith(s, pfx):
+        return s[len(pfx):]
+    return s
+
+removeprefix = removePrefix
+
+func removeSuffix(s, sfx):
+    if endsWith(s, sfx):
+        return s[:len(s) - len(sfx)]
+    return s
+
+removesuffix = removeSuffix
+
+func isDigitStr(s):
+    if len(s) == 0:
+        return False
+    n = len(s)
+    i = 0
+    while i < n:
+        if not (s[i] in digitChars):
+            return False
+        i += 1
+    return True
+
+func isAlphaStr(s):
+    if len(s) == 0:
+        return False
+    n = len(s)
+    i = 0
+    while i < n:
+        c = s[i]
+        if not (c in lowerChars) and not (c in upperChars):
+            return False
+        i += 1
+    return True
+
+func isAlnumStr(s):
+    if len(s) == 0:
+        return False
+    n = len(s)
+    i = 0
+    while i < n:
+        c = s[i]
+        if not (c in digitChars) and not (c in lowerChars) and not (c in upperChars):
+            return False
+        i += 1
+    return True
+
+func isSpaceStr(s):
+    if len(s) == 0:
+        return False
+    n = len(s)
+    i = 0
+    while i < n:
+        if not isSpace(s[i]):
+            return False
+        i += 1
+    return True
+
+func isUpperStr(s):
+    if len(s) == 0:
+        return False
+    hasUpper = False
+    n = len(s)
+    i = 0
+    while i < n:
+        c = s[i]
+        if c in lowerChars:
+            return False
+        if c in upperChars:
+            hasUpper = True
+        i += 1
+    return hasUpper
+
+func isLowerStr(s):
+    if len(s) == 0:
+        return False
+    hasLower = False
+    n = len(s)
+    i = 0
+    while i < n:
+        c = s[i]
+        if c in upperChars:
+            return False
+        if c in lowerChars:
+            hasLower = True
+        i += 1
+    return hasLower
+
+func map(fn, arr):
+    res = []
+    for x in arr:
+        res.append(fn(x))
+    return res
+
+func filter(fn, arr):
+    res = []
+    for x in arr:
+        if fn(x):
+            res.append(x)
+    return res
+
+func reduce(fn, arr, init = None):
+    if len(arr) == 0:
+        if init != None:
+            return init
+        lempar "TypeError: reduce() of empty sequence with no initial value"
+    start = 0
+    accum = init
+    if accum == None:
+        accum = arr[0]
+        start = 1
+    i = start
+    while i < len(arr):
+        accum = fn(accum, arr[i])
+        i += 1
+    return accum
+
+func reversed(arr):
+    res = []
+    i = len(arr) - 1
+    while i >= 0:
+        res.append(arr[i])
+        i -= 1
+    return res
+
+func reverse(arr):
+    rev = reversed(arr)
+    arr.clear()
+    for x in rev:
+        arr.append(x)
+    return arr
+
+func sorted(arr, key = None, reverse = False):
+    c = []
+    for x in arr:
+        c.append(x)
+    n = len(c)
+    i = 0
+    while i < n:
+        j = 0
+        while j < n - i - 1:
+            valA = c[j] if key == None else key(c[j])
+            valB = c[j + 1] if key == None else key(c[j + 1])
+            cond = valA > valB if not reverse else valA < valB
+            if cond:
+                t = c[j]
+                c[j] = c[j + 1]
+                c[j + 1] = t
+            j += 1
+        i += 1
+    return c
+
+func sort(arr, key = None, reverse = False):
+    s = sorted(arr, key, reverse)
+    arr.clear()
+    for x in s:
+        arr.append(x)
+    return arr
+
+func enumerate(arr, start = 0):
+    res = []
+    idx = start
+    for x in arr:
+        res.append([idx, x])
+        idx += 1
+    return res
+
+func zip(a1, a2):
+    res = []
+    limit = len(a1)
+    if len(a2) < limit:
+        limit = len(a2)
+    i = 0
+    while i < limit:
+        res.append([a1[i], a2[i]])
+        i += 1
+    return res
+
+func sum(arr, start = 0):
+    tot = start
+    for x in arr:
+        tot += x
+    return tot
+
+func any(arr):
+    for x in arr:
+        if x:
+            return True
+    return False
+
+func all(arr):
+    for x in arr:
+        if not x:
+            return False
+    return True
+
+func contains(arr, val):
+    for x in arr:
+        if x == val:
+            return True
+    return False
+
+adaDi = contains
+
+func indexOf(arr, val, start = 0):
+    n = len(arr)
+    i = start
+    while i < n:
+        if arr[i] == val:
+            return i
+        i += 1
+    return -1
+
+indexDi = indexOf
+
+func countList(arr, val):
+    cnt = 0
+    for x in arr:
+        if x == val:
+            cnt += 1
+    return cnt
+
+func extend(arr, other):
+    for x in other:
+        arr.append(x)
+    return arr
+
+func insert(arr, idx, val):
+    n = len(arr)
+    if idx < 0:
+        idx += n
+    if idx < 0:
+        idx = 0
+    if idx >= n:
+        arr.append(val)
+        return arr
+    tmp = []
+    i = 0
+    while i < n:
+        if i == idx:
+            tmp.append(val)
+        tmp.append(arr[i])
+        i += 1
+    arr.clear()
+    for x in tmp:
+        arr.append(x)
+    return arr
+
+func remove(arr, val):
+    pos = indexOf(arr, val)
+    if pos == -1:
+        lempar "ValueError: value not in list"
+    tmp = []
+    n = len(arr)
+    i = 0
+    while i < n:
+        if i != pos:
+            tmp.append(arr[i])
+        i += 1
+    arr.clear()
+    for x in tmp:
+        arr.append(x)
+    return arr
+
+func pop(arr, idx = -1):
+    n = len(arr)
+    if n == 0:
+        lempar "IndexError: pop from empty list"
+    if idx < 0:
+        idx += n
+    if idx < 0 or idx >= n:
+        lempar "IndexError: index out of range"
+    val = arr[idx]
+    tmp = []
+    i = 0
+    while i < n:
+        if i != idx:
+            tmp.append(arr[i])
+        i += 1
+    arr.clear()
+    for x in tmp:
+        arr.append(x)
+    return val
+
+func unique(arr):
+    res = []
+    for x in arr:
+        if not contains(res, x):
+            res.append(x)
+    return res
+
+func flatten(arr):
+    res = []
+    for item in arr:
+        if type(item) == "larik" or type(item) == "list":
+            for sub in flatten(item):
+                res.append(sub)
+        else:
+            res.append(item)
+    return res
+
+func keys(m):
+    res = []
+    for k in m:
+        res.append(k)
+    return res
+
+kunci = keys
+
+func values(m):
+    res = []
+    for k in m:
+        res.append(m[k])
+    return res
+
+nilai = values
+
+func items(m):
+    res = []
+    for k in m:
+        res.append([k, m[k]])
+    return res
+
+entri = items
+
+func get(m, k, d = None):
+    if k in m:
+        return m[k]
+    return d
+
+ambil = get
+
+func update(dst, src):
+    for k in src:
+        dst[k] = src[k]
+    return dst
+
+perbarui = update
+
+func setDefault(m, k, d = None):
+    if k in m:
+        return m[k]
+    m[k] = d
+    return d
+
+setdefault = setDefault
+
+func popMap(m, k, d = None):
+    if k in m:
+        v = m[k]
+        hapus m[k]
+        return v
+    if d != None:
+        return d
+    lempar "KeyError: " + str(k)
+
+popPeta = popMap
+
+func clearMap(m):
+    kl = keys(m)
+    for k in kl:
+        hapus m[k]
+    return m
+
+clearPeta = clearMap
+
+func copyMap(m):
+    c = {}
+    for k in m:
+        c[k] = m[k]
+    return c
+
+copyPeta = copyMap
+
+func hasKey(m, k):
+    return k in m
+
+class NSLib:
+    func constructor(self):
+        pass
