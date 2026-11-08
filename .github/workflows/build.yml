@@ -141,9 +141,9 @@ jobs:
           cat << 'EOF' > release_notes.md
           ## NSL 0.0.2-rc2
 
-          This toolchain compiles and runs itself: the lexer, parser, interpreter, bytecode VM, and native x86-64 AOT compiler are all written in NSL, bootstrapped once by a small C++ host. The native compiler emits standalone ELF binaries straight through the system assembler and linker, with no bundled runtime and no external dependencies, and lands within ~2x of Go's speed on arithmetic, array, and object workloads.
+          A self-hosted programming language with Indonesian and English keywords, bytecode VM, and native x86-64 compiler.
 
-          Install:
+          ### Install
           ```bash
           curl -fsSL https://github.com/NusaLang/NSL/raw/beta/install.sh | bash
           ```
@@ -155,4 +155,4 @@ jobs:
           body_path: release_notes.md
           files: release-assets/*
           draft: false
-          prerelease: true
+          prerelease: false
