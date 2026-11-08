@@ -1,10 +1,16 @@
 import sys
 
 func loadModule(name):
+    base = name if name.endswith(".ns") else name + ".ns"
     candidates = [
         name,
+        base,
+        "../" + name,
+        "../" + base,
+        "core/" + name,
+        "core/" + base,
         "core/interpreter/" + name,
-        "core/" + name
+        "core/interpreter/" + base
     ]
     for c in candidates:
         try:
@@ -14,6 +20,14 @@ func loadModule(name):
     return impor(name)
 
 Scope = loadModule("env").Scope
+resolverModule = loadModule("resolver")
+resolveModulePath = resolverModule.resolveModulePath
+
+func runtimeImpor(name):
+    resolved = resolveModulePath(name, file_ada)
+    if resolved != None:
+        return impor(resolved)
+    return impor(name)
 
 
 class ReturnSignal:
@@ -72,8 +86,8 @@ class Interpreter:
         g.define("tulis_file", tulis_file)
         g.define("fileExists", file_ada)
         g.define("file_ada", file_ada)
-        g.define("import", impor)
-        g.define("impor", impor)
+        g.define("import", runtimeImpor)
+        g.define("impor", runtimeImpor)
         g.define("time", waktu)
         g.define("waktu", waktu)
         g.define("gcInfo", gc_info)
@@ -538,8 +552,19 @@ class Interpreter:
                 found = self.resolveMethodChain(target["class"], name, env)
                 if found[0] != None:
                     return {"isBoundMethod": True, "instance": target, "method": found[0], "definingClass": found[1]}
-            if tipe(target) == "peta" and name in target:
-                return target[name]
+            if tipe(target) == "peta" or tipe(target) == "dict":
+                if name in target and callable(target[name]):
+                    return target[name]
+                if name == "get" or name == "ambil":
+                    return lambda k, d = None: target[k] if k in target else d
+                elif name == "keys" or name == "kunci":
+                    return lambda: list(target.keys())
+                elif name == "values" or name == "nilai":
+                    return lambda: list(target.values())
+                elif name == "items":
+                    return lambda: list(target.items())
+                elif name in target:
+                    return target[name]
             if tipe(target) == "teks" or tipe(target) == "string":
                 if name == "isdigit":
                     return lambda: target.isdigit()

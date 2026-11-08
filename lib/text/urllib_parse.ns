@@ -1,0 +1,24 @@
+urllibParse = None
+try:
+    urllibParse = impor("lib/text/urllibParse")
+except e:
+    try:
+        urllibParse = impor("urllibParse")
+    except e2:
+        pass
+
+quote = urllibParse.quote
+quote_plus = urllibParse.quote_plus
+unquote = urllibParse.unquote
+unquote_plus = urllibParse.unquote_plus
+urlencode = urllibParse.urlencode
+parse_qs = urllibParse.parse_qs
+parse_qsl = urllibParse.parse_qsl
+ParseResult = urllibParse.ParseResult
+SplitResult = urllibParse.ParseResult
+DefragResult = urllibParse.ParseResult
+urlparse = urllibParse.urlparse
+urlsplit = urllibParse.urlsplit
+urlunparse = urllibParse.urlunparse
+urlunsplit = urllibParse.urlunsplit
+urljoin = urllibParse.urljoin

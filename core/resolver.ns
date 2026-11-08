@@ -1,0 +1,54 @@
+FileAda = file_ada
+
+MODULE_ALIASES = {
+    "urllib_parse": "urllibParse"
+}
+
+func canonicalModuleName(name):
+    if name in MODULE_ALIASES:
+        return MODULE_ALIASES[name]
+    return name
+
+func getModuleCandidates(name):
+    target = canonicalModuleName(name)
+    names = [name]
+    if target != name:
+        names.append(target)
+    candidates = []
+    for n in names:
+        candidates.append(n)
+        candidates.append(n + ".ns")
+        candidates.append(n + "/main.ns")
+    prefixes = [
+        "std/",
+        "core/",
+        "core/virtual/",
+        "core/interpreter/",
+        "core/parser/",
+        "core/types/",
+        "lib/",
+        "lib/system/",
+        "lib/async/",
+        "lib/collections/",
+        "lib/math/",
+        "lib/types/",
+        "lib/text/",
+        "lib/utils/"
+    ]
+    for p in prefixes:
+        for n in names:
+            candidates.append(p + n + ".ns")
+    return candidates
+
+func resolveModulePath(name, fileExistsFn = None):
+    checker = FileAda if fileExistsFn == None else fileExistsFn
+    for c in getModuleCandidates(name):
+        if checker(c):
+            return c
+    return None
+
+func resolveAndImport(name):
+    target = resolveModulePath(name, FileAda)
+    if target != None:
+        return impor(target)
+    return impor(name)

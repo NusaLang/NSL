@@ -2299,6 +2299,17 @@ rtMapGet:
 rtMgNone:
     xor eax, eax
     ret
+rtMapGetDef:
+    push rdx
+    call rtMapFind
+    pop rdx
+    cmp qword ptr [rax], 0
+    je rtMgDefNone
+    mov rax, [rax+8]
+    ret
+rtMgDefNone:
+    mov rax, rdx
+    ret
 rtIn:
     cmp rsi, 4
     jbe rtInNo
