@@ -89,17 +89,26 @@ jobs:
           git fetch origin tag bootstrap-source
           git checkout bootstrap-source -- engine
 
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MSYS
+          update: false
+          install: >-
+            base-devel
+            gcc
+
       - name: Compile Windows x86_64 engine
-        shell: bash
+        shell: msys2 {0}
         run: |
-          export PATH="/c/msys64/usr/bin:$PATH"
-          g++ -std=gnu++17 -O3 -flto=auto -D_GNU_SOURCE -D_USE_MATH_DEFINES -DNDEBUG -Wall -Wextra \
-            -static-libgcc -static-libstdc++ \
-            -Iengine/include engine/src/*.cpp -o nusa-windows-x86_64.exe
-          strip nusa-windows-x86_64.exe
-          cp /c/msys64/usr/bin/msys-2.0.dll ./
-          cp /c/msys64/usr/bin/msys-stdc++-6.dll ./ 2>/dev/null || true
-          cp /c/msys64/usr/bin/msys-gcc_s-seh-1.dll ./ 2>/dev/null || true
+          make clean || true
+          make -C engine clean || true
+          make -C engine nusantara
+          strip engine/nusantara.exe
+          cp engine/nusantara.exe ./nusa-windows-x86_64.exe
+          cp /usr/bin/msys-2.0.dll ./
+          cp /usr/bin/msys-stdc++-6.dll ./ 2>/dev/null || true
+          cp /usr/bin/msys-gcc_s-seh-1.dll ./ 2>/dev/null || true
 
       - name: Verify DLL dependencies
         shell: bash
