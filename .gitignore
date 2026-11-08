@@ -1,5 +1,3 @@
-# Build outputs & binaries
-/nusa
 /nusantara
 bin/
 /bin/
@@ -23,5 +21,4 @@ plugins/**/vendor/**/*.o
 *.tmp
 *.debug
 *.dSYM/
-
 nusa_packages/
