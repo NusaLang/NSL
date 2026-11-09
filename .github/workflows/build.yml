@@ -180,9 +180,9 @@ jobs:
       - name: Generate release notes
         run: |
           cat << 'EOF' > release_notes.md
-          ## NSL 0.0.2-rc2
+          ## NSL 0.0.2-rc3
 
-          A self-hosted programming language with Indonesian and English keywords, bytecode VM, and native x86-64 compiler.
+          A self-hosted programming language with Indonesian and English keywords, bytecode VM, and native multi-arch (x86_64 & ARM64) compiler. Default `nusa build` now compiles directly to standalone native machine ELF binaries.
 
           ### Install
           ```bash
