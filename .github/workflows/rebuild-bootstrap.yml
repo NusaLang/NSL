@@ -68,13 +68,13 @@ jobs:
         run: |
           gh release upload v0.0.1-build --clobber nusa-android-arm64 nusa-android-arm64.sha256
 
-      - name: Update v0.0.2-rc2 release
+      - name: Update v0.0.2-rc3 release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload v0.0.2-rc2 --clobber dist/nusa-android-arm64 dist/nusa-android-arm64.sha256 dist/nusa-android-arm64.tar.gz dist/nusa-android-arm64.tar.gz.sha256
+          gh release upload v0.0.2-rc3 --clobber dist/nusa-android-arm64 dist/nusa-android-arm64.sha256 dist/nusa-android-arm64.tar.gz dist/nusa-android-arm64.tar.gz.sha256
           gh release edit v0.0.1-build --prerelease --latest=false
-          gh release edit v0.0.2-rc2 --latest=true
+          gh release edit v0.0.2-rc3 --latest=true
 
   build-windows:
     name: Rebuild Windows Bootstrap Engine
@@ -153,14 +153,14 @@ jobs:
         run: |
           gh release upload v0.0.1-build --clobber nusa-windows-x86_64.exe nusa-windows-x86_64.exe.sha256 msys-2.0.dll msys-2.0.dll.sha256
 
-      - name: Update v0.0.2-rc2 release
+      - name: Update v0.0.2-rc3 release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          gh release upload v0.0.2-rc2 --clobber dist/nusa-windows-x86_64.exe dist/nusa-windows-x86_64.exe.sha256 dist/nusa-windows-x86_64.tar.gz dist/nusa-windows-x86_64.tar.gz.sha256 dist/msys-2.0.dll dist/msys-2.0.dll.sha256
+          gh release upload v0.0.2-rc3 --clobber dist/nusa-windows-x86_64.exe dist/nusa-windows-x86_64.exe.sha256 dist/nusa-windows-x86_64.tar.gz dist/nusa-windows-x86_64.tar.gz.sha256 dist/msys-2.0.dll dist/msys-2.0.dll.sha256
           gh release edit v0.0.1-build --prerelease --latest=false
-          gh release edit v0.0.2-rc2 --latest=true
+          gh release edit v0.0.2-rc3 --latest=true
 
   build-macos:
     name: Rebuild macOS Bootstrap Engine
@@ -215,10 +215,10 @@ jobs:
         run: |
           gh release upload v0.0.1-build --clobber nusa-darwin-arm64 nusa-darwin-arm64.sha256 nusa-darwin-x86_64 nusa-darwin-x86_64.sha256
 
-      - name: Update v0.0.2-rc2 release
+      - name: Update v0.0.2-rc3 release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload v0.0.2-rc2 --clobber dist/nusa-darwin-*
+          gh release upload v0.0.2-rc3 --clobber dist/nusa-darwin-*
           gh release edit v0.0.1-build --prerelease --latest=false
-          gh release edit v0.0.2-rc2 --latest=true
+          gh release edit v0.0.2-rc3 --latest=true
