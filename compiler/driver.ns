@@ -1,0 +1,208 @@
+builtinsSys = impor("sys")
+
+func loadCore(path):
+    candidates = [
+        path,
+        "parser/" + path,
+        "../core/" + path,
+        "core/" + path,
+        path.split("/")[-1]
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor(path)
+
+Lexer = loadCore("parser/lexer.ns").Lexer
+Parser = loadCore("parser/parser.ns").Parser
+resolverModule = loadCore("resolver.ns")
+resolveModulePath = resolverModule.resolveModulePath
+
+JalankanPerintah = jalankan_perintah
+FileAda = file_ada
+BacaFile = baca_file
+TulisFile = tulis_file
+
+func detectTarget():
+    unameM = JalankanPerintah("uname", ["-m"])
+    arch = unameM.keluaran
+    if len(arch) > 0 and arch[len(arch) - 1] == "\n":
+        arch = arch[:len(arch) - 1]
+    if arch == "":
+        arch = "x86_64"
+
+    unameS = JalankanPerintah("uname", ["-s"])
+    osName = unameS.keluaran
+    if len(osName) > 0 and osName[len(osName) - 1] == "\n":
+        osName = osName[:len(osName) - 1]
+    if osName == "":
+        osName = "Linux"
+
+    if arch == "aarch64" or arch == "arm64":
+        targetArch = "arm64"
+    else:
+        targetArch = "x86_64"
+    return {"arch": targetArch, "os": osName}
+
+func loadSubmodule(path):
+    candidates = [
+        path,
+        "../" + path,
+        "../compiler/" + path,
+        "compiler/" + path,
+        "experiment/" + path,
+        path.split("/")[-1]
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor(path)
+
+func getBackendCompiler(targetArch):
+    if targetArch == "arm64":
+        arm64Mod = loadSubmodule("compiler/backend/arm64/compiler.ns")
+        return arm64Mod.Arm64Compiler
+    else:
+        x86Mod = loadSubmodule("compiler/backend/x86_64/compiler.ns")
+        return x86Mod.X86_64Compiler
+
+func getCwd():
+    res = JalankanPerintah("pwd", [])
+    out = res.keluaran
+    if len(out) > 0 and out[len(out) - 1] == "\n":
+        out = out[:len(out) - 1]
+    return out
+
+func buildGoBridge():
+    try:
+        goBridgeAddon = impor(getCwd() + "/nusa_packages/nusa-gobridge/nusaGoBridge.ns")
+        return goBridgeAddon.buildGoBridge()
+    except e:
+        print("native: Go bridge belum terpasang -- jalankan: nusa get https://github.com/NusaLang/nusa-gobridge")
+        builtinsSys.exit(1)
+
+class DriverCompiler:
+    func __init__(self, targetArch = None):
+        if targetArch == None:
+            self.target = detectTarget()
+        else:
+            self.target = {"arch": targetArch, "os": "Linux"}
+        CompilerCls = getBackendCompiler(self.target["arch"])
+        self.backend = CompilerCls()
+        self.usesGoBridge = False
+
+    func compile(self, tree, sourceDir = None):
+        asm = self.backend.compile(tree, sourceDir)
+        self.usesGoBridge = self.backend.usesGoBridge
+        return asm
+
+NativeCompiler = DriverCompiler
+
+func compile(tree, targetArch = None, sourceDir = None):
+    compiler = DriverCompiler(targetArch)
+    return compiler.compile(tree, sourceDir)
+
+func build(inputFile, outputFile, keepAsm = False, targetArch = None):
+    if not FileAda(inputFile):
+        print("native: file '" + inputFile + "' not found")
+        builtinsSys.exit(1)
+
+    sourceDir = "."
+    lastSlash = -1
+    si = len(inputFile) - 1
+    while si >= 0:
+        if inputFile[si] == "/":
+            lastSlash = si
+            break
+        si -= 1
+    if lastSlash != -1:
+        sourceDir = inputFile[:lastSlash]
+
+    src = BacaFile(inputFile)
+    tree = Parser(Lexer(src).tokenize()).parse()
+    compiler = DriverCompiler(targetArch)
+    asm = compiler.compile(tree, sourceDir)
+
+    asmPath = outputFile + ".s"
+    objPath = outputFile + ".o"
+    TulisFile(asmPath, asm)
+
+    target = compiler.target
+    arch = target["arch"]
+    osName = target["os"]
+
+    if arch == "x86_64":
+        asRes = JalankanPerintah("as", ["-o", objPath, asmPath])
+        if asRes.status != 0:
+            msg = asRes.error if len(asRes.error) > 0 else asRes.keluaran
+            print("assembler 'as' gagal:\n" + msg)
+            builtinsSys.exit(1)
+
+        if compiler.usesGoBridge:
+            bridgeA = buildGoBridge()
+            linkRes = JalankanPerintah("cc", ["-o", outputFile, objPath, bridgeA, "-lpthread", "-no-pie"])
+        else:
+            linkRes = JalankanPerintah("ld", ["-o", outputFile, objPath])
+        if linkRes.status != 0:
+            msg = linkRes.error if len(linkRes.error) > 0 else linkRes.keluaran
+            print("linker 'ld' gagal:\n" + msg)
+            builtinsSys.exit(1)
+    else:
+        asRes = JalankanPerintah("as", ["-o", objPath, asmPath])
+        if asRes.status != 0:
+            asRes = JalankanPerintah("clang", ["--target=aarch64-linux-gnu", "-c", asmPath, "-o", objPath])
+        if asRes.status != 0:
+            asRes = JalankanPerintah("cc", ["-c", asmPath, "-o", objPath])
+        if asRes.status != 0:
+            msg = asRes.error if len(asRes.error) > 0 else asRes.keluaran
+            print("assembler gagal:\n" + msg)
+            builtinsSys.exit(1)
+
+        linkRes = JalankanPerintah("ld", ["-o", outputFile, objPath])
+        if linkRes.status != 0:
+            linkRes = JalankanPerintah("ld.lld", ["-m", "aarch64linux", "-o", outputFile, objPath])
+        if linkRes.status != 0:
+            linkRes = JalankanPerintah("cc", ["-o", outputFile, objPath, "-no-pie"])
+        if linkRes.status != 0:
+            linkRes = JalankanPerintah("clang", ["--target=aarch64-linux-gnu", "-nostdlib", "-static", "-fuse-ld=lld", "-o", outputFile, objPath])
+        if linkRes.status != 0:
+            msg = linkRes.error if len(linkRes.error) > 0 else linkRes.keluaran
+            print("linker gagal:\n" + msg)
+            builtinsSys.exit(1)
+
+    JalankanPerintah("rm", ["-f", objPath])
+    if not keepAsm:
+        JalankanPerintah("rm", ["-f", asmPath])
+
+func main():
+    args = builtinsSys.argv
+    if len(args) < 2:
+        print("usage: nusa compiler/driver.ns <file.ns> [-o output] [-S] [--target x86_64|arm64]")
+        builtinsSys.exit(1)
+    inputFile = args[1]
+    outputFile = "a.out"
+    keepAsm = False
+    targetArch = None
+    i = 2
+    while i < len(args):
+        if (args[i] == "-o" or args[i] == "--output") and i + 1 < len(args):
+            outputFile = args[i + 1]
+            i += 2
+        elif args[i] == "-S" or args[i] == "-s" or args[i] == "--keep-asm":
+            keepAsm = True
+            i += 1
+        elif args[i] == "--target" and i + 1 < len(args):
+            targetArch = args[i + 1]
+            i += 2
+        else:
+            i += 1
+    build(inputFile, outputFile, keepAsm, targetArch)
+
+if len(builtinsSys.argv) > 0:
+    firstArg = builtinsSys.argv[0]
+    if "driver.ns" in firstArg or (len(builtinsSys.argv) > 1 and "driver.ns" in builtinsSys.argv[1]):
+        main()

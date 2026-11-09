@@ -1,0 +1,110 @@
+STRING_RUNTIME = """rtStrNew:
+    stp lr, x0, [sp, -16]!
+    add x0, x0, 16
+    bl rtAlloc
+    ldp lr, x1, [sp], 16
+    mov x2, 2
+    str x2, [x0]
+    str x1, [x0, 8]
+    ret
+rtConcat:
+    stp lr, x19, [sp, -16]!
+    stp x20, x21, [sp, -16]!
+    mov x19, x0
+    mov x20, x1
+    ldr x0, [x19, 8]
+    ldr x1, [x20, 8]
+    add x0, x0, x1
+    bl rtStrNew
+    mov x21, x0
+    add x0, x21, 16
+    add x1, x19, 16
+    ldr x2, [x19, 8]
+    bl rtMemCpy
+    add x0, x21, 16
+    ldr x2, [x19, 8]
+    add x0, x0, x2
+    add x1, x20, 16
+    ldr x2, [x20, 8]
+    bl rtMemCpy
+    mov x0, x21
+    ldp x20, x21, [sp], 16
+    ldp lr, x19, [sp], 16
+    ret
+rtMemCpy:
+    mov x3, 0
+rtMcLoop:
+    cmp x3, x2
+    b.ge rtMcDone
+    ldrb w4, [x1, x3]
+    strb w4, [x0, x3]
+    add x3, x3, 1
+    b rtMcLoop
+rtMcDone:
+    ret
+rtIntStr:
+    stp lr, x19, [sp, -16]!
+    sub sp, sp, 32
+    mov x19, x0
+    mov x1, 0
+    cmp x19, 0
+    b.ge rtIsPos
+    neg x19, x19
+    mov x1, 1
+rtIsPos:
+    add x2, sp, 30
+    mov w3, 0
+    strb w3, [x2, 1]
+    mov x3, 10
+rtIsLoop:
+    udiv x4, x19, x3
+    msub x5, x4, x3, x19
+    add w5, w5, 48
+    strb w5, [x2]
+    mov x19, x4
+    cbz x19, rtIsDone
+    sub x2, x2, 1
+    b rtIsLoop
+rtIsDone:
+    cbz x1, rtIsFinish
+    sub x2, x2, 1
+    mov w4, 45
+    strb w4, [x2]
+rtIsFinish:
+    mov x0, x2
+    bl rtCStrToStr
+    add sp, sp, 32
+    ldp lr, x19, [sp], 16
+    ret
+rtToStr:
+    tbnz x0, 0, rtTsIntTag
+    cbz x0, rtTsNone
+    cmp x0, 2
+    b.eq rtTsFalse
+    cmp x0, 4
+    b.eq rtTsTrue
+    ldr x1, [x0]
+    cmp x1, 2
+    b.eq rtTsRet
+    cmp x1, 3
+    b.eq rtArrStr
+    cmp x1, 4
+    b.eq rtMapStr
+    b rtTsRet
+rtTsIntTag:
+    asr x0, x0, 1
+    b rtIntStr
+rtTsNone:
+    ldr x0, =strKosong
+    ret
+rtTsFalse:
+    ldr x0, =strSalah
+    ret
+rtTsTrue:
+    ldr x0, =strBenar
+    ret
+rtTsRet:
+    ret
+rtRepr:
+    b rtToStr
+"""

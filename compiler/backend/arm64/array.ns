@@ -1,0 +1,68 @@
+ARRAY_RUNTIME = """rtArrNew:
+    stp lr, xzr, [sp, -16]!
+    mov x0, 32
+    bl rtAlloc
+    mov x1, 3
+    str x1, [x0]
+    mov x1, 0
+    str x1, [x0, 8]
+    str x1, [x0, 16]
+    str x1, [x0, 24]
+    ldp lr, xzr, [sp], 16
+    ret
+rtArrPush:
+    stp lr, x19, [sp, -16]!
+    stp x20, x21, [sp, -16]!
+    mov x19, x0
+    mov x20, x1
+    ldr x1, [x19, 8]
+    ldr x2, [x19, 16]
+    cmp x1, x2
+    b.lt rtApStore
+    lsl x0, x2, 1
+    cmp x0, 4
+    b.ge rtApCap
+    mov x0, 4
+rtApCap:
+    mov x21, x0
+    lsl x0, x0, 3
+    bl rtAlloc
+    ldr x1, [x19, 24]
+    ldr x2, [x19, 8]
+    lsl x2, x2, 3
+    mov x3, x0
+    mov x4, 0
+rtApCpy:
+    cmp x4, x2
+    b.ge rtApCpyDone
+    ldrb w5, [x1, x4]
+    strb w5, [x3, x4]
+    add x4, x4, 1
+    b rtApCpy
+rtApCpyDone:
+    str x21, [x19, 16]
+    str x0, [x19, 24]
+rtApStore:
+    ldr x1, [x19, 8]
+    ldr x2, [x19, 24]
+    str x20, [x2, x1, lsl 3]
+    add x1, x1, 1
+    str x1, [x19, 8]
+    ldp x20, x21, [sp], 16
+    ldp lr, x19, [sp], 16
+    ret
+rtArrPop:
+    ldr x1, [x0, 8]
+    cbz x1, rtApEmpty
+    sub x1, x1, 1
+    str x1, [x0, 8]
+    ldr x2, [x0, 24]
+    ldr x0, [x2, x1, lsl 3]
+    ret
+rtApEmpty:
+    mov x0, 0
+    ret
+rtArrStr:
+    ldr x0, =strEmptyArr
+    ret
+"""

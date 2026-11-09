@@ -1,0 +1,225 @@
+MAP_RUNTIME = """rtMapStr:
+    push r12
+    push r13
+    push r14
+    mov r12, rdi
+    lea r13, [strLc]
+    xor r14, r14
+    xor r15, r15
+rtMsLoop:
+    cmp r14, [r12+16]
+    jae rtMsEnd
+    mov rax, r14
+    shl rax, 4
+    add rax, [r12+24]
+    cmp qword ptr [rax], 0
+    je rtMsNext
+    push rax
+    test r15, r15
+    jz rtMsNoSep
+    mov rdi, r13
+    lea rsi, [strComma]
+    call rtConcat
+    mov r13, rax
+rtMsNoSep:
+    mov r15, 1
+    mov rax, [rsp]
+    mov rdi, [rax]
+    call rtRepr
+    mov rdi, r13
+    mov rsi, rax
+    call rtConcat
+    mov rdi, rax
+    lea rsi, [strColon]
+    call rtConcat
+    mov r13, rax
+    pop rax
+    mov rdi, [rax+8]
+    call rtRepr
+    mov rdi, r13
+    mov rsi, rax
+    call rtConcat
+    mov r13, rax
+rtMsNext:
+    inc r14
+    jmp rtMsLoop
+rtMsEnd:
+    mov rdi, r13
+    lea rsi, [strRc]
+    call rtConcat
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtMapNew:
+    mov rdi, 176
+    call rtAlloc
+    mov qword ptr [rax], 4
+    mov qword ptr [rax+16], 8
+    lea rdx, [rax+48]
+    mov [rax+24], rdx
+    ret
+rtHash:
+    test dil, 1
+    jz rtHashPtr
+    mov rax, rdi
+    mov rdx, 0x9E3779B97F4A7C15
+    imul rax, rdx
+    shr rax, 20
+    ret
+rtHashPtr:
+    cmp qword ptr [rdi], 2
+    jne rtHashAddr
+    mov rcx, [rdi+8]
+    lea rsi, [rdi+16]
+    mov rax, 0xcbf29ce484222325
+    mov rdx, 0x100000001b3
+rtHLoop:
+    test rcx, rcx
+    jz rtHDone
+    movzx r8, byte ptr [rsi]
+    xor rax, r8
+    imul rax, rdx
+    inc rsi
+    dec rcx
+    jmp rtHLoop
+rtHDone:
+    ret
+rtHashAddr:
+    mov rax, rdi
+    shr rax, 3
+    ret
+rtMapFind:
+    push r12
+    push r13
+    push r14
+    mov r12, rdi
+    mov r13, rsi
+    mov rdi, rsi
+    call rtHash
+    mov r14, rax
+    mov rcx, [r12+16]
+    dec rcx
+    and r14, rcx
+rtMfLoop:
+    mov rax, [r12+24]
+    mov rdx, r14
+    shl rdx, 4
+    add rax, rdx
+    mov rdi, [rax]
+    test rdi, rdi
+    jz rtMfDone
+    cmp rdi, r13
+    je rtMfDone
+    test dil, 1
+    jnz rtMfNext
+    test r13b, 1
+    jnz rtMfNext
+    push rax
+    mov rsi, r13
+    call rtEq
+    mov rdx, rax
+    pop rax
+    test rdx, rdx
+    jnz rtMfDone
+rtMfNext:
+    inc r14
+    mov rcx, [r12+16]
+    dec rcx
+    and r14, rcx
+    jmp rtMfLoop
+rtMfDone:
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtMapGrow:
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r12, rdi
+    mov r13, [r12+24]
+    mov r15, [r12+16]
+    mov rdi, r15
+    shl rdi, 5
+    call rtAlloc
+    mov [r12+24], rax
+    shl qword ptr [r12+16], 1
+    xor r14, r14
+rtMgLoop:
+    cmp r14, r15
+    jae rtMgDone
+    mov rax, r14
+    shl rax, 4
+    add rax, r13
+    mov rsi, [rax]
+    test rsi, rsi
+    jz rtMgNext
+    push rsi
+    push qword ptr [rax+8]
+    mov rdi, r12
+    call rtMapFind
+    pop rdx
+    pop rsi
+    mov [rax], rsi
+    mov [rax+8], rdx
+rtMgNext:
+    inc r14
+    jmp rtMgLoop
+rtMgDone:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtMapSet:
+    push r12
+    push r13
+    push r14
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    mov rax, [r12+8]
+    inc rax
+    shl rax, 1
+    cmp rax, [r12+16]
+    jbe rtMsFind
+    mov rdi, r12
+    call rtMapGrow
+rtMsFind:
+    mov rdi, r12
+    mov rsi, r13
+    call rtMapFind
+    cmp qword ptr [rax], 0
+    jne rtMsStore
+    inc qword ptr [r12+8]
+    mov [rax], r13
+rtMsStore:
+    mov [rax+8], r14
+    mov rax, r14
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtMapGet:
+    call rtMapFind
+    cmp qword ptr [rax], 0
+    je rtMgNone
+    mov rax, [rax+8]
+    ret
+rtMgNone:
+    xor eax, eax
+    ret
+rtMapGetDef:
+    push rdx
+    call rtMapFind
+    pop rdx
+    cmp qword ptr [rax], 0
+    je rtMgDefNone
+    mov rax, [rax+8]
+    ret
+rtMgDefNone:
+    mov rax, rdx
+    ret
+"""

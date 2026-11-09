@@ -1,0 +1,87 @@
+ARRAY_RUNTIME = """rtArrStr:
+    push r12
+    push r13
+    push r14
+    mov r12, rdi
+    lea r13, [strLb]
+    xor r14, r14
+rtAsLoop:
+    cmp r14, [r12+8]
+    jae rtAsEnd
+    test r14, r14
+    jz rtAsNoSep
+    mov rdi, r13
+    lea rsi, [strComma]
+    call rtConcat
+    mov r13, rax
+rtAsNoSep:
+    mov rax, [r12+24]
+    mov rdi, [rax+r14*8]
+    call rtRepr
+    mov rdi, r13
+    mov rsi, rax
+    call rtConcat
+    mov r13, rax
+    inc r14
+    jmp rtAsLoop
+rtAsEnd:
+    mov rdi, r13
+    lea rsi, [strRb]
+    call rtConcat
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtArrNew:
+    mov rdi, 32
+    call rtAlloc
+    mov qword ptr [rax], 3
+    ret
+rtArrPush:
+    mov rax, [rdi+8]
+    cmp rax, [rdi+16]
+    jb rtApStore
+    push rdi
+    push rsi
+    mov rcx, [rdi+16]
+    add rcx, rcx
+    cmp rcx, 4
+    jae rtApCap
+    mov rcx, 4
+rtApCap:
+    mov [rdi+16], rcx
+    lea rdi, [rcx*8]
+    call rtAlloc
+    pop rsi
+    pop rdi
+    mov r8, [rdi+24]
+    mov [rdi+24], rax
+    mov r9, [rdi+8]
+    xor r11, r11
+rtApCopy:
+    cmp r11, r9
+    jae rtApStore
+    mov rdx, [r8+r11*8]
+    mov [rax+r11*8], rdx
+    inc r11
+    jmp rtApCopy
+rtApStore:
+    mov rax, [rdi+8]
+    mov rdx, [rdi+24]
+    mov [rdx+rax*8], rsi
+    inc qword ptr [rdi+8]
+    xor eax, eax
+    ret
+rtArrPop:
+    mov rax, [rdi+8]
+    test rax, rax
+    jz rtApEmpty
+    dec rax
+    mov [rdi+8], rax
+    mov rdx, [rdi+24]
+    mov rax, [rdx+rax*8]
+    ret
+rtApEmpty:
+    xor eax, eax
+    ret
+"""

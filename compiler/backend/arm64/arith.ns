@@ -1,0 +1,143 @@
+ARITH_RUNTIME = """rtTruthy:
+    cbz x0, rtTrFalse
+    cmp x0, 2
+    b.eq rtTrFalse
+    cmp x0, 1
+    b.eq rtTrFalse
+    mov x0, 1
+    ret
+rtTrFalse:
+    mov x0, 0
+    ret
+rtEq:
+    cmp x0, x1
+    b.eq rtEqYes
+    mov x0, 2
+    ret
+rtEqYes:
+    mov x0, 4
+    ret
+rtCmp:
+    cmp x0, x1
+    b.lt rtCmpLt
+    b.gt rtCmpGt
+    mov x0, 1
+    ret
+rtCmpLt:
+    mov x0, -1
+    ret
+rtCmpGt:
+    mov x0, 3
+    ret
+rtAdd:
+    sub x0, x0, 1
+    add x0, x0, x1
+    ret
+rtSub:
+    sub x0, x0, x1
+    add x0, x0, 1
+    ret
+rtMul:
+    asr x0, x0, 1
+    asr x1, x1, 1
+    mul x0, x0, x1
+    lsl x0, x0, 1
+    add x0, x0, 1
+    ret
+rtDiv:
+    asr x0, x0, 1
+    asr x1, x1, 1
+    cbz x1, rtDivZero
+    sdiv x0, x0, x1
+    lsl x0, x0, 1
+    add x0, x0, 1
+    ret
+rtDivZero:
+    ldr x0, =strDivZero
+    b rtFail
+rtMod:
+    asr x0, x0, 1
+    asr x1, x1, 1
+    cbz x1, rtDivZero
+    sdiv x2, x0, x1
+    msub x0, x2, x1, x0
+    lsl x0, x0, 1
+    add x0, x0, 1
+    ret
+rtNeg:
+    neg x0, x0
+    add x0, x0, 2
+    ret
+rtBitAnd:
+    and x0, x0, x1
+    ret
+rtBitOr:
+    orr x0, x0, x1
+    ret
+rtBitXor:
+    eor x0, x0, x1
+    orr x0, x0, 1
+    ret
+rtShl:
+    asr x0, x0, 1
+    asr x1, x1, 1
+    lsl x0, x0, x1
+    lsl x0, x0, 1
+    add x0, x0, 1
+    ret
+rtShr:
+    asr x0, x0, 1
+    asr x1, x1, 1
+    asr x0, x0, x1
+    lsl x0, x0, 1
+    add x0, x0, 1
+    ret
+rtBitNot:
+    mvn x0, x0
+    and x0, x0, -2
+    orr x0, x0, 1
+    ret
+rtInt:
+    tbnz x0, 0, rtIntDone
+    cbz x0, rtIntDone
+    cmp x0, 4
+    b.ls rtIntDone
+    ldr x1, [x0]
+    cmp x1, 2
+    b.eq rtIntStrParse
+    ret
+rtIntStrParse:
+    ldr x1, [x0, 8]
+    add x2, x0, 16
+    mov x0, 0
+    mov x3, 0
+    mov x5, 0
+    cbz x1, rtIntStrDone
+    ldrb w4, [x2]
+    cmp w4, 45
+    b.ne rtIntStrLoop
+    mov x5, 1
+    add x3, x3, 1
+rtIntStrLoop:
+    cmp x3, x1
+    b.ge rtIntStrDone
+    ldrb w4, [x2, x3]
+    sub w4, w4, 48
+    cmp w4, 9
+    b.hi rtIntStrDone
+    mov x6, 10
+    mul x0, x0, x6
+    add x0, x0, x4
+    add x3, x3, 1
+    b rtIntStrLoop
+rtIntStrDone:
+    cbz x5, rtIntStrTag
+    neg x0, x0
+rtIntStrTag:
+    lsl x0, x0, 1
+    add x0, x0, 1
+rtIntDone:
+    ret
+rtFloat:
+    ret
+"""

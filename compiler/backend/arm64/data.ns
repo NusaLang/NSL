@@ -1,0 +1,141 @@
+DATA = """.align 8
+strTrue: .quad 2
+ .quad 5
+ .ascii "benar"
+.align 8
+strFalse: .quad 2
+ .quad 5
+ .ascii "salah"
+.align 8
+strNone: .quad 2
+ .quad 6
+ .ascii "kosong"
+.align 8
+strBenar: .quad 2
+ .quad 5
+ .ascii "benar"
+.align 8
+strSalah: .quad 2
+ .quad 5
+ .ascii "salah"
+.align 8
+strKosong: .quad 2
+ .quad 6
+ .ascii "kosong"
+.align 8
+strEmpty: .quad 2
+ .quad 0
+ .ascii ""
+.align 8
+strEmptyArr: .quad 2
+ .quad 2
+ .ascii "[]"
+.align 8
+strEmptyMap: .quad 2
+ .quad 2
+ .ascii "{}"
+.align 8
+strComma: .quad 2
+ .quad 2
+ .ascii ", "
+.align 8
+strColon: .quad 2
+ .quad 2
+ .ascii ": "
+.align 8
+strQuote: .quad 2
+ .quad 1
+ .ascii "\\\""
+.align 8
+strNl: .quad 2
+ .quad 1
+ .ascii "\\n"
+.align 8
+strSp: .quad 2
+ .quad 1
+ .ascii " "
+.align 8
+strErr: .quad 2
+ .quad 15
+ .ascii "runtime error: "
+.align 8
+strBadOp: .quad 2
+ .quad 21
+ .ascii "unsupported operation"
+.align 8
+strTypeAngka: .quad 2
+ .quad 5
+ .ascii "angka"
+.align 8
+strTypeTeks: .quad 2
+ .quad 4
+ .ascii "teks"
+.align 8
+strTypeLarik: .quad 2
+ .quad 5
+ .ascii "larik"
+.align 8
+strTypePeta: .quad 2
+ .quad 4
+ .ascii "peta"
+.align 8
+strTypeBoolean: .quad 2
+ .quad 7
+ .ascii "boolean"
+.align 8
+strTypeKosong: .quad 2
+ .quad 6
+ .ascii "kosong"
+.align 8
+strUncaught: .quad 2
+ .quad 20
+ .ascii "uncaught exception: "
+.align 8
+strDivZero: .quad 2
+ .quad 16
+ .ascii "division by zero"
+.align 8
+strIdxRange: .quad 2
+ .quad 18
+ .ascii "index out of range"
+.align 8
+strBadIdx: .quad 2
+ .quad 15
+ .ascii "cannot index it"
+.align 8
+strNotIter: .quad 2
+ .quad 16
+ .ascii "not iterable obj"
+.align 8
+strNoMethod: .quad 2
+ .quad 16
+ .ascii "method not found"
+.align 8
+strNoField: .quad 2
+ .quad 15
+ .ascii "field not found"
+.align 8
+strStatusKey: .quad 2
+ .quad 6
+ .ascii "status"
+.align 8
+strKeluaranKey: .quad 2
+ .quad 8
+ .ascii "keluaran"
+.align 8
+strErrorKey: .quad 2
+ .quad 5
+ .ascii "error"
+.align 8
+strArgvKey: .quad 2
+ .quad 4
+ .ascii "argv"
+.align 8
+strExitKey: .quad 2
+ .quad 4
+ .ascii "exit"
+.align 8
+excTop: .quad 0
+.align 8
+heapPtr: .quad 0
+"""

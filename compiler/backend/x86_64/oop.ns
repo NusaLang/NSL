@@ -1,0 +1,135 @@
+OOP_RUNTIME = """rtNewClass:
+    push rdi
+    mov rdi, 32
+    call rtAlloc
+    mov qword ptr [rax], 7
+    pop rdx
+    mov [rax+24], rdx
+    push rax
+    call rtMapNew
+    mov rdx, rax
+    pop rax
+    mov [rax+8], rdx
+    push rax
+    call rtMapNew
+    mov rdx, rax
+    pop rax
+    mov [rax+16], rdx
+    ret
+rtNewInst:
+    push rdi
+    mov rdi, rsi
+    call rtAlloc
+    pop rdx
+    mov qword ptr [rax], 5
+    mov [rax+8], rdx
+    ret
+rtFieldGet:
+    test dil, 1
+    jnz rtFgMapFallback
+    cmp rdi, 4
+    jbe rtFgMapFallback
+    cmp qword ptr [rdi], 5
+    jne rtFgMapFallback
+    push r12
+    push r13
+    mov r12, rdi
+    mov r13, rdx
+    mov rax, [r12+8]
+    cmp rax, [r13]
+    jne rtFgSlow
+    mov rdx, [r13+8]
+    mov rax, [r12+rdx]
+    pop r13
+    pop r12
+    ret
+rtFgSlow:
+    mov rcx, [r12+8]
+    mov rdi, [rcx+16]
+    call rtMapGet
+    test rax, rax
+    jz rtFgMiss
+    sar rax, 1
+    mov [r13], rcx
+    mov [r13+8], rax
+    mov rax, [r12+rax]
+    pop r13
+    pop r12
+    ret
+rtFgMiss:
+    xor rax, rax
+    pop r13
+    pop r12
+    ret
+rtFgMapFallback:
+    call rtMapGet
+    ret
+rtFieldSet:
+    test dil, 1
+    jnz rtFsMapFallback
+    cmp rdi, 4
+    jbe rtFsMapFallback
+    cmp qword ptr [rdi], 5
+    jne rtFsMapFallback
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    mov r15, rcx
+    mov rax, [r12+8]
+    cmp rax, [r15]
+    jne rtFsSlow
+    mov rdx, [r15+8]
+    mov [r12+rdx], r14
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtFsSlow:
+    mov rcx, [r12+8]
+    mov rdi, [rcx+16]
+    mov rsi, r13
+    call rtMapGet
+    test rax, rax
+    jz rtFsMiss
+    sar rax, 1
+    mov [r15], rcx
+    mov [r15+8], rax
+    mov [r12+rax], r14
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtFsMiss:
+    lea rdi, [strNoField]
+    jmp rtFail
+rtFsMapFallback:
+    call rtMapSet
+    ret
+rtFindMethod:
+    mov rcx, [rdi+8]
+rtFmLoop:
+    test rcx, rcx
+    jz rtFmFail
+    push rcx
+    push rsi
+    mov rdi, [rcx+8]
+    call rtMapGet
+    pop rsi
+    pop rcx
+    test rax, rax
+    jnz rtFmFound
+    mov rcx, [rcx+24]
+    jmp rtFmLoop
+rtFmFound:
+    shr rax, 1
+    ret
+rtFmFail:
+    lea rdi, [strNoMethod]
+    jmp rtFail
+"""

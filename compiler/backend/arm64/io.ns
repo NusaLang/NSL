@@ -1,0 +1,21 @@
+IO_RUNTIME = """rtTime:
+    sub sp, sp, 16
+    mov x0, 0
+    mov x1, sp
+    mov x8, 113
+    svc #0
+    ldr x0, [sp]
+    add sp, sp, 16
+    lsl x0, x0, 1
+    add x0, x0, 1
+    ret
+rtFileExists:
+    mov x0, 2
+    ret
+rtReadFile:
+    ldr x0, =strEmpty
+    ret
+rtWriteFile:
+    mov x0, 0
+    ret
+"""

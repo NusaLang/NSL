@@ -3,17 +3,19 @@ import sys
 func loadModule(name):
     candidates = [
         name,
-        "core/" + name,
-        "core/parser/" + name,
-        "core/virtual/" + name,
-        "core/interpreter/" + name
+        name + ".ns",
+        "../compiler/" + name,
+        "compiler/" + name,
+        "parser/" + name,
+        "../core/" + name,
+        "core/" + name
     ]
     for c in candidates:
         try:
             return impor(c)
         except e:
             pass
-    return impor("core/" + name)
+    return impor(name)
 
 Lexer = loadModule("parser/lexer").Lexer
 Parser = loadModule("parser/parser").Parser
@@ -48,15 +50,8 @@ func compile(inputFile, outputFile):
         sys.exit(1)
 
 func compileNative(inputFile, outputFile):
-    NativeCompiler = loadModule("compiler/native.ns").NativeCompiler
-    tree = Parser(Lexer(BacaFile(inputFile)).tokenize()).parse()
-    asm = NativeCompiler().compile(tree)
-    asmPath = outputFile + ".s"
-    objPath = outputFile + ".o"
-    TulisFile(asmPath, asm)
-    JalankanPerintah("as", ["-o", objPath, asmPath])
-    JalankanPerintah("ld", ["-o", outputFile, objPath])
-    JalankanPerintah("rm", ["-f", objPath, asmPath])
+    driverMod = loadModule("../compiler/driver.ns")
+    driverMod.build(inputFile, outputFile)
 
 func main():
     args = sys.argv
