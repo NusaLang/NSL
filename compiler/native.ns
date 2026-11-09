@@ -939,6 +939,47 @@ class NativeCompiler:
             fail("unsupported statement " + t)
 
     func genForIn(self, s):
+        isRange = False
+        rangeArgs = []
+        if s.iterable.type == "CALL":
+            callee = s.iterable.callee
+            calleeName = callee.name if hasattr(callee, "name") else (callee.nama if hasattr(callee, "nama") else "")
+            if calleeName == "range" or calleeName == "rentang":
+                rangeArgs = s.iterable.arguments if hasattr(s.iterable, "arguments") else (s.iterable.args if hasattr(s.iterable, "args") else [])
+                if len(rangeArgs) == 1 or len(rangeArgs) == 2:
+                    isRange = True
+
+        if isRange:
+            curLoc = self.newTemp()
+            stopLoc = self.newTemp()
+            varLoc = self.addr(s.variable, True)
+            top = self.newLabel()
+            cont = self.newLabel()
+            end = self.newLabel()
+            if len(rangeArgs) == 1:
+                self.emit("mov " + mem(curLoc) + ", 1")
+                self.genExpr(rangeArgs[0])
+                self.emit("mov " + mem(stopLoc) + ", rax")
+            else:
+                self.genExpr(rangeArgs[0])
+                self.emit("mov " + mem(curLoc) + ", rax")
+                self.genExpr(rangeArgs[1])
+                self.emit("mov " + mem(stopLoc) + ", rax")
+            self.loops.append([cont, end])
+            self.label(top)
+            self.emit("mov rax, " + curLoc)
+            self.emit("mov rcx, " + stopLoc)
+            self.emit("cmp rax, rcx")
+            self.emit("jge " + end)
+            self.emit("mov " + varLoc + ", rax")
+            self.genBlock(s.body)
+            self.label(cont)
+            self.emit("add " + mem(curLoc) + ", 2")
+            self.emit("jmp " + top)
+            self.label(end)
+            self.loops.pop()
+            return None
+
         iterLoc = self.newTemp()
         idxLoc = self.newTemp()
         varLoc = self.addr(s.variable, True)

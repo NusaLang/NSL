@@ -80,6 +80,10 @@ func readSource(path, skipFirst):
     if not FileAda(path):
         fail("cannot open " + path)
     src = BacaFile(path)
+    marker = "# --- NUSA_CODE ---\n"
+    pos = src.find(marker)
+    if pos != -1:
+        return src[pos + len(marker):]
     if skipFirst or src.startswith("#!"):
         nl = src.find("\n")
         if nl != -1:
@@ -214,6 +218,17 @@ func doBuild(entry, out, isNative):
     src = BacaFile(entry)
     tree = parse(src)
     if isNative:
+        unameRes = JalankanPerintah("uname", ["-m"])
+        arch = unameRes.keluaran
+        if len(arch) > 0 and arch[len(arch) - 1] == "\n":
+            arch = arch[:len(arch) - 1]
+        if arch != "x86_64":
+            fail("nusa build --native saat ini hanya mendukung arsitektur x86_64 (terdeteksi: " + arch + "). Jalankan 'nusa build " + entry + " -o " + out + "' tanpa --native untuk membuat binary executable portabel di perangkat ini.")
+
+        asCheck = JalankanPerintah("which", ["as"])
+        if asCheck.status != 0:
+            fail("assembler 'as' tidak ditemukan. Pasang binutils terlebih dahulu (contoh: pkg install binutils / apt install binutils).")
+
         nativeMod = None
         try:
             nativeMod = impor("../compiler/native.ns")
@@ -230,17 +245,35 @@ func doBuild(entry, out, isNative):
         TulisFile(asmPath, asm)
         asRes = JalankanPerintah("as", ["-o", objPath, asmPath])
         if asRes.status != 0:
-            lempar "as gagal: " + asRes.error
+            msg = asRes.error if len(asRes.error) > 0 else asRes.keluaran
+            fail("assembler 'as' gagal:\n" + msg)
         if compiler.usesGoBridge:
             bridgeA = nativeMod.buildGoBridge()
             linkRes = JalankanPerintah("cc", ["-o", out, objPath, bridgeA, "-lpthread", "-no-pie"])
         else:
             linkRes = JalankanPerintah("ld", ["-o", out, objPath])
         if linkRes.status != 0:
-            lempar "link gagal: " + linkRes.error
+            msg = linkRes.error if len(linkRes.error) > 0 else linkRes.keluaran
+            fail("linker gagal:\n" + msg)
         JalankanPerintah("rm", ["-f", objPath, asmPath])
     else:
-        TulisFile(out, "#!/usr/bin/env nusa\n" + src)
+        cleanSrc = src
+        if cleanSrc.startswith("#!"):
+            nl = cleanSrc.find("\n")
+            if nl != -1:
+                cleanSrc = cleanSrc[nl + 1:]
+        shebang = "#!/usr/bin/env nusa\n"
+        if not FileAda("/usr/bin/env"):
+            if FileAda("/data/data/com.termux/files/usr/bin/env"):
+                shebang = "#!/data/data/com.termux/files/usr/bin/env nusa\n"
+            else:
+                wRes = JalankanPerintah("which", ["nusa"])
+                if wRes.status == 0:
+                    nPath = wRes.keluaran
+                    if len(nPath) > 0 and nPath[len(nPath) - 1] == "\n":
+                        nPath = nPath[:len(nPath) - 1]
+                    shebang = "#!" + nPath + "\n"
+        TulisFile(out, shebang + cleanSrc)
         JalankanPerintah("chmod", ["+x", out])
 
 func mtimeOf(path):

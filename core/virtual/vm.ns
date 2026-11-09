@@ -1137,6 +1137,41 @@ class VmCompiler:
         self.emitOp(Op.SETGLOBAL)
         self.emitU16(cIdx)
 
+func makeLazyRange(a, b = None, c = None):
+    start = 0
+    stop = 0
+    step = 1
+    if b == None:
+        stop = a
+    elif c == None:
+        start = a
+        stop = b
+    else:
+        start = a
+        stop = b
+        step = c
+    if step == 0:
+        lempar "range() arg 3 must not be zero"
+    return {"isRange": True, "start": start, "stop": stop, "step": step}
+
+func nusaLen(x):
+    if (type(x) == "peta" or type(x) == "dict") and "isRange" in x:
+        start = x["start"]
+        stop = x["stop"]
+        step = x["step"]
+        if step > 0:
+            return 0 if start >= stop else (stop - start + step - 1) // step
+        else:
+            return 0 if start <= stop else (start - stop - step - 1) // (-step)
+    return panjang(x)
+
+func nusaStr(x):
+    if (type(x) == "peta" or type(x) == "dict") and "isRange" in x:
+        if x["step"] == 1:
+            return "range(" + str(x["start"]) + ", " + str(x["stop"]) + ")"
+        return "range(" + str(x["start"]) + ", " + str(x["stop"]) + ", " + str(x["step"]) + ")"
+    return str(x)
+
 class VmRunner:
     func __init__(self):
         self.stack = []
@@ -1148,17 +1183,17 @@ class VmRunner:
     func registerBuiltins(self):
         self.globals["print"] = print
         self.globals["cetak"] = cetak
-        self.globals["len"] = len
-        self.globals["panjang"] = panjang
-        self.globals["str"] = str
-        self.globals["ke_teks"] = ke_teks
+        self.globals["len"] = nusaLen
+        self.globals["panjang"] = nusaLen
+        self.globals["str"] = nusaStr
+        self.globals["ke_teks"] = nusaStr
         self.globals["int"] = int
         self.globals["float"] = float
         self.globals["ke_angka"] = ke_angka
         self.globals["type"] = type
         self.globals["tipe"] = tipe
-        self.globals["range"] = range
-        self.globals["rentang"] = range
+        self.globals["range"] = makeLazyRange
+        self.globals["rentang"] = makeLazyRange
         self.globals["list"] = lambda: []
         self.globals["larik"] = lambda: []
         self.globals["map"] = lambda: {}
@@ -1412,7 +1447,11 @@ class VmRunner:
                             cold = True
                             break
                         idx = stack.pop()
-                        stack[-1] = stack[-1][idx]
+                        target = stack[-1]
+                        if (type(target) == "peta" or type(target) == "dict") and "isRange" in target:
+                            stack[-1] = target["start"] + idx * target["step"]
+                        else:
+                            stack[-1] = target[idx]
                     elif op == opGetGlobal:
                         name = consts[code[ip] | (code[ip + 1] << 8)]
                         ip += 2
@@ -1624,7 +1663,9 @@ class VmRunner:
                     self.push(closure)
                 elif op == Op.TOITER:
                     val = self.pop()
-                    if type(val) == "peta" or type(val) == "dict":
+                    if (type(val) == "peta" or type(val) == "dict") and "isRange" in val:
+                        self.push(val)
+                    elif type(val) == "peta" or type(val) == "dict":
                         self.push(list(val.keys()))
                     elif type(val) == "larik" or type(val) == "list":
                         self.push(val)
@@ -1637,7 +1678,13 @@ class VmRunner:
                         self.push(res)
                 elif op == Op.TOSTRING:
                     val = self.pop()
-                    self.push(str(val))
+                    if (type(val) == "peta" or type(val) == "dict") and "isRange" in val:
+                        if val["step"] == 1:
+                            self.push("range(" + str(val["start"]) + ", " + str(val["stop"]) + ")")
+                        else:
+                            self.push("range(" + str(val["start"]) + ", " + str(val["stop"]) + ", " + str(val["step"]) + ")")
+                    else:
+                        self.push(str(val))
                 elif op == Op.GETGLOBAL:
                     idx = self.readU16()
                     name = self.frame.fn.constants[idx]
@@ -1686,7 +1733,16 @@ class VmRunner:
                     self.push(None)
                 elif op == Op.LENGTH:
                     val = self.pop()
-                    self.push(len(val))
+                    if (type(val) == "peta" or type(val) == "dict") and "isRange" in val:
+                        start = val["start"]
+                        stop = val["stop"]
+                        step = val["step"]
+                        if step > 0:
+                            self.push(0 if start >= stop else (stop - start + step - 1) // step)
+                        else:
+                            self.push(0 if start <= stop else (start - stop - step - 1) // (-step))
+                    else:
+                        self.push(len(val))
                 elif op == Op.PUSH:
                     val = self.pop()
                     target = self.pop()
@@ -1713,7 +1769,10 @@ class VmRunner:
                 elif op == Op.GETINDEX:
                     idx = self.pop()
                     target = self.pop()
-                    self.push(target[idx])
+                    if (type(target) == "peta" or type(target) == "dict") and "isRange" in target:
+                        self.push(target["start"] + idx * target["step"])
+                    else:
+                        self.push(target[idx])
                 elif op == Op.SETINDEX:
                     val = self.pop()
                     idx = self.pop()
