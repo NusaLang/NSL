@@ -1172,6 +1172,36 @@ func nusaStr(x):
         return "range(" + str(x["start"]) + ", " + str(x["stop"]) + ", " + str(x["step"]) + ")"
     return str(x)
 
+func nusaList(arg = None):
+    if arg == None:
+        return []
+    if (type(arg) == "peta" or type(arg) == "dict") and "isRange" in arg:
+        start = arg["start"]
+        stop = arg["stop"]
+        step = arg["step"]
+        count = 0
+        if step > 0 and stop > start:
+            count = (stop - start + step - 1) // step
+        elif step < 0 and start > stop:
+            count = (start - stop - step - 1) // (-step)
+        if count > 10000000:
+            lempar "rentang(): terlalu besar untuk dialokasikan sebagai list"
+        res = []
+        cur = start
+        if step > 0:
+            while cur < stop:
+                res.append(cur)
+                cur += step
+        else:
+            while cur > stop:
+                res.append(cur)
+                cur += step
+        return res
+    res = []
+    for item in arg:
+        res.append(item)
+    return res
+
 class VmRunner:
     func __init__(self):
         self.stack = []
@@ -1194,8 +1224,8 @@ class VmRunner:
         self.globals["tipe"] = tipe
         self.globals["range"] = makeLazyRange
         self.globals["rentang"] = makeLazyRange
-        self.globals["list"] = lambda: []
-        self.globals["larik"] = lambda: []
+        self.globals["list"] = nusaList
+        self.globals["larik"] = nusaList
         self.globals["map"] = lambda: {}
         self.globals["peta"] = lambda: {}
         self.globals["PetaBaru"] = peta_baru
