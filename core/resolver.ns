@@ -45,6 +45,11 @@ func getModuleCandidates(name):
 
 func resolveModulePath(name, fileExistsFn = None):
     checker = FileAda if fileExistsFn == None else fileExistsFn
+    if name.startswith("../"):
+        if checker("core/" + name):
+            return name
+        if checker(name):
+            return name
     for c in getModuleCandidates(name):
         if checker(c):
             return c

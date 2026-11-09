@@ -1,0 +1,108 @@
+MAP_RUNTIME = """rtMapNew:
+    stp lr, x19, [sp, -16]!
+    mov x0, 48
+    bl rtAlloc
+    mov x19, x0
+    mov x1, 4
+    str x1, [x19]
+    mov x1, 0
+    str x1, [x19, 8]
+    mov x1, 8
+    str x1, [x19, 16]
+    mov x0, 192
+    bl rtAlloc
+    str x0, [x19, 24]
+    mov x0, x19
+    ldp lr, x19, [sp], 16
+    ret
+rtHash:
+    tbnz x0, 0, rtHashInt
+    ldr x1, [x0]
+    cmp x1, 2
+    b.eq rtHashStr
+    lsr x0, x0, 3
+    ret
+rtHashInt:
+    asr x0, x0, 1
+    ret
+rtHashStr:
+    ldr x1, [x0, 8]
+    add x2, x0, 16
+    ldr x0, =0xcbf29ce484222325
+    ldr x3, =0x100000001b3
+    mov x4, 0
+rtHLoop:
+    cmp x4, x1
+    b.ge rtHDone
+    ldrb w5, [x2, x4]
+    eor x0, x0, x5
+    mul x0, x0, x3
+    add x4, x4, 1
+    b rtHLoop
+rtHDone:
+    ret
+rtMapSet:
+    stp lr, x19, [sp, -16]!
+    stp x20, x21, [sp, -16]!
+    stp x22, x23, [sp, -16]!
+    mov x19, x0
+    mov x20, x1
+    mov x21, x2
+    mov x0, x20
+    bl rtHash
+    mov x22, x0
+    ldr x23, [x19, 16]
+    sub x23, x23, 1
+    and x22, x22, x23
+    ldr x0, [x19, 24]
+    mov x1, 24
+    mul x1, x22, x1
+    add x0, x0, x1
+    str x20, [x0]
+    str x21, [x0, 8]
+    mov x1, 1
+    str x1, [x0, 16]
+    ldr x1, [x19, 8]
+    add x1, x1, 1
+    str x1, [x19, 8]
+    ldp x22, x23, [sp], 16
+    ldp x20, x21, [sp], 16
+    ldp lr, x19, [sp], 16
+    ret
+rtMapGet:
+    stp lr, x19, [sp, -16]!
+    stp x20, x21, [sp, -16]!
+    mov x19, x0
+    mov x20, x1
+    bl rtHash
+    ldr x1, [x19, 16]
+    sub x1, x1, 1
+    and x0, x0, x1
+    ldr x1, [x19, 24]
+    mov x2, 24
+    mul x0, x0, x2
+    add x1, x1, x0
+    ldr x2, [x1, 16]
+    cbz x2, rtMgNone
+    ldr x0, [x1, 8]
+    ldp x20, x21, [sp], 16
+    ldp lr, x19, [sp], 16
+    ret
+rtMgNone:
+    mov x0, 0
+    ldp x20, x21, [sp], 16
+    ldp lr, x19, [sp], 16
+    ret
+rtMapGetDef:
+    stp lr, x2, [sp, -16]!
+    bl rtMapGet
+    ldp lr, x2, [sp], 16
+    cbz x0, rtMgDefUse
+    ret
+rtMgDefUse:
+    mov x0, x2
+    ret
+rtMapStr:
+    ldr x0, =strEmptyMap
+    ret
+"""

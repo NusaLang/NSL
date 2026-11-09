@@ -1,0 +1,43 @@
+func loadSubmodule(path):
+    candidates = [
+        path,
+        "../compiler/backend/x86_64/" + path,
+        "compiler/backend/x86_64/" + path,
+        "backend/x86_64/" + path,
+        "../" + path,
+        "../../" + path,
+        "../../../compiler/backend/x86_64/" + path,
+        "experiment/compiler/backend/x86_64/" + path,
+        path.split("/")[-1]
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor(path)
+
+allocMod = loadSubmodule("alloc.ns")
+sysMod = loadSubmodule("sys.ns")
+stringMod = loadSubmodule("string.ns")
+arrayMod = loadSubmodule("array.ns")
+mapMod = loadSubmodule("map.ns")
+arithMod = loadSubmodule("arith.ns")
+ioMod = loadSubmodule("io.ns")
+opsMod = loadSubmodule("ops.ns")
+oopMod = loadSubmodule("oop.ns")
+dataMod = loadSubmodule("data.ns")
+
+RUNTIME = (
+    allocMod.ALLOC_RUNTIME +
+    sysMod.SYS_RUNTIME +
+    stringMod.STRING_RUNTIME +
+    arrayMod.ARRAY_RUNTIME +
+    mapMod.MAP_RUNTIME +
+    arithMod.ARITH_RUNTIME +
+    ioMod.IO_RUNTIME +
+    opsMod.OPS_RUNTIME +
+    oopMod.OOP_RUNTIME
+)
+
+DATA = dataMod.DATA

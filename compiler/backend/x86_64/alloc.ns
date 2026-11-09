@@ -1,0 +1,19 @@
+ALLOC_RUNTIME = """rtAlloc:
+    add rdi, 7
+    and rdi, -8
+    mov rax, [heapPtr]
+    lea rdx, [rax+rdi]
+    mov [heapPtr], rdx
+    ret
+rtInit:
+    mov rax, 9
+    xor rdi, rdi
+    mov rsi, 17179869184
+    mov rdx, 3
+    mov r10, 16418
+    mov r8, -1
+    xor r9, r9
+    syscall
+    mov [heapPtr], rax
+    ret
+"""

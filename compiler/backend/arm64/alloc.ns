@@ -1,0 +1,22 @@
+ALLOC_RUNTIME = """rtAlloc:
+    add x0, x0, 7
+    and x0, x0, -8
+    ldr x1, =heapPtr
+    ldr x2, [x1]
+    add x3, x2, x0
+    str x3, [x1]
+    mov x0, x2
+    ret
+rtInit:
+    mov x0, 0
+    ldr x1, =17179869184
+    mov x2, 3
+    mov x3, 0x22
+    mov x4, -1
+    mov x5, 0
+    mov x8, 222
+    svc #0
+    ldr x1, =heapPtr
+    str x0, [x1]
+    ret
+"""

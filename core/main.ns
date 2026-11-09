@@ -49,7 +49,7 @@ USAGE = """usage: nusa [options] [-c code | -m module | file | -] [args]
   --ast        dump the AST before running
   -V, --version
   -h, --help
-  build [dir|file] [-o out] [--native] [--watch]   bundle a program into script or native binary, rebuild on save with --watch
+  build [dir|file] [-o out] [--script] [--watch]   compile directly to native binary (default) or script with --script, rebuild on save with --watch
   get <git-url>[@version] [name]   fetch a package into nusa_packages/, record it in nusa.json
   mod tidy                    fetch everything listed in nusa.json, write nusa-l.json
   start                       run scripts.start (or main) from nusa.json
@@ -218,44 +218,19 @@ func doBuild(entry, out, isNative):
     src = BacaFile(entry)
     tree = parse(src)
     if isNative:
-        unameRes = JalankanPerintah("uname", ["-m"])
-        arch = unameRes.keluaran
-        if len(arch) > 0 and arch[len(arch) - 1] == "\n":
-            arch = arch[:len(arch) - 1]
-        if arch != "x86_64":
-            fail("nusa build --native saat ini hanya mendukung arsitektur x86_64 (terdeteksi: " + arch + "). Jalankan 'nusa build " + entry + " -o " + out + "' tanpa --native untuk membuat binary executable portabel di perangkat ini.")
-
-        asCheck = JalankanPerintah("which", ["as"])
-        if asCheck.status != 0:
-            fail("assembler 'as' tidak ditemukan. Pasang binutils terlebih dahulu (contoh: pkg install binutils / apt install binutils).")
-
         nativeMod = None
         try:
-            nativeMod = impor("../compiler/native.ns")
+            nativeMod = impor("../compiler/driver.ns")
         except e:
             try:
-                nativeMod = impor("compiler/native.ns")
+                nativeMod = impor("../compiler/native.ns")
             except e2:
-                nativeMod = impor("native")
-        NativeCompiler = nativeMod.NativeCompiler
-        compiler = NativeCompiler()
-        asm = compiler.compile(tree)
-        asmPath = out + ".s"
-        objPath = out + ".o"
-        TulisFile(asmPath, asm)
-        asRes = JalankanPerintah("as", ["-o", objPath, asmPath])
-        if asRes.status != 0:
-            msg = asRes.error if len(asRes.error) > 0 else asRes.keluaran
-            fail("assembler 'as' gagal:\n" + msg)
-        if compiler.usesGoBridge:
-            bridgeA = nativeMod.buildGoBridge()
-            linkRes = JalankanPerintah("cc", ["-o", out, objPath, bridgeA, "-lpthread", "-no-pie"])
-        else:
-            linkRes = JalankanPerintah("ld", ["-o", out, objPath])
-        if linkRes.status != 0:
-            msg = linkRes.error if len(linkRes.error) > 0 else linkRes.keluaran
-            fail("linker gagal:\n" + msg)
-        JalankanPerintah("rm", ["-f", objPath, asmPath])
+                try:
+                    nativeMod = impor("compiler/driver.ns")
+                except e3:
+                    nativeMod = impor("compiler/native.ns")
+
+        nativeMod.build(entry, out)
     else:
         cleanSrc = src
         if cleanSrc.startswith("#!"):
@@ -303,7 +278,7 @@ func watchLoop(entry, out, isNative):
 func build(args):
     target = "."
     out = ""
-    isNative = False
+    isNative = True
     watch = False
     i = 2
     while i < len(args):
@@ -312,6 +287,9 @@ func build(args):
             i += 2
         elif args[i] == "-n" or args[i] == "--native":
             isNative = True
+            i += 1
+        elif args[i] == "--script" or args[i] == "--bundle":
+            isNative = False
             i += 1
         elif args[i] == "--watch":
             watch = True

@@ -1,0 +1,38 @@
+OOP_RUNTIME = """rtNewClass:
+    stp lr, x0, [sp, -16]!
+    mov x0, 32
+    bl rtAlloc
+    mov x1, 7
+    str x1, [x0]
+    ldp lr, x2, [sp], 16
+    str x2, [x0, 24]
+    stp lr, x0, [sp, -16]!
+    bl rtMapNew
+    mov x1, x0
+    ldr x0, [sp, 8]
+    str x1, [x0, 8]
+    bl rtMapNew
+    mov x1, x0
+    ldr x0, [sp, 8]
+    str x1, [x0, 16]
+    ldp lr, x0, [sp], 16
+    ret
+rtNewInst:
+    stp lr, x0, [sp, -16]!
+    mov x0, x1
+    bl rtAlloc
+    ldp lr, x1, [sp], 16
+    mov x2, 5
+    str x2, [x0]
+    str x1, [x0, 8]
+    ret
+rtFieldGet:
+    ldr x0, [x0, 16]
+    ret
+rtFieldSet:
+    str x2, [x0, 16]
+    ret
+rtFindMethod:
+    mov x0, 0
+    ret
+"""

@@ -1,0 +1,420 @@
+IO_RUNTIME = """rtTime:
+    sub rsp, 16
+    mov rax, 228
+    mov rdi, 1
+    mov rsi, rsp
+    syscall
+    mov rax, [rsp]
+    cvtsi2sd xmm0, rax
+    mov rax, [rsp+8]
+    cvtsi2sd xmm1, rax
+    mov rax, 1000000000
+    cvtsi2sd xmm2, rax
+    divsd xmm1, xmm2
+    addsd xmm0, xmm1
+    add rsp, 16
+    jmp rtBoxFloat
+rtResolveExecPath:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 4096
+    mov r12, rdi
+    call rtCStrLen
+    mov r13, rax
+    xor rbx, rbx
+rtRepScan:
+    cmp rbx, r13
+    je rtRepNoSlash
+    cmp byte ptr [r12+rbx], 47
+    je rtRepHasSlash
+    inc rbx
+    jmp rtRepScan
+rtRepHasSlash:
+    mov rax, r12
+    jmp rtRepDone
+rtRepNoSlash:
+    mov r14, [gEnvp]
+    test r14, r14
+    jz rtRepNotFound
+rtRepEnvLoop:
+    mov rax, [r14]
+    test rax, rax
+    jz rtRepNotFound
+    cmp byte ptr [rax], 80
+    jne rtRepEnvNext
+    cmp byte ptr [rax+1], 65
+    jne rtRepEnvNext
+    cmp byte ptr [rax+2], 84
+    jne rtRepEnvNext
+    cmp byte ptr [rax+3], 72
+    jne rtRepEnvNext
+    cmp byte ptr [rax+4], 61
+    jne rtRepEnvNext
+    lea r15, [rax+5]
+    jmp rtRepGotPath
+rtRepEnvNext:
+    add r14, 8
+    jmp rtRepEnvLoop
+rtRepNotFound:
+    mov rax, r12
+    jmp rtRepDone
+rtRepGotPath:
+rtRepDirLoop:
+    mov r14, r15
+    xor rbx, rbx
+rtRepDirScan:
+    mov al, [r15]
+    test al, al
+    jz rtRepDirEnd
+    cmp al, 58
+    je rtRepDirEnd
+    inc r15
+    inc rbx
+    jmp rtRepDirScan
+rtRepDirEnd:
+    test rbx, rbx
+    jz rtRepDirNext
+    cmp rbx, 4000
+    jae rtRepDirNext
+    xor r8, r8
+rtRepCopyDir:
+    cmp r8, rbx
+    je rtRepCopyDirDone
+    mov al, [r14+r8]
+    mov [rsp+r8], al
+    inc r8
+    jmp rtRepCopyDir
+rtRepCopyDirDone:
+    mov byte ptr [rsp+rbx], 47
+    lea r9, [rsp+rbx+1]
+    xor r8, r8
+rtRepCopyCmd:
+    cmp r8, r13
+    je rtRepCopyCmdDone
+    mov al, [r12+r8]
+    mov [r9+r8], al
+    inc r8
+    jmp rtRepCopyCmd
+rtRepCopyCmdDone:
+    mov byte ptr [r9+r13], 0
+    mov rdi, rsp
+    mov rsi, 1
+    mov rax, 21
+    syscall
+    test rax, rax
+    jz rtRepFoundOnStack
+rtRepDirNext:
+    mov al, [r15]
+    test al, al
+    jz rtRepNotFound2
+    inc r15
+    jmp rtRepDirLoop
+rtRepNotFound2:
+    mov rax, r12
+    jmp rtRepDone
+rtRepFoundOnStack:
+    mov rdi, r13
+    add rdi, rbx
+    add rdi, 2
+    call rtAlloc
+    xor r8, r8
+rtRepFinalCopy:
+    cmp byte ptr [rsp+r8], 0
+    je rtRepFinalDone
+    mov r9b, [rsp+r8]
+    mov [rax+r8], r9b
+    inc r8
+    jmp rtRepFinalCopy
+rtRepFinalDone:
+    mov byte ptr [rax+r8], 0
+rtRepDone:
+    add rsp, 4096
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+rtReadAllFd:
+    push r12
+    push r13
+    sub rsp, 4096
+    mov r12, rdi
+    mov rdi, 16
+    call rtAlloc
+    mov qword ptr [rax], 2
+    mov qword ptr [rax+8], 0
+    mov r13, rax
+rtRafLoop:
+    mov rdi, r12
+    lea rsi, [rsp]
+    mov rdx, 4096
+    xor rax, rax
+    syscall
+    test rax, rax
+    jle rtRafDone
+    push rax
+    mov rdi, rax
+    add rdi, 16
+    call rtAlloc
+    pop rdx
+    mov qword ptr [rax], 2
+    mov [rax+8], rdx
+    xor rcx, rcx
+rtRafCopy:
+    cmp rcx, rdx
+    je rtRafCopyDone
+    mov r8b, [rsp+rcx]
+    mov [rax+16+rcx], r8b
+    inc rcx
+    jmp rtRafCopy
+rtRafCopyDone:
+    mov rdi, r13
+    mov rsi, rax
+    call rtConcat
+    mov r13, rax
+    jmp rtRafLoop
+rtRafDone:
+    mov rax, r13
+    add rsp, 4096
+    pop r13
+    pop r12
+    ret
+rtRunCommand:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 64
+    mov r12, rdi
+    mov r13, rsi
+    mov rdi, r12
+    call rtToCStr
+    mov r14, rax
+    mov rdi, r14
+    call rtResolveExecPath
+    mov [rsp+32], rax
+    mov rax, [r13+8]
+    mov rbx, rax
+    lea rdi, [rbx*8+16]
+    call rtAlloc
+    mov [rsp+24], rax
+    mov [rax], r14
+    mov r15, [r13+24]
+    xor rcx, rcx
+rtRcArgvLoop:
+    cmp rcx, rbx
+    je rtRcArgvDone
+    mov rdi, [r15+rcx*8]
+    push rcx
+    call rtToCStr
+    pop rcx
+    mov r9, [rsp+24]
+    mov [r9+8+rcx*8], rax
+    inc rcx
+    jmp rtRcArgvLoop
+rtRcArgvDone:
+    mov r9, [rsp+24]
+    mov qword ptr [r9+8+rbx*8], 0
+    lea rdi, [rsp]
+    mov rax, 22
+    syscall
+    lea rdi, [rsp+8]
+    mov rax, 22
+    syscall
+    mov rax, 57
+    syscall
+    test rax, rax
+    jz rtRcChild
+    mov [rsp+16], rax
+    movsxd rdi, dword ptr [rsp+4]
+    mov rax, 3
+    syscall
+    movsxd rdi, dword ptr [rsp+12]
+    mov rax, 3
+    syscall
+    movsxd rdi, dword ptr [rsp]
+    call rtReadAllFd
+    mov r12, rax
+    movsxd rdi, dword ptr [rsp+8]
+    call rtReadAllFd
+    mov r13, rax
+    movsxd rdi, dword ptr [rsp]
+    mov rax, 3
+    syscall
+    movsxd rdi, dword ptr [rsp+8]
+    mov rax, 3
+    syscall
+    mov rdi, [rsp+16]
+    lea rsi, [rsp+40]
+    xor rdx, rdx
+    xor r10, r10
+    mov rax, 61
+    syscall
+    mov eax, [rsp+40]
+    sar eax, 8
+    and eax, 255
+    movsxd rax, eax
+    lea rbx, [rax*2+1]
+    call rtMapNew
+    mov r14, rax
+    mov rdi, r14
+    lea rsi, [strStatusKey]
+    mov rdx, rbx
+    call rtMapSet
+    mov rdi, r14
+    lea rsi, [strKeluaranKey]
+    mov rdx, r12
+    call rtMapSet
+    mov rdi, r14
+    lea rsi, [strErrorKey]
+    mov rdx, r13
+    call rtMapSet
+    mov rax, r14
+    add rsp, 64
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+rtRcChild:
+    movsxd rdi, dword ptr [rsp+4]
+    mov rsi, 1
+    mov rax, 33
+    syscall
+    movsxd rdi, dword ptr [rsp+12]
+    mov rsi, 2
+    mov rax, 33
+    syscall
+    movsxd rdi, dword ptr [rsp]
+    mov rax, 3
+    syscall
+    movsxd rdi, dword ptr [rsp+8]
+    mov rax, 3
+    syscall
+    mov rdi, [rsp+32]
+    mov rsi, [rsp+24]
+    mov rdx, [gEnvp]
+    mov rax, 59
+    syscall
+    mov rax, 60
+    mov rdi, 127
+    syscall
+rtToCStr:
+    mov rcx, [rdi+8]
+    mov rsi, rdi
+    push rsi
+    push rcx
+    mov rdi, rcx
+    inc rdi
+    call rtAlloc
+    pop rcx
+    pop rsi
+    xor rdx, rdx
+rtCStrCopy:
+    cmp rdx, rcx
+    je rtCStrTerm
+    mov r8b, [rsi+16+rdx]
+    mov [rax+rdx], r8b
+    inc rdx
+    jmp rtCStrCopy
+rtCStrTerm:
+    mov byte ptr [rax+rdx], 0
+    ret
+rtFileExists:
+    call rtToCStr
+    mov rdi, rax
+    xor rsi, rsi
+    mov rax, 21
+    syscall
+    test rax, rax
+    jz rtFeTrue
+    mov rax, 2
+    ret
+rtFeTrue:
+    mov rax, 4
+    ret
+rtReadFile:
+    push r12
+    push r13
+    push r14
+    call rtToCStr
+    mov rdi, rax
+    xor rsi, rsi
+    xor rdx, rdx
+    mov rax, 2
+    syscall
+    test rax, rax
+    js rtRfEmpty
+    mov r12, rax
+    mov rdi, r12
+    xor rsi, rsi
+    mov rdx, 2
+    mov rax, 8
+    syscall
+    mov r13, rax
+    mov rdi, r12
+    xor rsi, rsi
+    xor rdx, rdx
+    mov rax, 8
+    syscall
+    mov rdi, r13
+    add rdi, 16
+    call rtAlloc
+    mov r14, rax
+    mov qword ptr [r14], 2
+    mov [r14+8], r13
+    mov rdi, r12
+    lea rsi, [r14+16]
+    mov rdx, r13
+    xor rax, rax
+    syscall
+    mov rdi, r12
+    mov rax, 3
+    syscall
+    mov rax, r14
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtRfEmpty:
+    mov rdi, 16
+    call rtAlloc
+    mov qword ptr [rax], 2
+    mov qword ptr [rax+8], 0
+    pop r14
+    pop r13
+    pop r12
+    ret
+rtWriteFile:
+    push r12
+    push r13
+    mov r13, rsi
+    call rtToCStr
+    mov rdi, rax
+    mov rsi, 577
+    mov rdx, 420
+    mov rax, 2
+    syscall
+    test rax, rax
+    js rtWfDone
+    mov r12, rax
+    mov rdi, r12
+    lea rsi, [r13+16]
+    mov rdx, [r13+8]
+    mov rax, 1
+    syscall
+    mov rdi, r12
+    mov rax, 3
+    syscall
+rtWfDone:
+    xor rax, rax
+    pop r13
+    pop r12
+    ret
+"""
