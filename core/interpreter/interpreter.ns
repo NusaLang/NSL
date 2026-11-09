@@ -52,6 +52,75 @@ class UserFunction:
         self.closure = closure
         self.defaults = defaults if defaults != None else {}
 
+func makeLazyRange(a, b = None, c = None):
+    start = 0
+    stop = 0
+    step = 1
+    if b == None:
+        stop = a
+    elif c == None:
+        start = a
+        stop = b
+    else:
+        start = a
+        stop = b
+        step = c
+    if step == 0:
+        lempar "range() arg 3 must not be zero"
+    return {"isRange": True, "start": start, "stop": stop, "step": step}
+
+func nusaLen(x):
+    if (tipe(x) == "peta" or tipe(x) == "dict") and "isRange" in x:
+        start = x["start"]
+        stop = x["stop"]
+        step = x["step"]
+        if step > 0:
+            if start >= stop:
+                return 0
+            return (stop - start + step - 1) // step
+        else:
+            if start <= stop:
+                return 0
+            return (start - stop - step - 1) // (-step)
+    return panjang(x)
+
+func nusaStr(x):
+    if (tipe(x) == "peta" or tipe(x) == "dict") and "isRange" in x:
+        if x["step"] == 1:
+            return "range(" + str(x["start"]) + ", " + str(x["stop"]) + ")"
+        return "range(" + str(x["start"]) + ", " + str(x["stop"]) + ", " + str(x["step"]) + ")"
+    return str(x)
+
+func nusaList(arg = None):
+    if arg == None:
+        return []
+    if (tipe(arg) == "peta" or tipe(arg) == "dict") and "isRange" in arg:
+        start = arg["start"]
+        stop = arg["stop"]
+        step = arg["step"]
+        count = 0
+        if step > 0 and stop > start:
+            count = (stop - start + step - 1) // step
+        elif step < 0 and start > stop:
+            count = (start - stop - step - 1) // (-step)
+        if count > 10000000:
+            lempar "rentang(): terlalu besar untuk dialokasikan sebagai list"
+        res = []
+        cur = start
+        if step > 0:
+            while cur < stop:
+                res.append(cur)
+                cur += step
+        else:
+            while cur > stop:
+                res.append(cur)
+                cur += step
+        return res
+    res = []
+    for item in arg:
+        res.append(item)
+    return res
+
 class Interpreter:
     func __init__(self):
         self.globalScope = Scope(None)
@@ -61,19 +130,19 @@ class Interpreter:
         g = self.globalScope
         g.define("print", print)
         g.define("cetak", cetak)
-        g.define("len", len)
-        g.define("panjang", panjang)
-        g.define("str", str)
-        g.define("ke_teks", ke_teks)
+        g.define("len", nusaLen)
+        g.define("panjang", nusaLen)
+        g.define("str", nusaStr)
+        g.define("ke_teks", nusaStr)
         g.define("int", int)
         g.define("float", float)
         g.define("ke_angka", ke_angka)
         g.define("type", type)
         g.define("tipe", tipe)
-        g.define("range", range)
-        g.define("rentang", range)
-        g.define("list", lambda: [])
-        g.define("larik", lambda: [])
+        g.define("range", makeLazyRange)
+        g.define("rentang", makeLazyRange)
+        g.define("list", nusaList)
+        g.define("larik", nusaList)
         g.define("map", lambda: {})
         g.define("peta", lambda: {})
         g.define("PetaBaru", peta_baru)
@@ -221,6 +290,25 @@ class Interpreter:
             varName = stmt.variable if hasattr(stmt, "variable") else stmt.variabel
             body = stmt.body if hasattr(stmt, "body") else stmt.badan
             collection = self.evaluate(iterExpr, env)
+            if (tipe(collection) == "peta" or tipe(collection) == "dict") and "isRange" in collection:
+                start = collection["start"]
+                stop = collection["stop"]
+                step = collection["step"]
+                cur = start
+                while (step > 0 and cur < stop) or (step < 0 and cur > stop):
+                    iterScope = Scope(env)
+                    iterScope.define(varName, cur)
+                    try:
+                        self.execInline(body, iterScope)
+                    except sig:
+                        if hasattr(sig, "isBreak"):
+                            break
+                        elif hasattr(sig, "isContinue"):
+                            pass
+                        else:
+                            raise sig
+                    cur += step
+                return None
             for item in collection:
                 iterScope = Scope(env)
                 iterScope.define(varName, item)
@@ -597,6 +685,14 @@ class Interpreter:
         elif t == "INDEX":
             target = self.evaluate(expr.target, env)
             idx = self.evaluate(expr.index, env)
+            if (tipe(target) == "peta" or tipe(target) == "dict") and "isRange" in target:
+                start = target["start"]
+                stop = target["stop"]
+                step = target["step"]
+                val = start + idx * step
+                if (step > 0 and (val < start or val >= stop)) or (step < 0 and (val > start or val <= stop)):
+                    lempar "index out of range"
+                return val
             return target[idx]
         elif t == "SLICE" or t == "IRISAN":
             target = self.evaluate(expr.target, env)
