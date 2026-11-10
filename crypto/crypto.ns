@@ -132,7 +132,8 @@ func toU32(x):
     return x & 4294967295
 
 func rotl32(x, n):
-    return toU32((x << n) | (x >> (32 - n)))
+    low = x & ((1 << (32 - n)) - 1)
+    return (low << n) | ((x >> (32 - n)) & 4294967295)
 
 func md5Hex(s):
     a0 = 0x67452301
