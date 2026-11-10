@@ -70,7 +70,8 @@ rtApStore:
     mov rdx, [rdi+24]
     mov [rdx+rax*8], rsi
     inc qword ptr [rdi+8]
-    xor eax, eax
+    mov rax, [rdi+8]
+    lea rax, [rax*2+1]
     ret
 rtArrPop:
     mov rax, [rdi+8]

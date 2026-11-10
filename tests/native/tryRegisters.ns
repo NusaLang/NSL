@@ -1,0 +1,40 @@
+func thrower(n):
+    if n > 2:
+        throw "too big " + str(n)
+    return n
+func mid(n):
+    x = 1
+    y = 2
+    z = 3
+    r = thrower(n)
+    return r + x + y + z
+func outer(n):
+    a = 10
+    b = 20
+    try:
+        v = mid(n)
+        return v + a + b
+    catch e:
+        return a + b
+total = 0
+total += outer(1)
+total += outer(5)
+print(total)
+try:
+    try:
+        throw "inner"
+    catch e:
+        print("caught", e)
+        throw "again"
+catch e2:
+    print("outer", e2)
+try:
+    arr = [1, 2]
+    print(arr[5])
+catch e3:
+    print("idx", e3)
+try:
+    print(1 / 0)
+catch e4:
+    print(e4)
+print("done")

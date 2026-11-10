@@ -1,108 +1,209 @@
 MAP_RUNTIME = """rtMapNew:
-    stp lr, x19, [sp, -16]!
-    mov x0, 48
+    stp lr, xzr, [sp, -16]!
+    mov x0, 176
     bl rtAlloc
-    mov x19, x0
     mov x1, 4
-    str x1, [x19]
-    mov x1, 0
-    str x1, [x19, 8]
+    str x1, [x0]
     mov x1, 8
-    str x1, [x19, 16]
-    mov x0, 192
-    bl rtAlloc
-    str x0, [x19, 24]
-    mov x0, x19
-    ldp lr, x19, [sp], 16
+    str x1, [x0, 16]
+    add x1, x0, 48
+    str x1, [x0, 24]
+    ldp lr, xzr, [sp], 16
     ret
 rtHash:
-    tbnz x0, 0, rtHashInt
+    tbz x0, 0, rtHashPtr
+    ldr x1, =0x9E3779B97F4A7C15
+    mul x0, x0, x1
+    lsr x0, x0, 20
+    ret
+rtHashPtr:
+    cmp x0, 4
+    b.ls rtHashAddr
     ldr x1, [x0]
     cmp x1, 2
-    b.eq rtHashStr
-    lsr x0, x0, 3
-    ret
-rtHashInt:
-    asr x0, x0, 1
-    ret
-rtHashStr:
+    b.ne rtHashAddr
     ldr x1, [x0, 8]
     add x2, x0, 16
     ldr x0, =0xcbf29ce484222325
     ldr x3, =0x100000001b3
-    mov x4, 0
 rtHLoop:
-    cmp x4, x1
-    b.ge rtHDone
-    ldrb w5, [x2, x4]
-    eor x0, x0, x5
+    cbz x1, rtHDone
+    ldrb w4, [x2]
+    eor x0, x0, x4
     mul x0, x0, x3
-    add x4, x4, 1
+    add x2, x2, 1
+    sub x1, x1, 1
     b rtHLoop
 rtHDone:
     ret
-rtMapSet:
+rtHashAddr:
+    lsr x0, x0, 3
+    ret
+rtMapFind:
+    stp lr, x19, [sp, -16]!
+    stp x20, x21, [sp, -16]!
+    stp x22, xzr, [sp, -16]!
+    mov x19, x0
+    mov x20, x1
+    mov x0, x1
+    bl rtHash
+    ldr x1, [x19, 16]
+    sub x1, x1, 1
+    and x21, x0, x1
+rtMfLoop:
+    ldr x2, [x19, 24]
+    add x22, x2, x21, lsl 4
+    ldr x3, [x22]
+    cbz x3, rtMfDone
+    cmp x3, x20
+    b.eq rtMfDone
+    tbnz x3, 0, rtMfNext
+    tbnz x20, 0, rtMfNext
+    mov x0, x3
+    mov x1, x20
+    bl rtEq
+    cbnz x0, rtMfDone
+rtMfNext:
+    ldr x1, [x19, 16]
+    sub x1, x1, 1
+    add x21, x21, 1
+    and x21, x21, x1
+    b rtMfLoop
+rtMfDone:
+    mov x0, x22
+    ldp x22, xzr, [sp], 16
+    ldp x20, x21, [sp], 16
+    ldp lr, x19, [sp], 16
+    ret
+rtMapGrow:
     stp lr, x19, [sp, -16]!
     stp x20, x21, [sp, -16]!
     stp x22, x23, [sp, -16]!
+    stp x24, xzr, [sp, -16]!
     mov x19, x0
-    mov x20, x1
-    mov x21, x2
-    mov x0, x20
-    bl rtHash
-    mov x22, x0
-    ldr x23, [x19, 16]
-    sub x23, x23, 1
-    and x22, x22, x23
-    ldr x0, [x19, 24]
-    mov x1, 24
-    mul x1, x22, x1
-    add x0, x0, x1
-    str x20, [x0]
-    str x21, [x0, 8]
-    mov x1, 1
-    str x1, [x0, 16]
-    ldr x1, [x19, 8]
-    add x1, x1, 1
-    str x1, [x19, 8]
+    ldr x20, [x19, 24]
+    ldr x21, [x19, 16]
+    lsl x0, x21, 5
+    bl rtAlloc
+    str x0, [x19, 24]
+    lsl x1, x21, 1
+    str x1, [x19, 16]
+    mov x22, 0
+rtMgLoop:
+    cmp x22, x21
+    b.ge rtMgDone
+    add x2, x20, x22, lsl 4
+    ldr x23, [x2]
+    cbz x23, rtMgNext
+    ldr x24, [x2, 8]
+    mov x0, x19
+    mov x1, x23
+    bl rtMapFind
+    str x23, [x0]
+    str x24, [x0, 8]
+rtMgNext:
+    add x22, x22, 1
+    b rtMgLoop
+rtMgDone:
+    ldp x24, xzr, [sp], 16
     ldp x22, x23, [sp], 16
     ldp x20, x21, [sp], 16
     ldp lr, x19, [sp], 16
     ret
-rtMapGet:
+rtMapSet:
     stp lr, x19, [sp, -16]!
     stp x20, x21, [sp, -16]!
     mov x19, x0
     mov x20, x1
-    bl rtHash
-    ldr x1, [x19, 16]
-    sub x1, x1, 1
-    and x0, x0, x1
-    ldr x1, [x19, 24]
-    mov x2, 24
-    mul x0, x0, x2
-    add x1, x1, x0
-    ldr x2, [x1, 16]
-    cbz x2, rtMgNone
-    ldr x0, [x1, 8]
+    mov x21, x2
+    ldr x3, [x19, 8]
+    add x3, x3, 1
+    lsl x3, x3, 1
+    ldr x4, [x19, 16]
+    cmp x3, x4
+    b.ls rtMsFind
+    mov x0, x19
+    bl rtMapGrow
+rtMsFind:
+    mov x0, x19
+    mov x1, x20
+    bl rtMapFind
+    ldr x3, [x0]
+    cbnz x3, rtMsStore
+    ldr x4, [x19, 8]
+    add x4, x4, 1
+    str x4, [x19, 8]
+    str x20, [x0]
+    str x0, [sp, -16]!
+    mov x0, x19
+    mov x1, x20
+    bl rtMapOrderAdd
+    ldr x0, [sp], 16
+rtMsStore:
+    str x21, [x0, 8]
+    mov x0, x21
     ldp x20, x21, [sp], 16
     ldp lr, x19, [sp], 16
+    ret
+rtMapOrderAdd:
+    stp lr, x19, [sp, -16]!
+    stp x20, xzr, [sp, -16]!
+    mov x19, x0
+    mov x20, x1
+    ldr x2, [x19, 8]
+    sub x2, x2, 1
+    ldr x3, [x19, 40]
+    cmp x2, x3
+    b.lo rtMoStore
+    lsl x3, x3, 1
+    cmp x3, 8
+    b.hs rtMoCap
+    mov x3, 8
+rtMoCap:
+    str x3, [x19, 40]
+    lsl x0, x3, 3
+    bl rtAlloc
+    ldr x4, [x19, 32]
+    str x0, [x19, 32]
+    ldr x5, [x19, 8]
+    sub x5, x5, 1
+    mov x6, 0
+rtMoCopy:
+    cmp x6, x5
+    b.ge rtMoCopied
+    ldr x7, [x4, x6, lsl 3]
+    str x7, [x0, x6, lsl 3]
+    add x6, x6, 1
+    b rtMoCopy
+rtMoCopied:
+    ldr x2, [x19, 8]
+    sub x2, x2, 1
+rtMoStore:
+    ldr x3, [x19, 32]
+    str x20, [x3, x2, lsl 3]
+    ldp x20, xzr, [sp], 16
+    ldp lr, x19, [sp], 16
+    ret
+rtMapGet:
+    stp lr, xzr, [sp, -16]!
+    bl rtMapFind
+    ldp lr, xzr, [sp], 16
+    ldr x1, [x0]
+    cbz x1, rtMgNone
+    ldr x0, [x0, 8]
     ret
 rtMgNone:
     mov x0, 0
-    ldp x20, x21, [sp], 16
-    ldp lr, x19, [sp], 16
     ret
 rtMapGetDef:
     stp lr, x2, [sp, -16]!
-    bl rtMapGet
+    bl rtMapFind
     ldp lr, x2, [sp], 16
-    cbz x0, rtMgDefUse
+    ldr x1, [x0]
+    cbz x1, rtMgDefNone
+    ldr x0, [x0, 8]
     ret
-rtMgDefUse:
+rtMgDefNone:
     mov x0, x2
-    ret
-rtMapStr:
-    ldr x0, =strEmptyMap
     ret
 """

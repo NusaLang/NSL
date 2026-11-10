@@ -135,6 +135,34 @@ strExitKey: .quad 2
  .quad 4
  .ascii "exit"
 .align 8
+strObj: .quad 2
+ .quad 7
+ .ascii "<objek>"
+.align 8
+strLb: .quad 2
+ .quad 1
+ .ascii "["
+.align 8
+strRb: .quad 2
+ .quad 1
+ .ascii "]"
+.align 8
+strLc: .quad 2
+ .quad 1
+ .ascii "{"
+.align 8
+strRc: .quad 2
+ .quad 1
+ .ascii "}"
+.align 8
+strBadNum: .quad 2
+ .quad 14
+ .ascii "invalid number"
+.align 8
+strPesanKey: .quad 2
+ .quad 5
+ .ascii "pesan"
+.align 8
 excTop: .quad 0
 .align 8
 heapPtr: .quad 0

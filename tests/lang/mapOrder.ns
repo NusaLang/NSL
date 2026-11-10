@@ -1,0 +1,19 @@
+m = {"zeta": 1, "alpha": 2, "mid": 3}
+m["beta"] = 4
+m["alpha"] = 20
+for k in m:
+    print(k, m[k])
+n = {3: "c", 1: "a", 2: "b"}
+for k in n:
+    print(k, n[k])
+big = {}
+for i in range(40):
+    big["k" + str(i * 7 % 40)] = i
+count = 0
+firstKeys = ""
+for k in big:
+    count += 1
+    if count <= 4:
+        firstKeys = firstKeys + k + " "
+print(len(big), firstKeys)
+print("k7" in big, "zz" in big)

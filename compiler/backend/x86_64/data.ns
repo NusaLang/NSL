@@ -123,6 +123,14 @@ strUncaught: .quad 2
  .quad 20
  .ascii "uncaught exception: "
 .align 8
+strBadNum: .quad 2
+ .quad 14
+ .ascii "invalid number"
+.align 8
+strPesanKey: .quad 2
+ .quad 5
+ .ascii "pesan"
+.align 8
 excTop: .quad 0
 .align 8
 heapPtr: .quad 0

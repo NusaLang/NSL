@@ -54,6 +54,7 @@ class Parser:
         self.tokens = tokens
         self.pos = 0
         self.length = len(tokens)
+        self.errorCount = 0
 
     func peek(self, offset = 0):
         idx = self.pos + offset
@@ -132,6 +133,7 @@ class Parser:
         if self.check(expectedType):
             return self.advance()
         print("Parser error line " + str(tok.line) + ", col " + str(tok.col) + ": " + message + " (got '" + tok.text + "')")
+        self.errorCount += 1
         return None
 
     func skipSemicolons(self):
@@ -385,7 +387,7 @@ class Parser:
     func parseAssign(self):
         target = self.parseTernary()
 
-        if self.check(TokenType.ASSIGN) or self.check("+=") or self.check("-=") or self.check("*=") or self.check("/="):
+        if self.check(TokenType.ASSIGN) or self.check("+=") or self.check("-=") or self.check("*=") or self.check("/=") or self.check("%=") or self.check("&=") or self.check("|=") or self.check("^=") or self.check("<<=") or self.check(">>="):
             opTok = self.advance()
             val = self.parseAssign()
             return AssignExpr(target, opTok.text, val)
@@ -559,7 +561,11 @@ class Parser:
     func parsePrimary(self):
         if self.check(TokenType.NUMBER):
             tok = self.advance()
-            return NumberExpr(tok.number)
+            numText = tok.text
+            floatLit = False
+            if not (numText.startswith("0x") or numText.startswith("0X") or numText.startswith("0b") or numText.startswith("0B") or numText.startswith("0o") or numText.startswith("0O")):
+                floatLit = "." in numText or "e" in numText or "E" in numText
+            return NumberExpr(tok.number, floatLit)
         elif self.check(TokenType.STRING):
             tok = self.advance()
             return StringExpr(tok.text)
@@ -612,11 +618,14 @@ class Parser:
             values = []
             if not self.check(TokenType.RBRACE):
                 while True:
-                    keyTok = self.expect(TokenType.STRING, "Map key must be string")
+                    if self.check(TokenType.NUMBER):
+                        keyVal = self.advance().number
+                    else:
+                        keyTok = self.expect(TokenType.STRING, "Map key must be string or number")
+                        keyVal = keyTok.text if keyTok != None else ""
                     self.expect(TokenType.COLON, "Expected ':' after map key")
                     val = self.parseExpr()
-                    keyText = keyTok.text if keyTok != None else ""
-                    keys.append(keyText)
+                    keys.append(keyVal)
                     values.append(val)
                     if self.match(TokenType.COMMA) == None:
                         break
@@ -625,5 +634,6 @@ class Parser:
 
         tok = self.peek(0)
         print("Parser error line " + str(tok.line) + ": Unexpected token '" + tok.text + "'")
+        self.errorCount += 1
         self.advance()
         return NullExpr()

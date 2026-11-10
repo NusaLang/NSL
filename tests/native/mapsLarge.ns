@@ -1,0 +1,20 @@
+m = {}
+i = 0
+while i < 2000:
+    m["key" + str(i)] = i * 2
+    i += 1
+print(len(m), m["key0"], m["key1999"], m["key777"])
+total = 0
+for k in m:
+    total += m[k]
+print(total)
+im = {}
+for j in range(1000):
+    im[j * 7] = j
+print(len(im), im[0], im[693], im[6993], 5 in im, 7 in im)
+print(m.get("nope", "dflt"), m.get("key5", 0), m.get("zzz"))
+m["key5"] = "changed"
+print(m["key5"], len(m))
+a = {"a": 1, "b": [1, 2], "c": {"d": 3}}
+print(a, a["c"]["d"], a["b"][1])
+print({"x": 1} == {"x": 1}, {"x": 1} == {"x": 2}, [1, 2] == [1, 2], [1] == [2])

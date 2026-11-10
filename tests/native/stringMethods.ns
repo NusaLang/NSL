@@ -1,0 +1,15 @@
+s = "  Hello, World  "
+print(s.strip(), s.lower(), s.upper())
+parts = "a,b,c,d".split(",")
+print(parts, len(parts))
+print("-".join(parts))
+print("hello".find("l"), "hello".find("z"), "hello".find("l", 3))
+print("hello".startswith("he"), "hello".endswith("lo"), "hello".startswith("x"))
+print("123".isdigit(), "12a".isdigit(), "abc".isalpha(), "ab1".isalnum())
+print("ab" * 3, 3 * "xy")
+print([1, 2] + [3, 4])
+print("a" < "b", "b" < "a", "abc" == "abc", "abc" != "abd")
+print(ord("A"), chr(66), str(3.5), str(True), str(None))
+print(type(1), type("s"), type([1]), type({"a": 1}), type(1.5))
+x = [1, "two", 3.5, [4, 5], {"k": "v"}]
+print(x)

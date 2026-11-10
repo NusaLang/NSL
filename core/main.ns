@@ -56,18 +56,28 @@ USAGE = """usage: nusa [options] [-c code | -m module | file | -] [args]
   run file                    same as passing the file directly
   repl"""
 
+parseState = {"errors": 0}
+
 func parse(src, tokens = False, ast = False):
     toks = Lexer(src).tokenize()
     if tokens:
         for t in toks:
             print(t)
-    tree = Parser(toks).parse()
+    parser = Parser(toks)
+    tree = parser.parse()
+    parseState["errors"] = parser.errorCount
     if ast:
         print(tree)
     return tree
 
-func exec(src, vm, tokens, ast, runtime = None):
+func parseChecked(src, tokens = False, ast = False):
     tree = parse(src, tokens, ast)
+    if parseState["errors"] > 0:
+        fail("syntax errors: " + str(parseState["errors"]))
+    return tree
+
+func exec(src, vm, tokens, ast, runtime = None):
+    tree = parseChecked(src, tokens, ast)
     if vm:
         VmRunner().run(VmCompiler().compile(tree))
         return None
@@ -216,7 +226,7 @@ func start(args):
 
 func doBuild(entry, out, isNative):
     src = BacaFile(entry)
-    tree = parse(src)
+    tree = parseChecked(src)
     if isNative:
         nativeMod = None
         try:
@@ -406,7 +416,7 @@ func main():
     elif mode == "stdin":
         runtime = guarded(lambda: exec(readStdin(), vm, tokens, ast))
     elif mode == "check":
-        guarded(lambda: parse(readSource(arg, False)))
+        guarded(lambda: parseChecked(readSource(arg, False)))
         sys.exit(0)
     else:
         repl(None, not quiet)

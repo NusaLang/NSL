@@ -2,18 +2,18 @@ MAP_RUNTIME = """rtMapStr:
     push r12
     push r13
     push r14
+    push r15
     mov r12, rdi
     lea r13, [strLc]
     xor r14, r14
     xor r15, r15
 rtMsLoop:
-    cmp r14, [r12+16]
+    cmp r14, [r12+8]
     jae rtMsEnd
-    mov rax, r14
-    shl rax, 4
-    add rax, [r12+24]
-    cmp qword ptr [rax], 0
-    je rtMsNext
+    mov rax, [r12+32]
+    mov rsi, [rax+r14*8]
+    mov rdi, r12
+    call rtMapFind
     push rax
     test r15, r15
     jz rtMsNoSep
@@ -25,7 +25,7 @@ rtMsNoSep:
     mov r15, 1
     mov rax, [rsp]
     mov rdi, [rax]
-    call rtRepr
+    call rtToStr
     mov rdi, r13
     mov rsi, rax
     call rtConcat
@@ -40,13 +40,13 @@ rtMsNoSep:
     mov rsi, rax
     call rtConcat
     mov r13, rax
-rtMsNext:
     inc r14
     jmp rtMsLoop
 rtMsEnd:
     mov rdi, r13
     lea rsi, [strRc]
     call rtConcat
+    pop r15
     pop r14
     pop r13
     pop r12
@@ -195,12 +195,54 @@ rtMsFind:
     jne rtMsStore
     inc qword ptr [r12+8]
     mov [rax], r13
+    push rax
+    mov rdi, r12
+    mov rsi, r13
+    call rtMapOrderAdd
+    pop rax
 rtMsStore:
     mov [rax+8], r14
     mov rax, r14
     pop r14
     pop r13
     pop r12
+    ret
+rtMapOrderAdd:
+    mov rax, [rdi+8]
+    dec rax
+    cmp rax, [rdi+40]
+    jb rtMoStore
+    push rdi
+    push rsi
+    mov rcx, [rdi+40]
+    add rcx, rcx
+    cmp rcx, 8
+    jae rtMoCap
+    mov rcx, 8
+rtMoCap:
+    mov [rdi+40], rcx
+    lea rdi, [rcx*8]
+    call rtAlloc
+    pop rsi
+    pop rdi
+    mov r8, [rdi+32]
+    mov [rdi+32], rax
+    mov r9, [rdi+8]
+    dec r9
+    xor r11, r11
+rtMoCopy:
+    cmp r11, r9
+    jae rtMoDone
+    mov rdx, [r8+r11*8]
+    mov [rax+r11*8], rdx
+    inc r11
+    jmp rtMoCopy
+rtMoDone:
+    mov rax, [rdi+8]
+    dec rax
+rtMoStore:
+    mov rdx, [rdi+32]
+    mov [rdx+rax*8], rsi
     ret
 rtMapGet:
     call rtMapFind

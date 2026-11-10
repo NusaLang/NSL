@@ -1,4 +1,3 @@
-builtinsSys = impor("sys")
 
 func loadModule(path):
     candidates = [
@@ -45,6 +44,7 @@ func loadSubmodule(path):
 
 runtimeModule = loadSubmodule("runtime.ns")
 goBridgeModule = loadModule("compiler/goBridge.ns")
+preludeModule = loadModule("compiler/prelude.ns")
 resolverModule = loadModule("core/resolver.ns")
 resolveModulePath = resolverModule.resolveModulePath
 
@@ -65,6 +65,7 @@ try:
 except e:
     goBridgeAddon = None
 
+INTLIMIT = 4503599627370496 * 1024
 REGS = ["rbx", "r12", "r13", "r14", "r15"]
 JUMPS = {"<": "jge", "<=": "jg", ">": "jle", ">=": "jl", "==": "jne", "!=": "je"}
 ARITH = {"+": "rtAdd", "-": "rtSub", "*": "rtMul", "/": "rtDiv", "//": "rtDiv", "%": "rtMod"}
@@ -72,8 +73,7 @@ BITWISE = {"&": "rtBitAnd", "|": "rtBitOr", "^": "rtBitXor", "<<": "rtShl", ">>"
 STRMETHODS = {"find": "rtStrFind", "startswith": "rtStrStartsWith", "endswith": "rtStrEndsWith", "join": "rtStrJoin", "strip": "rtStrStrip", "lower": "rtStrLower", "upper": "rtStrUpper", "split": "rtStrSplit", "isdigit": "rtStrIsDigit", "isalpha": "rtStrIsAlpha", "isalnum": "rtStrIsAlnum"}
 
 func fail(msg):
-    print("native: " + msg)
-    builtinsSys.exit(1)
+    lempar "native: " + msg
 
 func mem(loc):
     if loc.startswith("["):
@@ -106,7 +106,7 @@ func scanExpr(e, found):
     if t == "CALL":
         if e.callee.type == "IDENT" and e.callee.name == "impor" and len(e.args) == 1 and e.args[0].type == "STRING":
             p = e.args[0].value
-            if not (p in found):
+            if p != "sys" and not (p in found):
                 found.append(p)
         scanExpr(e.callee, found)
         for a in e.args:
@@ -451,6 +451,7 @@ class X86_64Compiler:
         self.funcParams = {}
         self.funcDefaults = {}
         self.usesGoBridge = False
+        self.noRegs = False
         self.classes = {}
         self.moduleVars = {}
         self.classAliases = {}
@@ -540,7 +541,10 @@ class X86_64Compiler:
             resolved = self.resolveImportPath(path)
             if resolved == None:
                 fail("cannot resolve import '" + path + "'")
-            modTree = Parser(Lexer(BacaFile(resolved)).tokenize()).parse()
+            modParser = Parser(Lexer(BacaFile(resolved)).tokenize())
+            modTree = modParser.parse()
+            if modParser.errorCount > 0:
+                fail("syntax errors in imported module '" + path + "'")
             idx = len(self.importOrder)
             self.importIndex[path] = idx
             self.importOrder.append(path)
@@ -686,6 +690,13 @@ class X86_64Compiler:
                     methodDefaults[m.name] = m.defaults
                 self.classes[c.name] = {"base": c.baseClass, "methods": methods, "methodParams": methodParams, "methodDefaults": methodDefaults}
                 classStmts.append(c)
+        preludeParser = Parser(Lexer(preludeModule.PRELUDE).tokenize())
+        for pf in preludeParser.parse():
+            if pf.type == "FUNC":
+                self.funcs[pf.name] = len(pf.params)
+                self.funcParams[pf.name] = pf.params
+                self.funcDefaults[pf.name] = pf.defaults
+                funcStmts.append(pf)
         for s in tree:
             if s.type == "FUNC":
                 self.funcs[s.name] = len(s.params)
@@ -808,11 +819,12 @@ class X86_64Compiler:
         self.regOf = {}
         self.loops = []
         self.cold = []
+        self.noRegs = hasTry(f.body)
         loads = []
         i = 0
         for p in f.params:
             off = str(16 + 8 * (self.paramCount - 1 - i))
-            if len(self.regOf) < len(REGS):
+            if len(self.regOf) < len(REGS) and not self.noRegs:
                 reg = REGS[len(self.regOf)]
                 self.regOf[p] = reg
                 loads.append("    mov " + reg + ", [rbp+" + off + "]")
@@ -851,7 +863,7 @@ class X86_64Compiler:
             if name in self.locals:
                 return "[rbp-" + str(8 * (len(REGS) + self.locals[name] + 1)) + "]"
             if create and not (name in self.globalNames):
-                if len(self.regOf) < len(REGS):
+                if len(self.regOf) < len(REGS) and not self.noRegs:
                     self.regOf[name] = REGS[len(self.regOf)]
                     return self.regOf[name]
                 self.locals[name] = len(self.locals)
@@ -865,7 +877,7 @@ class X86_64Compiler:
         return self.addr(name, True)
 
     func smallInt(self, e):
-        if e.type != "NUMBER":
+        if e.type != "NUMBER" or e.isFloat:
             return False
         v = e.value
         return v == int(v) and int(v) < 1000000000 and int(v) > -1000000000
@@ -1211,40 +1223,37 @@ class X86_64Compiler:
             self.genExpr(e.right)
             self.emit("mov rcx, rax")
             self.emit("pop rax")
-        if op == "+" or op == "-" or op == "*":
+        if op == "+" or op == "-":
             cold = self.newLabel()
             back = self.newLabel()
             immRight = self.smallInt(e.right)
             if immRight:
                 self.emit("test al, 1")
+                self.emit("jz " + cold)
                 c2 = str(2 * int(e.right.value))
+                self.emit("mov rdx, rax")
                 if op == "+":
-                    self.emit("jz " + cold)
-                    self.emit("add rax, " + c2)
-                elif op == "-":
-                    self.emit("jz " + cold)
-                    self.emit("sub rax, " + c2)
+                    self.emit("add rdx, " + c2)
                 else:
-                    self.emit("jz " + cold)
-                    self.emit("sar rax, 1")
-                    self.emit("imul rax, rax, " + c2)
-                    self.emit("inc rax")
+                    self.emit("sub rdx, " + c2)
+                self.emit("jo " + cold)
+                self.emit("mov rax, rdx")
             else:
                 self.emit("mov rdx, rax")
                 self.emit("and rdx, rcx")
                 self.emit("test dl, 1")
                 self.emit("jz " + cold)
+                self.emit("mov rdx, rax")
                 if op == "+":
-                    self.emit("lea rax, [rax+rcx-1]")
-                elif op == "-":
-                    self.emit("sub rax, rcx")
-                    self.emit("inc rax")
+                    self.emit("lea rdx, [rcx-1]")
+                    self.emit("add rdx, rax")
+                    self.emit("jo " + cold)
                 else:
-                    self.emit("mov rdx, rcx")
-                    self.emit("dec rdx")
-                    self.emit("sar rax, 1")
-                    self.emit("imul rax, rdx")
-                    self.emit("inc rax")
+                    self.emit("sub rdx, rcx")
+                    self.emit("jo " + cold)
+                    self.emit("add rdx, 1")
+                    self.emit("jo " + cold)
+                self.emit("mov rax, rdx")
             self.label(back)
             self.cold.append(cold + ":")
             self.cold.append("    mov rdi, rax")
@@ -1312,7 +1321,14 @@ class X86_64Compiler:
         t = e.type
         if t == "NUMBER":
             v = e.value
-            if v == int(v):
+            if e.isFloat:
+                self.emit("lea rax, [" + self.floatConst(v) + "]")
+            elif v == int(v) and (int(v) >= INTLIMIT or int(v) <= 0 - INTLIMIT):
+                self.emit("lea rax, [" + self.floatConst(v) + "]")
+            elif v == int(v) and (int(v) > 1000000000000000 or int(v) < -1000000000000000):
+                self.emit("mov rax, " + str(int(v)))
+                self.emit("lea rax, [rax*2+1]")
+            elif v == int(v):
                 self.emit("mov rax, " + str(2 * int(v) + 1))
             else:
                 self.emit("lea rax, [" + self.floatConst(v) + "]")
@@ -1785,10 +1801,10 @@ class X86_64Compiler:
             extraIndirect = 8 if len(args) % 2 == 1 else 0
             if extraIndirect > 0:
                 self.emit("sub rsp, " + str(extraIndirect))
+            self.pushArgs(args)
             self.genExpr(callee)
             self.emit("mov r11, rax")
             self.emit("shr r11, 1")
-            self.pushArgs(args)
             self.emit("call r11")
             if len(args) > 0 or extraIndirect > 0:
                 self.emit("add rsp, " + str(8 * len(args) + extraIndirect))
@@ -1856,6 +1872,17 @@ class X86_64Compiler:
             self.genExpr(args[0])
             self.emit("mov rdi, rax")
             self.emit("call rtFloat")
+        elif name == "floatParts":
+            self.genExpr(args[0])
+            self.emit("mov rdi, rax")
+            self.emit("call rtFloatParts")
+        elif name == "intDiv":
+            self.genExpr(args[0])
+            self.emit("push rax")
+            self.genExpr(args[1])
+            self.emit("mov rsi, rax")
+            self.emit("pop rdi")
+            self.emit("call rtIntDiv")
         elif name == "push" or name == "tambah":
             self.genExpr(args[0])
             self.emit("push rax")
@@ -1868,7 +1895,9 @@ class X86_64Compiler:
             self.emit("mov rdi, rax")
             self.emit("call rtArrPop")
         elif name == "impor":
-            if len(args) == 1 and args[0].type == "STRING" and (args[0].value in self.importIndex):
+            if len(args) == 1 and args[0].type == "STRING" and args[0].value == "sys":
+                self.emit("mov rax, [gvsys]")
+            elif len(args) == 1 and args[0].type == "STRING" and (args[0].value in self.importIndex):
                 idx = self.importIndex[args[0].value]
                 self.emit("mov rax, " + self.addr("modobj" + str(idx), False))
             else:
@@ -1967,15 +1996,34 @@ class X86_64Compiler:
             extraGlobal = 8 if len(args) % 2 == 1 else 0
             if extraGlobal > 0:
                 self.emit("sub rsp, " + str(extraGlobal))
+            self.pushArgs(args)
             self.genExpr(callee)
             self.emit("mov r11, rax")
             self.emit("shr r11, 1")
-            self.pushArgs(args)
             self.emit("call r11")
             if len(args) > 0 or extraGlobal > 0:
                 self.emit("add rsp, " + str(8 * len(args) + extraGlobal))
         else:
             fail("unknown function '" + name + "' (not implemented in --native backend)")
+
+func hasTry(node):
+    if node == None:
+        return False
+    if hasattr(node, "stmts"):
+        for s in node.stmts:
+            if hasTry(s):
+                return True
+        return False
+    if not hasattr(node, "type"):
+        return False
+    t = node.type
+    if t == "TRY":
+        return True
+    if t == "IF":
+        return hasTry(node.thenBranch) or hasTry(node.elseBranch)
+    if t == "WHILE" or t == "FOR" or t == "FOR_IN":
+        return hasTry(node.body)
+    return False
 
 func buildGoBridge():
     if goBridgeAddon == None:

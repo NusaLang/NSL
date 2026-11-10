@@ -1,38 +1,95 @@
 OOP_RUNTIME = """rtNewClass:
-    stp lr, x0, [sp, -16]!
+    stp lr, x19, [sp, -16]!
+    stp x20, xzr, [sp, -16]!
+    mov x19, x0
     mov x0, 32
     bl rtAlloc
+    mov x20, x0
     mov x1, 7
-    str x1, [x0]
-    ldp lr, x2, [sp], 16
-    str x2, [x0, 24]
-    stp lr, x0, [sp, -16]!
+    str x1, [x20]
+    str x19, [x20, 24]
     bl rtMapNew
-    mov x1, x0
-    ldr x0, [sp, 8]
-    str x1, [x0, 8]
+    str x0, [x20, 8]
     bl rtMapNew
-    mov x1, x0
-    ldr x0, [sp, 8]
-    str x1, [x0, 16]
-    ldp lr, x0, [sp], 16
+    str x0, [x20, 16]
+    mov x0, x20
+    ldp x20, xzr, [sp], 16
+    ldp lr, x19, [sp], 16
     ret
 rtNewInst:
-    stp lr, x0, [sp, -16]!
+    stp lr, x19, [sp, -16]!
+    mov x19, x0
     mov x0, x1
     bl rtAlloc
-    ldp lr, x1, [sp], 16
-    mov x2, 5
-    str x2, [x0]
-    str x1, [x0, 8]
+    mov x1, 5
+    str x1, [x0]
+    str x19, [x0, 8]
+    ldp lr, x19, [sp], 16
     ret
 rtFieldGet:
-    ldr x0, [x0, 16]
+    tbnz x0, 0, rtMapGet
+    cmp x0, 4
+    b.ls rtMapGet
+    ldr x2, [x0]
+    cmp x2, 5
+    b.ne rtMapGet
+    stp lr, x19, [sp, -16]!
+    mov x19, x0
+    ldr x2, [x0, 8]
+    ldr x0, [x2, 16]
+    bl rtMapGet
+    cbz x0, rtFgMiss
+    asr x0, x0, 1
+    ldr x0, [x19, x0]
+    ldp lr, x19, [sp], 16
+    ret
+rtFgMiss:
+    mov x0, 0
+    ldp lr, x19, [sp], 16
     ret
 rtFieldSet:
-    str x2, [x0, 16]
+    tbnz x0, 0, rtMapSet
+    cmp x0, 4
+    b.ls rtMapSet
+    ldr x3, [x0]
+    cmp x3, 5
+    b.ne rtMapSet
+    stp lr, x19, [sp, -16]!
+    stp x20, xzr, [sp, -16]!
+    mov x19, x0
+    mov x20, x2
+    ldr x3, [x0, 8]
+    ldr x0, [x3, 16]
+    bl rtMapGet
+    cbz x0, rtFsMiss
+    asr x0, x0, 1
+    str x20, [x19, x0]
+    mov x0, x20
+    ldp x20, xzr, [sp], 16
+    ldp lr, x19, [sp], 16
     ret
+rtFsMiss:
+    ldr x0, =strNoField
+    b rtFail
 rtFindMethod:
-    mov x0, 0
+    stp lr, x19, [sp, -16]!
+    stp x20, xzr, [sp, -16]!
+    ldr x19, [x0, 8]
+    mov x20, x1
+rtFmLoop:
+    cbz x19, rtFmFail
+    ldr x0, [x19, 8]
+    mov x1, x20
+    bl rtMapGet
+    cbnz x0, rtFmFound
+    ldr x19, [x19, 24]
+    b rtFmLoop
+rtFmFound:
+    lsr x0, x0, 1
+    ldp x20, xzr, [sp], 16
+    ldp lr, x19, [sp], 16
     ret
+rtFmFail:
+    ldr x0, =strNoMethod
+    b rtFail
 """

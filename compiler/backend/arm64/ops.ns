@@ -1,8 +1,10 @@
 OPS_RUNTIME = """rtLen:
-    cbz x0, rtLenZero
-    tbnz x0, 0, rtLenZero
     cmp x0, 4
     b.ls rtLenZero
+    tbnz x0, 0, rtLenZero
+    ldr x1, [x0]
+    cmp x1, 6
+    b.eq rtLenZero
     ldr x0, [x0, 8]
     lsl x0, x0, 1
     add x0, x0, 1
@@ -11,44 +13,49 @@ rtLenZero:
     mov x0, 1
     ret
 rtIndex:
-    tbnz x1, 0, rtIdxInt
-    b rtIdxFail
-rtIdxInt:
-    asr x1, x1, 1
+    cmp x0, 4
+    b.ls rtIdxFail
+    tbnz x0, 0, rtIdxFail
     ldr x2, [x0]
     cmp x2, 3
     b.eq rtIdxArr
-    cmp x2, 2
-    b.eq rtIdxStr
     cmp x2, 4
     b.eq rtMapGet
-    b rtIdxFail
-rtIdxArr:
+    cmp x2, 2
+    b.ne rtIdxFail
+    tbz x1, 0, rtIdxFail
+    asr x1, x1, 1
     ldr x3, [x0, 8]
-    cmp x1, x3
-    b.ge rtIdxRange
     cmp x1, 0
-    b.lt rtIdxRange
-    ldr x2, [x0, 24]
-    ldr x0, [x2, x1, lsl 3]
-    ret
-rtIdxStr:
-    ldr x3, [x0, 8]
+    b.ge rtIdxS1
+    add x1, x1, x3
+rtIdxS1:
     cmp x1, x3
-    b.ge rtIdxRange
-    cmp x1, 0
-    b.lt rtIdxRange
-    add x2, x0, 16
-    ldrb w1, [x2, x1]
-    stp lr, x1, [sp, -16]!
+    b.hs rtIdxRange
+    add x4, x0, 16
+    ldrb w4, [x4, x1]
+    stp lr, x4, [sp, -16]!
     mov x0, 24
     bl rtAlloc
-    ldp lr, x1, [sp], 16
+    ldp lr, x4, [sp], 16
     mov x2, 2
     str x2, [x0]
     mov x2, 1
     str x2, [x0, 8]
-    strb w1, [x0, 16]
+    strb w4, [x0, 16]
+    ret
+rtIdxArr:
+    tbz x1, 0, rtIdxFail
+    asr x1, x1, 1
+    ldr x3, [x0, 8]
+    cmp x1, 0
+    b.ge rtIdxA1
+    add x1, x1, x3
+rtIdxA1:
+    cmp x1, x3
+    b.hs rtIdxRange
+    ldr x2, [x0, 24]
+    ldr x0, [x2, x1, lsl 3]
     ret
 rtIdxRange:
     ldr x0, =strIdxRange
@@ -57,64 +64,108 @@ rtIdxFail:
     ldr x0, =strBadIdx
     b rtFail
 rtSetIndex:
+    cmp x0, 4
+    b.ls rtIdxFail
+    tbnz x0, 0, rtIdxFail
     ldr x3, [x0]
     cmp x3, 4
     b.eq rtMapSet
+    cmp x3, 3
+    b.ne rtIdxFail
+    tbz x1, 0, rtIdxFail
     asr x1, x1, 1
-    ldr x3, [x0, 24]
-    str x2, [x3, x1, lsl 3]
+    ldr x4, [x0, 8]
+    cmp x1, 0
+    b.ge rtSiA1
+    add x1, x1, x4
+rtSiA1:
+    cmp x1, x4
+    b.hs rtIdxRange
+    ldr x5, [x0, 24]
+    str x2, [x5, x1, lsl 3]
+    mov x0, x2
     ret
 rtIn:
     stp lr, x19, [sp, -16]!
     stp x20, x21, [sp, -16]!
+    stp x22, xzr, [sp, -16]!
     mov x19, x0
     mov x20, x1
-    ldr x1, [x20]
-    cmp x1, 4
+    cmp x20, 4
+    b.ls rtInNo
+    tbnz x20, 0, rtInNo
+    ldr x2, [x20]
+    cmp x2, 4
     b.eq rtInMap
-    cmp x1, 3
+    cmp x2, 3
     b.eq rtInArr
-    mov x0, 2
-    b rtInDone
+    cmp x2, 2
+    b.ne rtInNo
+    tbnz x19, 0, rtInNo
+    cmp x19, 4
+    b.ls rtInNo
+    ldr x3, [x19]
+    cmp x3, 2
+    b.ne rtInNo
+    ldr x4, [x19, 8]
+    ldr x5, [x20, 8]
+    subs x5, x5, x4
+    b.lo rtInNo
+    mov x6, 0
+rtInSLoop:
+    cmp x6, x5
+    b.hi rtInNo
+    mov x7, 0
+rtInCmp:
+    cmp x7, x4
+    b.hs rtInYes
+    add x8, x20, 16
+    add x8, x8, x6
+    ldrb w9, [x8, x7]
+    add x10, x19, 16
+    ldrb w11, [x10, x7]
+    cmp w9, w11
+    b.ne rtInNext
+    add x7, x7, 1
+    b rtInCmp
+rtInNext:
+    add x6, x6, 1
+    b rtInSLoop
 rtInMap:
     mov x0, x20
     mov x1, x19
-    bl rtMapGet
-    cbz x0, rtInFalse
-    mov x0, 4
-    b rtInDone
+    bl rtMapFind
+    ldr x3, [x0]
+    cbz x3, rtInNo
+    b rtInYes
 rtInArr:
     ldr x21, [x20, 8]
-    mov x2, 0
+    mov x22, 0
 rtInArrLoop:
-    cmp x2, x21
-    b.ge rtInFalse
-    ldr x1, [x20, 24]
-    ldr x0, [x1, x2, lsl 3]
+    cmp x22, x21
+    b.ge rtInNo
+    ldr x2, [x20, 24]
+    ldr x0, [x2, x22, lsl 3]
     mov x1, x19
-    stp x2, xzr, [sp, -16]!
     bl rtEq
-    ldp x2, xzr, [sp], 16
-    cmp x0, 4
-    b.eq rtInTrue
-    add x2, x2, 1
+    cbnz x0, rtInYes
+    add x22, x22, 1
     b rtInArrLoop
-rtInTrue:
+rtInYes:
     mov x0, 4
     b rtInDone
-rtInFalse:
+rtInNo:
     mov x0, 2
 rtInDone:
+    ldp x22, xzr, [sp], 16
     ldp x20, x21, [sp], 16
     ldp lr, x19, [sp], 16
     ret
 rtType:
     tbnz x0, 0, rtTypeInt
     cbz x0, rtTypeNull
-    cmp x0, 2
-    b.eq rtTypeBool
     cmp x0, 4
-    b.eq rtTypeBool
+    b.ls rtTypeBool
     ldr x1, [x0]
     cmp x1, 2
     b.eq rtTypeStr
@@ -163,8 +214,158 @@ rtChr:
     str x2, [x0, 8]
     strb w1, [x0, 16]
     ret
-rtSlice:
+rtIter:
+    cmp x0, 4
+    b.ls rtItFail
+    tbnz x0, 0, rtItFail
+    ldr x1, [x0]
+    cmp x1, 3
+    b.ne rtItNot
     ret
+rtItNot:
+    cmp x1, 4
+    b.eq rtItMap
+    cmp x1, 2
+    b.ne rtItFail
+    stp lr, x19, [sp, -16]!
+    stp x20, x21, [sp, -16]!
+    mov x19, x0
+    bl rtArrNew
+    mov x20, x0
+    mov x21, 0
+rtItSLoop:
+    ldr x2, [x19, 8]
+    cmp x21, x2
+    b.ge rtItEnd
+    mov x0, x19
+    lsl x1, x21, 1
+    add x1, x1, 1
+    bl rtIndex
+    mov x1, x0
+    mov x0, x20
+    bl rtArrPush
+    add x21, x21, 1
+    b rtItSLoop
+rtItMap:
+    stp lr, x19, [sp, -16]!
+    stp x20, x21, [sp, -16]!
+    mov x19, x0
+    bl rtArrNew
+    mov x20, x0
+    mov x21, 0
+rtItMLoop:
+    ldr x2, [x19, 8]
+    cmp x21, x2
+    b.ge rtItEnd
+    ldr x3, [x19, 32]
+    ldr x1, [x3, x21, lsl 3]
+    add x21, x21, 1
+    mov x0, x20
+    bl rtArrPush
+    b rtItMLoop
+rtItEnd:
+    mov x0, x20
+    ldp x20, x21, [sp], 16
+    ldp lr, x19, [sp], 16
+    ret
+rtItFail:
+    ldr x0, =strNotIter
+    b rtFail
+rtSlice:
+    stp lr, x19, [sp, -16]!
+    stp x20, x21, [sp, -16]!
+    stp x22, x23, [sp, -16]!
+    mov x19, x0
+    mov x20, x1
+    mov x21, x2
+    cmp x19, 4
+    b.ls rtSlEmpty
+    tbnz x19, 0, rtSlEmpty
+    ldr x22, [x19]
+    cmp x22, 2
+    b.eq rtSlOk
+    cmp x22, 3
+    b.ne rtSlEmpty
+rtSlOk:
+    ldr x23, [x19, 8]
+    cbz x20, rtSlStartZero
+    asr x20, x20, 1
+    cmp x20, 0
+    b.ge rtSlStart1
+    add x20, x20, x23
+    cmp x20, 0
+    b.ge rtSlStart1
+    mov x20, 0
+rtSlStart1:
+    cmp x20, x23
+    b.ls rtSlStop
+    mov x20, x23
+    b rtSlStop
+rtSlStartZero:
+    mov x20, 0
+rtSlStop:
+    cbz x21, rtSlStopLen
+    asr x21, x21, 1
+    cmp x21, 0
+    b.ge rtSlStop1
+    add x21, x21, x23
+    cmp x21, 0
+    b.ge rtSlStop1
+    mov x21, 0
+rtSlStop1:
+    cmp x21, x23
+    b.ls rtSlLen
+    mov x21, x23
+    b rtSlLen
+rtSlStopLen:
+    mov x21, x23
+rtSlLen:
+    cmp x21, x20
+    b.ge rtSlHave
+    mov x21, x20
+rtSlHave:
+    sub x21, x21, x20
+    cmp x22, 2
+    b.eq rtSlStr
+    bl rtArrNew
+    cbz x21, rtSlRet
+    str x21, [x0, 8]
+    mov x1, x21
+    cmp x1, 4
+    b.hs rtSlCap
+    mov x1, 4
+rtSlCap:
+    str x1, [x0, 16]
+    mov x22, x0
+    lsl x0, x1, 3
+    bl rtAlloc
+    str x0, [x22, 24]
+    ldr x2, [x19, 24]
+    add x2, x2, x20, lsl 3
+    mov x3, 0
+rtSlCopy:
+    cmp x3, x21
+    b.ge rtSlCopyDone
+    ldr x4, [x2, x3, lsl 3]
+    str x4, [x0, x3, lsl 3]
+    add x3, x3, 1
+    b rtSlCopy
+rtSlCopyDone:
+    mov x0, x22
+rtSlRet:
+    ldp x22, x23, [sp], 16
+    ldp x20, x21, [sp], 16
+    ldp lr, x19, [sp], 16
+    ret
+rtSlStr:
+    mov x0, x19
+    mov x1, x20
+    mov x2, x21
+    bl rtSubstr
+    b rtSlRet
+rtSlEmpty:
+    bl rtArrNew
+    b rtSlRet
 rtRange:
     stp lr, x19, [sp, -16]!
     stp x20, x21, [sp, -16]!
@@ -172,15 +373,15 @@ rtRange:
     mov x20, x1
     bl rtArrNew
     mov x21, x0
-rtRangeLoop:
+rtRgLoop:
     cmp x19, x20
-    b.ge rtRangeDone
+    b.ge rtRgEnd
     mov x0, x21
     mov x1, x19
     bl rtArrPush
     add x19, x19, 2
-    b rtRangeLoop
-rtRangeDone:
+    b rtRgLoop
+rtRgEnd:
     mov x0, x21
     ldp x20, x21, [sp], 16
     ldp lr, x19, [sp], 16

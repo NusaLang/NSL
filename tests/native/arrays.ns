@@ -1,0 +1,11 @@
+arr = [10, 20, 30, 40, 50]
+print(len(arr), arr[2])
+arr[2] = 99
+print(arr[2])
+push(arr, 60)
+print(len(arr), pop(arr), len(arr))
+sub = arr[1:4]
+print(len(sub), sub[0], sub[2])
+for v in [1, 2, 3, 4]:
+    print(v)
+print(arr)
