@@ -106,6 +106,37 @@ func compile(tree, targetArch = None, sourceDir = None):
     compiler = DriverCompiler(targetArch)
     return compiler.compile(tree, sourceDir)
 
+func isTermux():
+    return FileAda("/data/data/com.termux/files/usr/bin") or FileAda("/data/data/com.termux")
+
+func runToolChain(candidates, stepName, inputFile):
+    lastError = ""
+    hadRealError = False
+    for cand in candidates:
+        res = JalankanPerintah(cand[0], cand[1])
+        if res.status == 0:
+            return True
+        errText = res.error if len(res.error) > 0 else res.keluaran
+        if len(errText) > 0:
+            lastError = errText
+            hadRealError = True
+
+    print(stepName + " gagal:")
+    if hadRealError:
+        print(lastError)
+    else:
+        print("tidak ada toolchain (" + stepName + ") yang terpasang di sistem.")
+
+    if isTermux():
+        print("\nDi Android/Termux, pasang compiler native dengan:")
+        print("    pkg install clang   (atau: pkg install binutils)")
+        print("\nAtau gunakan mode script portabel:")
+        print("    nusa build " + inputFile + " --script")
+    else:
+        print("\nPasang assembler dan linker di sistem:")
+        print("    sudo apt-get install clang   (atau: binutils gcc)")
+    builtinsSys.exit(1)
+
 func build(inputFile, outputFile, keepAsm = False, targetArch = None):
     if not FileAda(inputFile):
         print("native: file '" + inputFile + "' not found")
@@ -123,9 +154,17 @@ func build(inputFile, outputFile, keepAsm = False, targetArch = None):
         sourceDir = inputFile[:lastSlash]
 
     src = BacaFile(inputFile)
-    tree = Parser(Lexer(src).tokenize()).parse()
+    parser = Parser(Lexer(src).tokenize())
+    tree = parser.parse()
+    if parser.errorCount > 0:
+        print("native: syntax errors in " + inputFile)
+        builtinsSys.exit(1)
     compiler = DriverCompiler(targetArch)
-    asm = compiler.compile(tree, sourceDir)
+    try:
+        asm = compiler.compile(tree, sourceDir)
+    except e:
+        print(e)
+        builtinsSys.exit(1)
 
     asmPath = outputFile + ".s"
     objPath = outputFile + ".o"
@@ -135,44 +174,54 @@ func build(inputFile, outputFile, keepAsm = False, targetArch = None):
     arch = target["arch"]
     osName = target["os"]
 
-    if arch == "x86_64":
-        asRes = JalankanPerintah("as", ["-o", objPath, asmPath])
-        if asRes.status != 0:
-            msg = asRes.error if len(asRes.error) > 0 else asRes.keluaran
-            print("assembler 'as' gagal:\n" + msg)
-            builtinsSys.exit(1)
+    hostArch = detectTarget()["arch"]
+    isNativeHost = arch == hostArch
 
+    if arch == "x86_64":
+        asmCandidates = [
+            ["as", ["-o", objPath, asmPath]],
+            ["clang", ["-c", asmPath, "-o", objPath]],
+            ["gcc", ["-c", asmPath, "-o", objPath]],
+            ["cc", ["-c", asmPath, "-o", objPath]]
+        ]
         if compiler.usesGoBridge:
             bridgeA = buildGoBridge()
-            linkRes = JalankanPerintah("cc", ["-o", outputFile, objPath, bridgeA, "-lpthread", "-no-pie"])
+            linkCandidates = [["cc", ["-o", outputFile, objPath, bridgeA, "-lpthread", "-no-pie"]]]
         else:
-            linkRes = JalankanPerintah("ld", ["-o", outputFile, objPath])
-        if linkRes.status != 0:
-            msg = linkRes.error if len(linkRes.error) > 0 else linkRes.keluaran
-            print("linker 'ld' gagal:\n" + msg)
-            builtinsSys.exit(1)
+            linkCandidates = [
+                ["ld", ["-o", outputFile, objPath]],
+                ["clang", ["-nostdlib", "-static", "-o", outputFile, objPath]],
+                ["gcc", ["-nostdlib", "-static", "-o", outputFile, objPath]]
+            ]
+    elif isNativeHost:
+        asmCandidates = [
+            ["as", ["-o", objPath, asmPath]],
+            ["clang", ["-c", asmPath, "-o", objPath]],
+            ["gcc", ["-c", asmPath, "-o", objPath]],
+            ["cc", ["-c", asmPath, "-o", objPath]]
+        ]
+        linkCandidates = [
+            ["ld.lld", ["-o", outputFile, objPath]],
+            ["ld", ["-o", outputFile, objPath]],
+            ["clang", ["-nostdlib", "-static", "-fuse-ld=lld", "-o", outputFile, objPath]],
+            ["clang", ["-nostdlib", "-static", "-o", outputFile, objPath]],
+            ["gcc", ["-nostdlib", "-static", "-o", outputFile, objPath]],
+            ["cc", ["-nostdlib", "-static", "-o", outputFile, objPath]]
+        ]
     else:
-        asRes = JalankanPerintah("as", ["-o", objPath, asmPath])
-        if asRes.status != 0:
-            asRes = JalankanPerintah("clang", ["--target=aarch64-linux-gnu", "-c", asmPath, "-o", objPath])
-        if asRes.status != 0:
-            asRes = JalankanPerintah("cc", ["-c", asmPath, "-o", objPath])
-        if asRes.status != 0:
-            msg = asRes.error if len(asRes.error) > 0 else asRes.keluaran
-            print("assembler gagal:\n" + msg)
-            builtinsSys.exit(1)
+        asmCandidates = [
+            ["clang", ["--target=aarch64-linux-gnu", "-c", asmPath, "-o", objPath]],
+            ["aarch64-linux-gnu-as", ["-o", objPath, asmPath]],
+            ["aarch64-linux-gnu-gcc", ["-c", asmPath, "-o", objPath]]
+        ]
+        linkCandidates = [
+            ["clang", ["--target=aarch64-linux-gnu", "-nostdlib", "-static", "-fuse-ld=lld", "-o", outputFile, objPath]],
+            ["ld.lld", ["-m", "aarch64linux", "-o", outputFile, objPath]],
+            ["aarch64-linux-gnu-ld", ["-o", outputFile, objPath]]
+        ]
 
-        linkRes = JalankanPerintah("ld", ["-o", outputFile, objPath])
-        if linkRes.status != 0:
-            linkRes = JalankanPerintah("ld.lld", ["-m", "aarch64linux", "-o", outputFile, objPath])
-        if linkRes.status != 0:
-            linkRes = JalankanPerintah("cc", ["-o", outputFile, objPath, "-no-pie"])
-        if linkRes.status != 0:
-            linkRes = JalankanPerintah("clang", ["--target=aarch64-linux-gnu", "-nostdlib", "-static", "-fuse-ld=lld", "-o", outputFile, objPath])
-        if linkRes.status != 0:
-            msg = linkRes.error if len(linkRes.error) > 0 else linkRes.keluaran
-            print("linker gagal:\n" + msg)
-            builtinsSys.exit(1)
+    runToolChain(asmCandidates, "assembler", inputFile)
+    runToolChain(linkCandidates, "linker", inputFile)
 
     JalankanPerintah("rm", ["-f", objPath])
     if not keepAsm:
