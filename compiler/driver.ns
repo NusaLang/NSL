@@ -62,7 +62,7 @@ func loadSubmodule(path):
             pass
     return impor(path)
 
-assemblerModule = loadSubmodule("compiler/backend/arm64/assembler.ns")
+assemblerModule = loadSubmodule("compiler/assembler/assembler.ns")
 assembleToFile = assemblerModule.assembleToFile
 
 func getBackendCompiler(targetArch):
@@ -182,15 +182,17 @@ func build(inputFile, outputFile, keepAsm = False, targetArch = None):
     hostArch = detectTarget()["arch"]
     isNativeHost = arch == hostArch
 
-    if arch == "arm64" and not toolchainOptions["external"]:
+    if not toolchainOptions["external"] and not compiler.usesGoBridge:
+        assembled = False
         try:
-            assembleToFile(asm, outputFile)
+            assembleToFile(asm, arch, outputFile)
+            assembled = True
         except e:
-            print(e)
-            builtinsSys.exit(1)
-        if not keepAsm:
-            JalankanPerintah("rm", ["-f", asmPath])
-        return None
+            print("assembler internal gagal, memakai toolchain sistem: " + str(e))
+        if assembled:
+            if not keepAsm:
+                JalankanPerintah("rm", ["-f", asmPath])
+            return None
 
     if arch == "x86_64":
         asmCandidates = [

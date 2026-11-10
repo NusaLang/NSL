@@ -1,0 +1,210 @@
+func loadAsm(name):
+    candidates = [
+        "compiler/assembler/" + name,
+        "assembler/" + name,
+        "../compiler/assembler/" + name,
+        "../assembler/" + name,
+        "experiment/compiler/assembler/" + name,
+        name
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor("compiler/assembler/" + name)
+
+text = loadAsm("text.ns")
+elf = loadAsm("elf.ns")
+asmFail = text.asmFail
+TWO32 = text.TWO32
+splitOperands = text.splitOperands
+parseAscii = text.parseAscii
+doubleBits = text.doubleBits
+isLabelName = text.isLabelName
+isNumberStart = text.isNumberStart
+parseNumber = text.parseNumber
+smallValue = text.smallValue
+signedValue = text.signedValue
+
+class Assembler:
+    func __init__(self, encoder):
+        self.enc = encoder
+        self.stmts = []
+        self.symbols = {}
+        self.sizes = {"text": 0, "data": 0, "bss": 0}
+        self.textBase = 0
+        self.dataBase = 0
+        self.bssBase = 0
+        encoder.bind(self)
+
+    func setBases(self, t, d, b):
+        self.textBase = t
+        self.dataBase = d
+        self.bssBase = b
+
+    func parse(self, source):
+        section = "text"
+        for rawLine in source.split("\n"):
+            line = rawLine
+            ci = line.find("//")
+            if ci >= 0:
+                line = line[:ci]
+            line = line.strip()
+            if len(line) == 0:
+                continue
+            while True:
+                colon = line.find(":")
+                quote = line.find("\"")
+                if colon > 0 and (quote == -1 or colon < quote):
+                    head = line[:colon]
+                    if isLabelName(head):
+                        self.stmts.append({"kind": "label", "name": head, "section": section})
+                        line = line[colon + 1:].strip()
+                        if len(line) == 0:
+                            break
+                        continue
+                break
+            if len(line) == 0:
+                continue
+            sp = line.find(" ")
+            mnem = line
+            rest = ""
+            if sp > 0:
+                mnem = line[:sp]
+                rest = line[sp + 1:].strip()
+            if mnem.startswith("."):
+                if mnem == ".text" or mnem == ".data" or mnem == ".bss":
+                    section = mnem[1:]
+                    self.stmts.append({"kind": "section", "name": section})
+                elif mnem == ".globl" or mnem == ".global" or mnem == ".intel_syntax":
+                    pass
+                else:
+                    self.stmts.append({"kind": "dir", "name": mnem, "arg": rest, "section": section})
+            else:
+                self.stmts.append({"kind": "ins", "mnem": mnem, "ops": splitOperands(rest), "section": section, "text": line})
+
+    func layout(self):
+        sizes = {"text": 0, "data": 0, "bss": 0}
+        for st in self.stmts:
+            k = st["kind"]
+            if k == "label":
+                self.symbols[st["name"]] = [st["section"], sizes[st["section"]]]
+            elif k == "ins":
+                st["off"] = sizes["text"]
+                sizes["text"] += self.enc.layoutInstruction(st, sizes["text"])
+            elif k == "dir":
+                n = st["name"]
+                s = st["section"]
+                special = self.enc.layoutDirective(st, sizes["text"])
+                if special != None:
+                    sizes["text"] = special
+                elif n == ".align":
+                    unit = self.enc.alignUnit(int(st["arg"]))
+                    sizes[s] = (sizes[s] + unit - 1) // unit * unit
+                elif n == ".quad" or n == ".double":
+                    st["off"] = sizes[s]
+                    sizes[s] += 8
+                elif n == ".ascii":
+                    st["off"] = sizes[s]
+                    st["bytes"] = parseAscii(st["arg"])
+                    sizes[s] += len(st["bytes"])
+                elif n == ".zero":
+                    st["off"] = sizes[s]
+                    sizes[s] += int(st["arg"])
+                else:
+                    asmFail("unsupported directive " + n)
+        sizes["text"] = self.enc.finishText(sizes["text"])
+        self.sizes = sizes
+
+    func addr(self, name):
+        if not (name in self.symbols):
+            asmFail("undefined symbol " + name)
+        sym = self.symbols[name]
+        if sym[0] == "text":
+            return self.textBase + sym[1]
+        if sym[0] == "data":
+            return self.dataBase + sym[1]
+        return self.bssBase + sym[1]
+
+    func evalExpr(self, t):
+        if isNumberStart(t):
+            return parseNumber(t)
+        total = 0
+        sign = 1
+        cur = ""
+        terms = []
+        signs = []
+        for ch in t:
+            if (ch == "-" or ch == "+") and len(cur.strip()) > 0:
+                terms.append(cur.strip())
+                signs.append(sign)
+                cur = ""
+                sign = 1 if ch == "+" else -1
+            elif (ch == "-" or ch == "+") and len(cur.strip()) == 0:
+                sign = 1 if ch == "+" else -1
+            else:
+                cur += ch
+        terms.append(cur.strip())
+        signs.append(sign)
+        j = 0
+        while j < len(terms):
+            tm = terms[j]
+            if isNumberStart(tm):
+                v = smallValue(tm)
+            else:
+                v = self.addr(tm)
+            total = total + signs[j] * v
+            j += 1
+        if total < 0:
+            total = total + TWO32 * TWO32
+        return [total % TWO32, (total // TWO32) % TWO32]
+
+    func value(self, t):
+        return signedValue(self.evalExpr(t))
+
+    func putWord(self, buf, off, w):
+        buf[off] = w % 256
+        buf[off + 1] = (w // 256) % 256
+        buf[off + 2] = (w // 65536) % 256
+        buf[off + 3] = (w // 16777216) % 256
+
+    func assemble(self, source):
+        self.parse(source)
+        self.layout()
+        self.textBase = elf.BASE + elf.HEADER
+        dataBase = elf.BASE + elf.dataFileOffset(self.sizes["text"])
+        self.dataBase = dataBase
+        self.bssBase = dataBase + (self.sizes["data"] + 7) // 8 * 8
+        code = []
+        for i in range(self.sizes["text"]):
+            code.append(0)
+        data = []
+        for i in range(self.sizes["data"]):
+            data.append(0)
+        for st in self.stmts:
+            k = st["kind"]
+            if k == "ins":
+                bs = self.enc.encodeBytes(st)
+                j = 0
+                while j < len(bs):
+                    code[st["off"] + j] = bs[j]
+                    j += 1
+            elif k == "dir":
+                n = st["name"]
+                if n == ".quad":
+                    v = self.evalExpr(st["arg"])
+                    self.putWord(data, st["off"], v[0])
+                    self.putWord(data, st["off"] + 4, v[1])
+                elif n == ".double":
+                    v = doubleBits(st["arg"])
+                    self.putWord(data, st["off"], v[0])
+                    self.putWord(data, st["off"] + 4, v[1])
+                elif n == ".ascii":
+                    j = 0
+                    bs = st["bytes"]
+                    while j < len(bs):
+                        data[st["off"] + j] = bs[j]
+                        j += 1
+        self.enc.emitTrailer(code)
+        return elf.buildElf(self.enc.machine(), self.addr("_start"), code, data, self.sizes["data"], self.sizes["bss"])

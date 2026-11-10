@@ -1,0 +1,163 @@
+TWO32 = 4294967296
+
+func asmFail(msg):
+    lempar "assembler: " + msg
+
+func parseNumber(t):
+    neg = False
+    s = t
+    if s.startswith("-"):
+        neg = True
+        s = s[1:]
+    elif s.startswith("+"):
+        s = s[1:]
+    lo = 0
+    hi = 0
+    if s.startswith("0x") or s.startswith("0X"):
+        i = 2
+        while i < len(s):
+            d = hexDigit(s[i])
+            carry = d
+            nlo = lo * 16 + carry
+            carry = nlo // TWO32
+            lo = nlo % TWO32
+            hi = (hi * 16 + carry) % TWO32
+            i += 1
+    else:
+        i = 0
+        while i < len(s):
+            nlo = lo * 10 + (ord(s[i]) - 48)
+            carry = nlo // TWO32
+            lo = nlo % TWO32
+            hi = (hi * 10 + carry) % TWO32
+            i += 1
+    if neg:
+        lo = (TWO32 - lo) % TWO32
+        hi = (TWO32 - hi - (1 if lo != 0 else 0)) % TWO32
+    return [lo, hi]
+
+func hexDigit(c):
+    if c >= "0" and c <= "9":
+        return ord(c) - 48
+    if c >= "a" and c <= "f":
+        return ord(c) - 87
+    return ord(c) - 55
+
+func isNumberStart(t):
+    if len(t) == 0:
+        return False
+    c = t[0]
+    if c >= "0" and c <= "9":
+        return True
+    if (c == "-" or c == "+") and len(t) > 1 and t[1] >= "0" and t[1] <= "9":
+        return True
+    return False
+
+func signedValue(p):
+    if p[1] >= 2147483648:
+        if p[0] == 0:
+            return 0 - (TWO32 - p[1]) * TWO32
+        return 0 - ((TWO32 - 1 - p[1]) * TWO32 + (TWO32 - p[0]))
+    return p[0] + p[1] * TWO32
+
+func smallValue(t):
+    return signedValue(parseNumber(t))
+
+func splitOperands(text):
+    parts = []
+    depth = 0
+    cur = ""
+    for ch in text:
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    if len(cur.strip()) > 0:
+        parts.append(cur.strip())
+    return parts
+
+func utf8Bytes(s):
+    out = []
+    for ch in s:
+        c = ord(ch)
+        if c < 128:
+            out.append(c)
+        elif c < 2048:
+            out.append(192 + c // 64)
+            out.append(128 + c % 64)
+        elif c < 65536:
+            out.append(224 + c // 4096)
+            out.append(128 + (c // 64) % 64)
+            out.append(128 + c % 64)
+        else:
+            out.append(240 + c // 262144)
+            out.append(128 + (c // 4096) % 64)
+            out.append(128 + (c // 64) % 64)
+            out.append(128 + c % 64)
+    return out
+
+func parseAscii(text):
+    start = text.find("\"")
+    body = text[start + 1:]
+    last = len(body) - 1
+    while last >= 0 and body[last] != "\"":
+        last -= 1
+    body = body[:last]
+    out = ""
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch == "\\" and i + 1 < len(body):
+            nx = body[i + 1]
+            if nx == "n":
+                out += "\n"
+            elif nx == "t":
+                out += "\t"
+            elif nx == "r":
+                out += "\r"
+            else:
+                out += nx
+            i += 2
+        else:
+            out += ch
+            i += 1
+    return utf8Bytes(out)
+
+func doubleBits(text):
+    v = float(text)
+    neg = False
+    if text.startswith("-"):
+        neg = True
+        v = 0 - v
+    if v == 0:
+        if neg:
+            return [0, 2147483648]
+        return [0, 0]
+    e = 0
+    while v >= 2:
+        v = v / 2
+        e += 1
+    while v < 1:
+        v = v * 2
+        e -= 1
+    frac = int((v - 1) * 4503599627370496)
+    biased = e + 1023
+    hi = biased * 1048576 + frac // TWO32
+    lo = frac % TWO32
+    if neg:
+        hi += 2048 * 1048576
+    return [lo, hi]
+
+func isLabelName(h):
+    if len(h) == 0:
+        return False
+    for ch in h:
+        ok = (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z") or (ch >= "0" and ch <= "9") or ch == "_" or ch == "."
+        if not ok:
+            return False
+    return True

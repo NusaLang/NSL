@@ -1,0 +1,29 @@
+func loadAsm(name):
+    candidates = [
+        "compiler/assembler/" + name,
+        "assembler/" + name,
+        "../compiler/assembler/" + name,
+        "../assembler/" + name,
+        "experiment/compiler/assembler/" + name,
+        name
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor("compiler/assembler/" + name)
+
+core = loadAsm("core.ns")
+elf = loadAsm("elf.ns")
+
+func makeEncoder(arch):
+    if arch == "arm64":
+        return loadAsm("arm64.ns").Arm64Encoder()
+    return loadAsm("x86_64.ns").X86Encoder()
+
+func assembleImage(source, arch):
+    return core.Assembler(makeEncoder(arch)).assemble(source)
+
+func assembleToFile(source, arch, path):
+    elf.writeExecutable(path, assembleImage(source, arch))

@@ -1,0 +1,107 @@
+func loadAsm(name):
+    candidates = [
+        "compiler/assembler/" + name,
+        "assembler/" + name,
+        "../compiler/assembler/" + name,
+        "../assembler/" + name,
+        "experiment/compiler/assembler/" + name,
+        name
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor("compiler/assembler/" + name)
+
+text = loadAsm("text.ns")
+asmFail = text.asmFail
+isNumberStart = text.isNumberStart
+parseNumber = text.parseNumber
+
+REG64 = ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"]
+REG32 = ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi", "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d"]
+REG8 = ["al", "cl", "dl", "bl", "spl", "bpl", "sil", "dil", "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b"]
+SIZES = {"byte": 8, "word": 16, "dword": 32, "qword": 64}
+
+REGS = {}
+for i in range(16):
+    REGS[REG64[i]] = {"kind": "reg", "num": i, "size": 64, "rex8": False}
+    REGS[REG32[i]] = {"kind": "reg", "num": i, "size": 32, "rex8": False}
+    REGS[REG8[i]] = {"kind": "reg", "num": i, "size": 8, "rex8": i >= 4 and i < 8}
+    REGS["xmm" + str(i)] = {"kind": "reg", "num": i, "size": 128, "rex8": False}
+
+func isRegName(t):
+    return t in REGS
+
+func parseTerm(term, mem):
+    t = term.strip()
+    star = t.find("*")
+    if star >= 0:
+        name = t[:star].strip()
+        scale = int(t[star + 1:].strip())
+        if not (name in REGS):
+            asmFail("bad index register " + name)
+        mem["index"] = REGS[name]["num"]
+        mem["scale"] = scale
+        return None
+    if t in REGS:
+        r = REGS[t]
+        if mem["base"] == -1:
+            mem["base"] = r["num"]
+        else:
+            mem["index"] = r["num"]
+            mem["scale"] = 1
+        return None
+    if isNumberStart(t):
+        p = parseNumber(t)
+        v = p[0]
+        if p[1] >= 2147483648:
+            v = v - 4294967296
+        mem["disp"] += v
+        return None
+    mem["sym"] = t
+
+func parseMem(body, sizeBits):
+    mem = {"kind": "mem", "size": sizeBits, "base": -1, "index": -1, "scale": 1, "disp": 0, "sym": None, "symSign": 1}
+    cur = ""
+    sign = 1
+    for ch in body:
+        if ch == "+" or ch == "-":
+            if len(cur.strip()) > 0:
+                applyTerm(cur, sign, mem)
+                cur = ""
+            sign = 1 if ch == "+" else -1
+        else:
+            cur += ch
+    if len(cur.strip()) > 0:
+        applyTerm(cur, sign, mem)
+    return mem
+
+func applyTerm(term, sign, mem):
+    t = term.strip()
+    if sign < 0 and isNumberStart(t):
+        before = mem["disp"]
+        parseTerm(t, mem)
+        mem["disp"] = before - (mem["disp"] - before)
+        return None
+    if sign < 0 and not (t in REGS) and t.find("*") < 0 and not isNumberStart(t):
+        mem["sym"] = t
+        mem["symSign"] = -1
+        return None
+    parseTerm(t, mem)
+
+func parseOperand(opText):
+    t = opText.strip()
+    sizeBits = 0
+    for key in SIZES:
+        prefix = key + " ptr"
+        if t.startswith(prefix):
+            sizeBits = SIZES[key]
+            t = t[len(prefix):].strip()
+    if t.startswith("["):
+        close = t.find("]")
+        return parseMem(t[1:close], sizeBits)
+    if t in REGS:
+        return REGS[t]
+    return {"kind": "imm", "text": t}
