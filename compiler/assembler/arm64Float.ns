@@ -1,0 +1,84 @@
+func loadAsm(name):
+    candidates = [
+        "compiler/assembler/" + name,
+        "assembler/" + name,
+        "../compiler/assembler/" + name,
+        "../assembler/" + name,
+        "experiment/compiler/assembler/" + name,
+        name
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor("compiler/assembler/" + name)
+text = loadAsm("text.ns")
+asmFail = text.asmFail
+parseNumber = text.parseNumber
+splitOperands = text.splitOperands
+isNumberStart = text.isNumberStart
+signedValue = text.signedValue
+operands = loadAsm("arm64Operands.ns")
+CONDS = operands.CONDS
+regNum = operands.regNum
+isReg = operands.isReg
+is64 = operands.is64
+bitmaskImm = operands.bitmaskImm
+
+class Arm64FloatEncoder:
+    func __init__(self, asm):
+        self.asm = asm
+
+    func fpImm8(self, text):
+        v = float(text)
+        neg = 0
+        if v < 0:
+            neg = 1
+            v = 0 - v
+        e = 0
+        while v >= 2:
+            v = v / 2
+            e += 1
+        while v < 1:
+            v = v * 2
+            e -= 1
+        frac = int((v - 1) * 16)
+        return neg * 128 + ((e + 3) ^ 4) * 16 + frac
+
+    func encode(self, st):
+        m = st["mnem"]
+        ops = st["ops"]
+        rd = regNum(ops[0])
+        if m == "scvtf":
+            return 0x9E620000 + regNum(ops[1]) * 32 + rd
+        if m == "fcvtzs":
+            return 0x9E780000 + regNum(ops[1]) * 32 + rd
+        if m == "fmov":
+            s = ops[1]
+            if s.find(".") >= 0 and not isReg(s):
+                return 0x1E601000 + self.fpImm8(s) * 0x2000 + rd
+            if ops[0][0] == "d" and s[0] == "d":
+                return 0x1E604000 + regNum(s) * 32 + rd
+            if ops[0][0] == "d":
+                return 0x9E670000 + regNum(s) * 32 + rd
+            return 0x9E660000 + regNum(s) * 32 + rd
+        if m == "fadd":
+            return 0x1E602800 + regNum(ops[2]) * 65536 + regNum(ops[1]) * 32 + rd
+        if m == "fsub":
+            return 0x1E603800 + regNum(ops[2]) * 65536 + regNum(ops[1]) * 32 + rd
+        if m == "fmul":
+            return 0x1E600800 + regNum(ops[2]) * 65536 + regNum(ops[1]) * 32 + rd
+        if m == "fdiv":
+            return 0x1E601800 + regNum(ops[2]) * 65536 + regNum(ops[1]) * 32 + rd
+        if m == "fneg":
+            return 0x1E614000 + regNum(ops[1]) * 32 + rd
+        if m == "frintm":
+            return 0x1E654000 + regNum(ops[1]) * 32 + rd
+        if m == "fcmp":
+            if ops[1].find(".") >= 0:
+                return 0x1E602008 + rd * 32
+            return 0x1E602000 + regNum(ops[1]) * 65536 + rd * 32
+        asmFail("unsupported instruction: " + st["text"])
+
+

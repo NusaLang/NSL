@@ -1,0 +1,89 @@
+func loadAsm(name):
+    candidates = [
+        "compiler/assembler/" + name,
+        "assembler/" + name,
+        "../compiler/assembler/" + name,
+        "../assembler/" + name,
+        "experiment/compiler/assembler/" + name,
+        name
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor("compiler/assembler/" + name)
+text = loadAsm("text.ns")
+parseNumber = text.parseNumber
+
+CONDS = {"eq": 0, "ne": 1, "hs": 2, "cs": 2, "lo": 3, "cc": 3, "mi": 4, "pl": 5, "vs": 6, "vc": 7, "hi": 8, "ls": 9, "ge": 10, "lt": 11, "gt": 12, "le": 13}
+
+func regNum(t):
+    if t == "sp" or t == "xzr" or t == "wzr":
+        return 31
+    if t == "lr":
+        return 30
+    return int(t[1:])
+
+func isReg(t):
+    if t == "sp" or t == "xzr" or t == "wzr" or t == "lr":
+        return True
+    if len(t) < 2:
+        return False
+    return (t[0] == "x" or t[0] == "w" or t[0] == "d") and t[1:].isdigit()
+
+func is64(t):
+    return t[0] != "w"
+
+func bitmaskImm(value, wide):
+    lo = value[0]
+    hi = value[1]
+    if not wide:
+        hi = lo
+    bits = []
+    i = 0
+    while i < 32:
+        bits.append((lo // (1 << i)) % 2)
+        i += 1
+    i = 0
+    while i < 32:
+        bits.append((hi // (1 << i)) % 2)
+        i += 1
+    esize = 64
+    while esize > 2:
+        half = esize // 2
+        same = True
+        j = 0
+        while j < half:
+            if bits[j] != bits[j + half]:
+                same = False
+            j += 1
+        if not same:
+            break
+        esize = half
+    ones = 0
+    j = 0
+    while j < esize:
+        ones += bits[j]
+        j += 1
+    if ones == 0 or ones == esize:
+        return None
+    start = -1
+    j = 0
+    while j < esize:
+        prev = bits[(j + esize - 1) % esize]
+        if bits[j] == 1 and prev == 0:
+            start = j
+        j += 1
+    j = 0
+    while j < ones:
+        if bits[(start + j) % esize] != 1:
+            return None
+        j += 1
+    immr = (esize - start) % esize
+    imms = ((0 - 2 * esize) % 64) + ones - 1
+    n = 0
+    if esize == 64:
+        n = 1
+        imms = ones - 1
+    return [n, immr, imms]

@@ -1,0 +1,56 @@
+func loadAsm(name):
+    candidates = [
+        "compiler/assembler/" + name,
+        "assembler/" + name,
+        "../compiler/assembler/" + name,
+        "../assembler/" + name,
+        "experiment/compiler/assembler/" + name,
+        name
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor("compiler/assembler/" + name)
+class LiteralPool:
+    func __init__(self, asm):
+        self.asm = asm
+        self.pending = []
+        self.pools = []
+
+    func add(self, st):
+        st["pool"] = st["ops"][1][1:]
+        self.pending.append(st)
+
+    func flush(self, off):
+        if len(self.pending) == 0:
+            return off
+        off = (off + 7) // 8 * 8
+        entries = {}
+        order = []
+        for st in self.pending:
+            key = st["pool"]
+            if not (key in entries):
+                entries[key] = off
+                order.append(key)
+                off += 8
+            st["poolOff"] = entries[key]
+        self.pools.append({"order": order, "entries": entries})
+        self.pending = []
+        return off
+
+    func emitTrailer(self, code):
+        for pool in self.pools:
+            for key in pool["order"]:
+                v = self.asm.evalExpr(key)
+                at = pool["entries"][key]
+                self.putWord(code, at, v[0])
+                self.putWord(code, at + 4, v[1])
+
+    func putWord(self, buf, at, w):
+        buf[at] = w % 256
+        buf[at + 1] = (w // 256) % 256
+        buf[at + 2] = (w // 65536) % 256
+        buf[at + 3] = (w // 16777216) % 256
+
