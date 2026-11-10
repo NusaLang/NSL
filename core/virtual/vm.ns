@@ -13,10 +13,7 @@ resolverModule = loadModule("resolver.ns")
 resolveModulePath = resolverModule.resolveModulePath
 
 func runtimeImpor(name):
-    resolved = resolveModulePath(name, file_ada)
-    if resolved != None:
-        return impor(resolved)
-    return impor(name)
+    return resolverModule.importModule(name)
 
 Op = {
     "CONST": 1,
@@ -1172,6 +1169,22 @@ class VmCompiler:
 func intDivBuiltin(a, b):
     return a // b
 
+VMNOARG = {"noArg": True}
+
+func makeVmHostCallback(runner, fnVal):
+    func callback(a = VMNOARG, b = VMNOARG, c = VMNOARG, d = VMNOARG):
+        items = []
+        if a != VMNOARG:
+            items.append(a)
+        if b != VMNOARG:
+            items.append(b)
+        if c != VMNOARG:
+            items.append(c)
+        if d != VMNOARG:
+            items.append(d)
+        return runner.callNested(fnVal, items)
+    return callback
+
 func makeLazyRange(a, b = None, c = None):
     start = 0
     stop = 0
@@ -1301,7 +1314,24 @@ class VmRunner:
         self.globals["input"] = input
         self.globals["sys"] = sys
 
-    func callBuiltin(self, fn, args):
+    func callNested(self, fnVal, args):
+        sub = VmRunner()
+        sub.globals = self.globals
+        if hasattr(fnVal, "isClosure"):
+            return sub.run(fnVal.fn, args, fnVal)
+        return sub.run(fnVal, args)
+
+    func wrapHostArgs(self, args):
+        wrapped = []
+        for a in args:
+            if hasattr(a, "isFunction") or hasattr(a, "isClosure"):
+                wrapped.append(makeVmHostCallback(self, a))
+            else:
+                wrapped.append(a)
+        return wrapped
+
+    func callBuiltin(self, fn, rawArgs):
+        args = self.wrapHostArgs(rawArgs)
         nA = len(args)
         if nA == 0:
             return fn()
@@ -1376,8 +1406,8 @@ class VmRunner:
                 self.frame = self.frames[-1]
         return False
 
-    func run(self, topFn):
-        initFrame = CallFrame(topFn, [])
+    func run(self, topFn, startArgs = None, startClosure = None):
+        initFrame = CallFrame(topFn, startArgs if startArgs != None else [], startClosure)
         self.frames = [initFrame]
         self.frame = initFrame
         self.stack = []

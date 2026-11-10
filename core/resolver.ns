@@ -55,8 +55,21 @@ func resolveModulePath(name, fileExistsFn = None):
             return c
     return None
 
-func resolveAndImport(name):
+func importModule(name):
+    tries = []
     target = resolveModulePath(name, FileAda)
     if target != None:
-        return impor(target)
+        tries.append(target)
+    tries.append(name)
+    for c in getModuleCandidates(name):
+        tries.append("../" + c)
+    lastError = None
+    for t in tries:
+        try:
+            return impor(t)
+        except failure:
+            lastError = failure
     return impor(name)
+
+func resolveAndImport(name):
+    return importModule(name)
