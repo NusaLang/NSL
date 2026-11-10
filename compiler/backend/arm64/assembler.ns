@@ -1,0 +1,849 @@
+CONDS = {"eq": 0, "ne": 1, "hs": 2, "cs": 2, "lo": 3, "cc": 3, "mi": 4, "pl": 5, "vs": 6, "vc": 7, "hi": 8, "ls": 9, "ge": 10, "lt": 11, "gt": 12, "le": 13}
+TWO32 = 4294967296
+BASE = 4194304
+
+func asmFail(msg):
+    lempar "assembler: " + msg
+
+func isDigitText(t):
+    return len(t) > 0 and t.isdigit()
+
+func parseNumber(t):
+    neg = False
+    s = t
+    if s.startswith("-"):
+        neg = True
+        s = s[1:]
+    elif s.startswith("+"):
+        s = s[1:]
+    lo = 0
+    hi = 0
+    if s.startswith("0x") or s.startswith("0X"):
+        i = 2
+        while i < len(s):
+            d = hexDigit(s[i])
+            carry = d
+            nlo = lo * 16 + carry
+            carry = nlo // TWO32
+            lo = nlo % TWO32
+            hi = (hi * 16 + carry) % TWO32
+            i += 1
+    else:
+        i = 0
+        while i < len(s):
+            nlo = lo * 10 + (ord(s[i]) - 48)
+            carry = nlo // TWO32
+            lo = nlo % TWO32
+            hi = (hi * 10 + carry) % TWO32
+            i += 1
+    if neg:
+        lo = (TWO32 - lo) % TWO32
+        hi = (TWO32 - hi - (1 if lo != 0 else 0)) % TWO32
+    return [lo, hi]
+
+func hexDigit(c):
+    if c >= "0" and c <= "9":
+        return ord(c) - 48
+    if c >= "a" and c <= "f":
+        return ord(c) - 87
+    return ord(c) - 55
+
+func isNumberStart(t):
+    if len(t) == 0:
+        return False
+    c = t[0]
+    if c >= "0" and c <= "9":
+        return True
+    if (c == "-" or c == "+") and len(t) > 1 and t[1] >= "0" and t[1] <= "9":
+        return True
+    return False
+
+func signedValue(p):
+    if p[1] >= 2147483648:
+        if p[0] == 0:
+            return 0 - (TWO32 - p[1]) * TWO32
+        return 0 - ((TWO32 - 1 - p[1]) * TWO32 + (TWO32 - p[0]))
+    return p[0] + p[1] * TWO32
+
+func smallValue(t):
+    return signedValue(parseNumber(t))
+
+func splitOperands(text):
+    parts = []
+    depth = 0
+    cur = ""
+    for ch in text:
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    if len(cur.strip()) > 0:
+        parts.append(cur.strip())
+    return parts
+
+func utf8Bytes(s):
+    out = []
+    for ch in s:
+        c = ord(ch)
+        if c < 128:
+            out.append(c)
+        elif c < 2048:
+            out.append(192 + c // 64)
+            out.append(128 + c % 64)
+        elif c < 65536:
+            out.append(224 + c // 4096)
+            out.append(128 + (c // 64) % 64)
+            out.append(128 + c % 64)
+        else:
+            out.append(240 + c // 262144)
+            out.append(128 + (c // 4096) % 64)
+            out.append(128 + (c // 64) % 64)
+            out.append(128 + c % 64)
+    return out
+
+func parseAscii(text):
+    start = text.find("\"")
+    body = text[start + 1:]
+    last = len(body) - 1
+    while last >= 0 and body[last] != "\"":
+        last -= 1
+    body = body[:last]
+    out = ""
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch == "\\" and i + 1 < len(body):
+            nx = body[i + 1]
+            if nx == "n":
+                out += "\n"
+            elif nx == "t":
+                out += "\t"
+            elif nx == "r":
+                out += "\r"
+            else:
+                out += nx
+            i += 2
+        else:
+            out += ch
+            i += 1
+    return utf8Bytes(out)
+
+func doubleBits(text):
+    v = float(text)
+    neg = False
+    if text.startswith("-"):
+        neg = True
+        v = 0 - v
+    if v == 0:
+        if neg:
+            return [0, 2147483648]
+        return [0, 0]
+    e = 0
+    while v >= 2:
+        v = v / 2
+        e += 1
+    while v < 1:
+        v = v * 2
+        e -= 1
+    frac = int((v - 1) * 4503599627370496)
+    biased = e + 1023
+    hi = biased * 1048576 + frac // TWO32
+    lo = frac % TWO32
+    if neg:
+        hi += 2048 * 1048576
+    return [lo, hi]
+
+func regNum(t):
+    if t == "sp" or t == "xzr" or t == "wzr":
+        return 31
+    if t == "lr":
+        return 30
+    return int(t[1:])
+
+func isReg(t):
+    if t == "sp" or t == "xzr" or t == "wzr" or t == "lr":
+        return True
+    if len(t) < 2:
+        return False
+    return (t[0] == "x" or t[0] == "w" or t[0] == "d") and t[1:].isdigit()
+
+func is64(t):
+    return t[0] != "w"
+
+func bitmaskImm(value, wide):
+    lo = value[0]
+    hi = value[1]
+    if not wide:
+        hi = lo
+    bits = []
+    i = 0
+    while i < 32:
+        bits.append((lo // (1 << i)) % 2)
+        i += 1
+    i = 0
+    while i < 32:
+        bits.append((hi // (1 << i)) % 2)
+        i += 1
+    esize = 64
+    while esize > 2:
+        half = esize // 2
+        same = True
+        j = 0
+        while j < half:
+            if bits[j] != bits[j + half]:
+                same = False
+            j += 1
+        if not same:
+            break
+        esize = half
+    ones = 0
+    j = 0
+    while j < esize:
+        ones += bits[j]
+        j += 1
+    if ones == 0 or ones == esize:
+        return None
+    start = -1
+    j = 0
+    while j < esize:
+        prev = bits[(j + esize - 1) % esize]
+        if bits[j] == 1 and prev == 0:
+            start = j
+        j += 1
+    j = 0
+    while j < ones:
+        if bits[(start + j) % esize] != 1:
+            return None
+        j += 1
+    immr = (esize - start) % esize
+    imms = ((0 - 2 * esize) % 64) + ones - 1
+    n = 0
+    if esize == 64:
+        n = 1
+        imms = ones - 1
+    return [n, immr, imms]
+
+class Assembler:
+    func __init__(self):
+        self.stmts = []
+        self.symbols = {}
+        self.pools = []
+
+    func setBases(self, t, d, b):
+        self.textBase = t
+        self.dataBase = d
+        self.bssBase = b
+
+    func encodeStmt(self, index):
+        return self.encode(self.stmts[index])
+
+    func parse(self, text):
+        section = "text"
+        for rawLine in text.split("\n"):
+            line = rawLine
+            ci = line.find("//")
+            if ci >= 0:
+                line = line[:ci]
+            line = line.strip()
+            if len(line) == 0:
+                continue
+            while True:
+                colon = line.find(":")
+                if colon > 0 and line.find("\"") == -1 or (colon > 0 and colon < line.find("\"")):
+                    head = line[:colon]
+                    if isLabelName(head):
+                        self.stmts.append({"kind": "label", "name": head, "section": section})
+                        line = line[colon + 1:].strip()
+                        if len(line) == 0:
+                            break
+                        continue
+                break
+            if len(line) == 0:
+                continue
+            sp = line.find(" ")
+            mnem = line
+            rest = ""
+            if sp > 0:
+                mnem = line[:sp]
+                rest = line[sp + 1:].strip()
+            if mnem.startswith("."):
+                if mnem == ".text" or mnem == ".data" or mnem == ".bss":
+                    section = mnem[1:]
+                    self.stmts.append({"kind": "section", "name": section})
+                elif mnem == ".globl" or mnem == ".global":
+                    pass
+                else:
+                    self.stmts.append({"kind": "dir", "name": mnem, "arg": rest, "section": section})
+            else:
+                self.stmts.append({"kind": "ins", "mnem": mnem, "ops": splitOperands(rest), "section": section, "text": line})
+
+    func layout(self):
+        sizes = {"text": 0, "data": 0, "bss": 0}
+        pending = []
+        for st in self.stmts:
+            k = st["kind"]
+            sec = st.get("section", None)
+            if k == "label":
+                self.symbols[st["name"]] = [st["section"], sizes[st["section"]]]
+            elif k == "ins":
+                st["off"] = sizes["text"]
+                if st["mnem"] == "ldr" and len(st["ops"]) == 2 and st["ops"][1].startswith("="):
+                    st["pool"] = st["ops"][1][1:]
+                    pending.append(st)
+                sizes["text"] += 4
+            elif k == "dir":
+                n = st["name"]
+                s = st["section"]
+                if n == ".ltorg":
+                    sizes["text"] = self.flushPool(pending, sizes["text"])
+                    pending = []
+                elif n == ".align":
+                    a = int(st["arg"])
+                    unit = 8
+                    if a < 3:
+                        unit = 1 << a
+                    sizes[s] = (sizes[s] + unit - 1) // unit * unit
+                elif n == ".quad" or n == ".double":
+                    st["off"] = sizes[s]
+                    sizes[s] += 8
+                elif n == ".ascii":
+                    st["off"] = sizes[s]
+                    st["bytes"] = parseAscii(st["arg"])
+                    sizes[s] += len(st["bytes"])
+                elif n == ".zero":
+                    st["off"] = sizes[s]
+                    sizes[s] += int(st["arg"])
+                else:
+                    asmFail("unsupported directive " + n)
+        sizes["text"] = self.flushPool(pending, sizes["text"])
+        self.sizes = sizes
+
+    func flushPool(self, pending, off):
+        if len(pending) == 0:
+            return off
+        off = (off + 7) // 8 * 8
+        entries = {}
+        order = []
+        for st in pending:
+            key = st["pool"]
+            if not (key in entries):
+                entries[key] = off
+                order.append(key)
+                off += 8
+            st["poolOff"] = entries[key]
+        self.pools.append({"order": order, "entries": entries})
+        return off
+
+    func addr(self, name):
+        if not (name in self.symbols):
+            asmFail("undefined symbol " + name)
+        sym = self.symbols[name]
+        sec = sym[0]
+        if sec == "text":
+            return self.textBase + sym[1]
+        if sec == "data":
+            return self.dataBase + sym[1]
+        return self.bssBase + sym[1]
+
+    func evalExpr(self, t):
+        if isNumberStart(t):
+            return parseNumber(t)
+        total = 0
+        sign = 1
+        cur = ""
+        i = 0
+        terms = []
+        signs = []
+        for ch in t:
+            if (ch == "-" or ch == "+") and len(cur.strip()) > 0:
+                terms.append(cur.strip())
+                signs.append(sign)
+                cur = ""
+                sign = 1 if ch == "+" else -1
+            elif (ch == "-" or ch == "+") and len(cur.strip()) == 0:
+                sign = 1 if ch == "+" else -1
+            else:
+                cur += ch
+        terms.append(cur.strip())
+        signs.append(sign)
+        j = 0
+        while j < len(terms):
+            tm = terms[j]
+            v = 0
+            if isNumberStart(tm):
+                v = smallValue(tm)
+            else:
+                v = self.addr(tm)
+            total = total + signs[j] * v
+            j += 1
+        if total < 0:
+            total = total + TWO32 * TWO32
+            return [total % TWO32, (total // TWO32) % TWO32]
+        return [total % TWO32, (total // TWO32) % TWO32]
+
+    func value(self, t):
+        return signedValue(self.evalExpr(t))
+
+    func assemble(self, text):
+        self.parse(text)
+        self.layout()
+        headerSize = 176
+        self.textBase = BASE + headerSize
+        textEnd = self.textBase + self.sizes["text"]
+        dataFileOff = (headerSize + self.sizes["text"] + 4095) // 4096 * 4096
+        self.dataBase = BASE + dataFileOff
+        self.bssBase = self.dataBase + (self.sizes["data"] + 7) // 8 * 8
+        code = []
+        for i in range(self.sizes["text"]):
+            code.append(0)
+        data = []
+        for i in range(self.sizes["data"]):
+            data.append(0)
+        poolIndex = 0
+        pendingEntries = []
+        for st in self.stmts:
+            k = st["kind"]
+            if k == "ins":
+                w = self.encode(st)
+                self.putWord(code, st["off"], w)
+            elif k == "dir":
+                n = st["name"]
+                if n == ".quad":
+                    v = self.evalExpr(st["arg"])
+                    self.putWord(data, st["off"], v[0])
+                    self.putWord(data, st["off"] + 4, v[1])
+                elif n == ".double":
+                    v = doubleBits(st["arg"])
+                    self.putWord(data, st["off"], v[0])
+                    self.putWord(data, st["off"] + 4, v[1])
+                elif n == ".ascii":
+                    j = 0
+                    bs = st["bytes"]
+                    while j < len(bs):
+                        data[st["off"] + j] = bs[j]
+                        j += 1
+        for pool in self.pools:
+            for key in pool["order"]:
+                v = self.evalExpr(key)
+                off = pool["entries"][key]
+                self.putWord(code, off, v[0])
+                self.putWord(code, off + 4, v[1])
+        entry = self.addr("_start")
+        return self.buildElf(code, data, entry)
+
+    func putWord(self, buf, off, w):
+        buf[off] = w % 256
+        buf[off + 1] = (w // 256) % 256
+        buf[off + 2] = (w // 65536) % 256
+        buf[off + 3] = (w // 16777216) % 256
+
+    func buildElf(self, code, data, entry):
+        headerSize = 176
+        fileText = headerSize + len(code)
+        dataOff = (fileText + 4095) // 4096 * 4096
+        out = []
+        out.extend(self.elfHeader(entry))
+        out.extend(self.progHeader(1, 5, 0, BASE, dataOff if False else fileText, fileText, 4096))
+        memSize = (self.sizes["data"] + 7) // 8 * 8 + self.sizes["bss"]
+        out.extend(self.progHeader(1, 6, dataOff, BASE + dataOff, len(data), memSize, 4096))
+        while len(out) < headerSize:
+            out.append(0)
+        out.extend(code)
+        while len(out) < dataOff:
+            out.append(0)
+        out.extend(data)
+        return out
+
+    func elfHeader(self, entry):
+        h = [127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        h.extend(self.le(2, 2))
+        h.extend(self.le(183, 2))
+        h.extend(self.le(1, 4))
+        h.extend(self.le(entry, 8))
+        h.extend(self.le(64, 8))
+        h.extend(self.le(0, 8))
+        h.extend(self.le(0, 4))
+        h.extend(self.le(64, 2))
+        h.extend(self.le(56, 2))
+        h.extend(self.le(2, 2))
+        h.extend(self.le(64, 2))
+        h.extend(self.le(0, 2))
+        h.extend(self.le(0, 2))
+        return h
+
+    func progHeader(self, ptype, flags, off, vaddr, filesz, memsz, align):
+        h = []
+        h.extend(self.le(ptype, 4))
+        h.extend(self.le(flags, 4))
+        h.extend(self.le(off, 8))
+        h.extend(self.le(vaddr, 8))
+        h.extend(self.le(vaddr, 8))
+        h.extend(self.le(filesz, 8))
+        h.extend(self.le(memsz, 8))
+        h.extend(self.le(align, 8))
+        return h
+
+    func le(self, v, n):
+        out = []
+        i = 0
+        while i < n:
+            out.append(v % 256)
+            v = v // 256
+            i += 1
+        return out
+
+    func relOffset(self, st, label, bits):
+        target = self.addr(label)
+        pc = self.textBase + st["off"]
+        d = target - pc
+        if d % 4 != 0:
+            asmFail("misaligned branch target " + label)
+        d = d // 4
+        limit = 1 << (bits - 1)
+        if d >= limit or d < 0 - limit:
+            asmFail("branch out of range " + label)
+        return d % (1 << bits)
+
+    func encode(self, st):
+        m = st["mnem"]
+        ops = st["ops"]
+        if m == "ret":
+            return 0xD65F03C0
+        if m == "svc":
+            return 0xD4000001
+        if m == "b":
+            return 0x14000000 + self.relOffset(st, ops[0], 26)
+        if m == "bl":
+            return 0x94000000 + self.relOffset(st, ops[0], 26)
+        if m.startswith("b.") and (m[2:] in CONDS):
+            return 0x54000000 + self.relOffset(st, ops[0], 19) * 32 + CONDS[m[2:]]
+        if m == "br":
+            return 0xD61F0000 + regNum(ops[0]) * 32
+        if m == "blr":
+            return 0xD63F0000 + regNum(ops[0]) * 32
+        if m == "cbz" or m == "cbnz":
+            base = 0xB4000000 if m == "cbz" else 0xB5000000
+            if not is64(ops[0]):
+                base = base - 0x80000000
+            return base + self.relOffset(st, ops[1], 19) * 32 + regNum(ops[0])
+        if m == "tbz" or m == "tbnz":
+            bit = int(ops[1])
+            base = 0x36000000 if m == "tbz" else 0x37000000
+            return base + (bit // 32) * 0x80000000 + (bit % 32) * 0x80000 + self.relOffset(st, ops[2], 14) * 32 + regNum(ops[0])
+        if m == "adr":
+            d = (self.addr(ops[1]) - (self.textBase + st["off"])) % 0x200000
+            return 0x10000000 + (d % 4) * 0x20000000 + (d // 4) * 32 + regNum(ops[0])
+        return self.encodeData(st)
+
+    func encodeData(self, st):
+        m = st["mnem"]
+        ops = st["ops"]
+        if m == "mov":
+            return self.encMov(ops)
+        if m == "add" or m == "sub" or m == "adds" or m == "subs":
+            return self.encAddSub(m, ops)
+        if m == "cmp":
+            zr = "xzr" if is64(ops[0]) else "wzr"
+            return self.encAddSub("subs", [zr] + ops)
+        if m == "neg":
+            zr = "xzr" if is64(ops[0]) else "wzr"
+            return self.encAddSub("sub", [ops[0], zr, ops[1]])
+        if m == "and" or m == "orr" or m == "eor":
+            return self.encLogic(m, ops)
+        if m == "mvn":
+            return 0xAA2003E0 + regNum(ops[1]) * 65536 + regNum(ops[0])
+        if m == "mul":
+            return 0x9B007C00 + regNum(ops[2]) * 65536 + regNum(ops[1]) * 32 + regNum(ops[0])
+        if m == "smulh":
+            return 0x9B407C00 + regNum(ops[2]) * 65536 + regNum(ops[1]) * 32 + regNum(ops[0])
+        if m == "sdiv":
+            return 0x9AC00C00 + regNum(ops[2]) * 65536 + regNum(ops[1]) * 32 + regNum(ops[0])
+        if m == "udiv":
+            return 0x9AC00800 + regNum(ops[2]) * 65536 + regNum(ops[1]) * 32 + regNum(ops[0])
+        if m == "msub":
+            return 0x9B008000 + regNum(ops[2]) * 65536 + regNum(ops[3]) * 1024 + regNum(ops[1]) * 32 + regNum(ops[0])
+        if m == "lsl" or m == "lsr" or m == "asr":
+            return self.encShift(m, ops)
+        if m == "ubfx":
+            lsb = int(ops[2])
+            width = int(ops[3])
+            return 0xD3400000 + lsb * 65536 + (lsb + width - 1) * 1024 + regNum(ops[1]) * 32 + regNum(ops[0])
+        if m == "cset":
+            return 0x9A9F07E0 + (CONDS[ops[1]] ^ 1) * 4096 + regNum(ops[0])
+        if m == "csel":
+            return 0x9A800000 + regNum(ops[2]) * 65536 + CONDS[ops[3]] * 4096 + regNum(ops[1]) * 32 + regNum(ops[0])
+        if m == "cneg":
+            r = regNum(ops[1])
+            return 0xDA800400 + r * 65536 + (CONDS[ops[2]] ^ 1) * 4096 + r * 32 + regNum(ops[0])
+        if m == "ldr" or m == "str" or m == "ldur" or m == "stur" or m == "ldrb" or m == "strb" or m == "ldrsw":
+            return self.encMem(st)
+        if m == "stp" or m == "ldp":
+            return self.encPair(m, ops)
+        return self.encFloat(st)
+
+    func encMov(self, ops):
+        d = ops[0]
+        s = ops[1]
+        if isReg(s):
+            if d == "sp" or s == "sp":
+                return 0x91000000 + regNum(s) * 32 + regNum(d)
+            if is64(d):
+                return 0xAA0003E0 + regNum(s) * 65536 + regNum(d)
+            return 0x2A0003E0 + regNum(s) * 65536 + regNum(d)
+        v = self.value(s)
+        rd = regNum(d)
+        zbase = 0xD2800000 if is64(d) else 0x52800000
+        nbase = 0x92800000 if is64(d) else 0x12800000
+        if v >= 0 and v <= 65535:
+            return zbase + v * 32 + rd
+        if v < 0 and v >= -65536:
+            return nbase + ((0 - v - 1) % 65536) * 32 + rd
+        asmFail("mov immediate out of range: " + s)
+
+    func encAddSub(self, m, ops):
+        imm = {"add": 0x91000000, "sub": 0xD1000000, "adds": 0xB1000000, "subs": 0xF1000000}
+        reg = {"add": 0x8B000000, "sub": 0xCB000000, "adds": 0xAB000000, "subs": 0xEB000000}
+        rd = regNum(ops[0])
+        rn = regNum(ops[1])
+        wide = is64(ops[0])
+        third = ops[2]
+        if isReg(third):
+            shiftType = 0
+            amount = 0
+            if len(ops) > 3:
+                parts = ops[3].split(" ")
+                amount = int(parts[1].replace("#", ""))
+                if parts[0] == "lsr":
+                    shiftType = 1
+                elif parts[0] == "asr":
+                    shiftType = 2
+            rm = regNum(third)
+            if ops[0] == "sp" or ops[1] == "sp":
+                return reg[m] + 0x200000 + rm * 65536 + 0x6000 + amount * 1024 + rn * 32 + rd
+            w = reg[m] + shiftType * 0x400000 + rm * 65536 + amount * 1024 + rn * 32 + rd
+            if not wide:
+                w = w - 0x80000000
+            return w
+        v = self.value(third.replace("#", ""))
+        sh = 0
+        if v > 4095:
+            if v % 4096 != 0 or v > 16773120:
+                asmFail("add/sub immediate out of range: " + str(v))
+            v = v // 4096
+            sh = 0x400000
+        if v < 0:
+            asmFail("negative add/sub immediate")
+        w = imm[m] + sh + v * 1024 + rn * 32 + rd
+        if not wide:
+            w = w - 0x80000000
+        return w
+
+    func encLogic(self, m, ops):
+        reg = {"and": 0x8A000000, "orr": 0xAA000000, "eor": 0xCA000000}
+        imm = {"and": 0x92000000, "orr": 0xB2000000, "eor": 0xD2000000}
+        wide = is64(ops[0])
+        rd = regNum(ops[0])
+        rn = regNum(ops[1])
+        third = ops[2]
+        if isReg(third):
+            w = reg[m] + regNum(third) * 65536 + rn * 32 + rd
+            if not wide:
+                w = w - 0x80000000
+            return w
+        bm = bitmaskImm(parseNumber(third.replace("#", "")), wide)
+        if bm == None:
+            asmFail("unencodable logical immediate " + third)
+        w = imm[m] + bm[0] * 0x400000 + bm[1] * 65536 + bm[2] * 1024 + rn * 32 + rd
+        if not wide:
+            w = w - 0x80000000
+        return w
+
+    func encShift(self, m, ops):
+        rd = regNum(ops[0])
+        rn = regNum(ops[1])
+        if isReg(ops[2]):
+            base = {"lsl": 0x9AC02000, "lsr": 0x9AC02400, "asr": 0x9AC02800}
+            return base[m] + regNum(ops[2]) * 65536 + rn * 32 + rd
+        n = int(ops[2].replace("#", ""))
+        if m == "lsl":
+            return 0xD3400000 + ((64 - n) % 64) * 65536 + (63 - n) * 1024 + rn * 32 + rd
+        if m == "lsr":
+            return 0xD3400000 + n * 65536 + 63 * 1024 + rn * 32 + rd
+        return 0x93400000 + n * 65536 + 63 * 1024 + rn * 32 + rd
+
+    func parseMem(self, text):
+        t = text
+        pre = False
+        if t.endswith("!"):
+            pre = True
+            t = t[:len(t) - 1]
+        close = t.find("]")
+        parts = splitOperands(t[1:close])
+        return {"base": parts[0], "rest": parts[1:], "pre": pre}
+
+    func encMem(self, st):
+        m = st["mnem"]
+        ops = st["ops"]
+        rt = regNum(ops[0])
+        isD = ops[0][0] == "d"
+        if m == "ldr" and ops[1].startswith("="):
+            return 0x58000000 + ((st["poolOff"] - st["off"]) // 4) * 32 + rt
+        mem = self.parseMem(ops[1])
+        rn = regNum(mem["base"])
+        isLoad = m == "ldr" or m == "ldur" or m == "ldrb" or m == "ldrsw"
+        wide = is64(ops[0])
+        kind = "x"
+        if isD:
+            kind = "d"
+        elif m == "ldrb" or m == "strb":
+            kind = "b"
+        elif m == "ldrsw":
+            kind = "s"
+        elif not wide:
+            kind = "w"
+        scale = {"x": 8, "d": 8, "b": 1, "s": 4, "w": 4}[kind]
+        uns = {"x": 0xF9000000, "d": 0xFD000000, "b": 0x39000000, "s": 0xB9800000, "w": 0xB9000000}[kind]
+        unscaled = {"x": 0xF8000000, "d": 0xFC000000, "b": 0x38000000, "s": 0xB8800000, "w": 0xB8000000}[kind]
+        regOff = {"x": 0xF8200800, "d": 0, "b": 0x38200800, "s": 0, "w": 0xB8200800}[kind]
+        loadBit = 0x400000
+        if kind == "s":
+            loadBit = 0
+        if isLoad and kind != "s":
+            uns = uns + loadBit
+            unscaled = unscaled + loadBit
+            regOff = regOff + 0x400000
+        if len(ops) > 2:
+            v = self.value(ops[2].replace("#", ""))
+            return unscaled + (v % 512) * 4096 + 0x400 + rn * 32 + rt
+        if mem["pre"]:
+            v = self.value(mem["rest"][0].replace("#", ""))
+            return unscaled + (v % 512) * 4096 + 0xC00 + rn * 32 + rt
+        if len(mem["rest"]) == 0:
+            return uns + rn * 32 + rt
+        first = mem["rest"][0]
+        if isReg(first):
+            sbit = 0
+            if len(mem["rest"]) > 1:
+                sbit = 0x1000
+            if regOff == 0:
+                asmFail("register offset unsupported here")
+            return regOff + regNum(first) * 65536 + 0x6000 + sbit + rn * 32 + rt
+        v = self.value(first.replace("#", ""))
+        if m == "ldur" or m == "stur":
+            return unscaled + (v % 512) * 4096 + rn * 32 + rt
+        if v >= 0 and v % scale == 0 and v // scale < 4096:
+            return uns + (v // scale) * 1024 + rn * 32 + rt
+        if v >= -256 and v < 256:
+            return unscaled + (v % 512) * 4096 + rn * 32 + rt
+        asmFail("memory offset out of range: " + str(v))
+
+    func encPair(self, m, ops):
+        rt1 = regNum(ops[0])
+        rt2 = regNum(ops[1])
+        mem = self.parseMem(ops[2])
+        rn = regNum(mem["base"])
+        isLoad = m == "ldp"
+        load = 0x400000 if isLoad else 0
+        if len(ops) > 3:
+            v = self.value(ops[3].replace("#", ""))
+            return 0xA8800000 + load + ((v // 8) % 128) * 0x8000 + rt2 * 1024 + rn * 32 + rt1
+        v = 0
+        if len(mem["rest"]) > 0:
+            v = self.value(mem["rest"][0].replace("#", ""))
+        base = 0xA9800000 if mem["pre"] else 0xA9000000
+        return base + load + ((v // 8) % 128) * 0x8000 + rt2 * 1024 + rn * 32 + rt1
+
+    func fpImm8(self, text):
+        v = float(text)
+        neg = 0
+        if v < 0:
+            neg = 1
+            v = 0 - v
+        e = 0
+        while v >= 2:
+            v = v / 2
+            e += 1
+        while v < 1:
+            v = v * 2
+            e -= 1
+        frac = int((v - 1) * 16)
+        return neg * 128 + ((e + 3) ^ 4) * 16 + frac
+
+    func encFloat(self, st):
+        m = st["mnem"]
+        ops = st["ops"]
+        rd = regNum(ops[0])
+        if m == "scvtf":
+            return 0x9E620000 + regNum(ops[1]) * 32 + rd
+        if m == "fcvtzs":
+            return 0x9E780000 + regNum(ops[1]) * 32 + rd
+        if m == "fmov":
+            s = ops[1]
+            if s.find(".") >= 0 and not isReg(s):
+                return 0x1E601000 + self.fpImm8(s) * 0x2000 + rd
+            if ops[0][0] == "d" and s[0] == "d":
+                return 0x1E604000 + regNum(s) * 32 + rd
+            if ops[0][0] == "d":
+                return 0x9E670000 + regNum(s) * 32 + rd
+            return 0x9E660000 + regNum(s) * 32 + rd
+        if m == "fadd":
+            return 0x1E602800 + regNum(ops[2]) * 65536 + regNum(ops[1]) * 32 + rd
+        if m == "fsub":
+            return 0x1E603800 + regNum(ops[2]) * 65536 + regNum(ops[1]) * 32 + rd
+        if m == "fmul":
+            return 0x1E600800 + regNum(ops[2]) * 65536 + regNum(ops[1]) * 32 + rd
+        if m == "fdiv":
+            return 0x1E601800 + regNum(ops[2]) * 65536 + regNum(ops[1]) * 32 + rd
+        if m == "fneg":
+            return 0x1E614000 + regNum(ops[1]) * 32 + rd
+        if m == "frintm":
+            return 0x1E654000 + regNum(ops[1]) * 32 + rd
+        if m == "fcmp":
+            if ops[1].find(".") >= 0:
+                return 0x1E602008 + rd * 32
+            return 0x1E602000 + regNum(ops[1]) * 65536 + rd * 32
+        asmFail("unsupported instruction: " + st["text"])
+
+B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+func base64Bytes(bs):
+    parts = []
+    i = 0
+    n = len(bs)
+    while i + 2 < n:
+        v = bs[i] * 65536 + bs[i + 1] * 256 + bs[i + 2]
+        parts.append(B64[v // 262144] + B64[(v // 4096) % 64] + B64[(v // 64) % 64] + B64[v % 64])
+        i += 3
+    rem = n - i
+    if rem == 1:
+        v = bs[i] * 65536
+        parts.append(B64[v // 262144] + B64[(v // 4096) % 64] + "==")
+    elif rem == 2:
+        v = bs[i] * 65536 + bs[i + 1] * 256
+        parts.append(B64[v // 262144] + B64[(v // 4096) % 64] + B64[(v // 64) % 64] + "=")
+    return gabung(parts, "")
+
+func writeExecutable(path, bs):
+    encoded = path + ".b64"
+    tulis_file(encoded, base64Bytes(bs))
+    res = jalankan_perintah("sh", ["-c", "base64 -d '" + encoded + "' > '" + path + "' && chmod +x '" + path + "' && rm -f '" + encoded + "'"])
+    if res.status != 0:
+        asmFail("cannot write executable: " + res.error)
+
+func assembleToFile(text, path):
+    asm = Assembler()
+    writeExecutable(path, asm.assemble(text))
+
+func isLabelName(h):
+    if len(h) == 0:
+        return False
+    for ch in h:
+        ok = (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z") or (ch >= "0" and ch <= "9") or ch == "_" or ch == "."
+        if not ok:
+            return False
+    return True
