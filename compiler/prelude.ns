@@ -1,0 +1,233 @@
+PRELUDE = """func nsRtDigits(n):
+    d = []
+    if n == 0:
+        push(d, 0)
+    while n > 0:
+        r = n % 10
+        push(d, r)
+        n = intDiv(n, 10)
+    return d
+
+func nsRtMul(d, k):
+    carry = 0
+    i = 0
+    n = len(d)
+    while i < n:
+        t = d[i] * k + carry
+        r = t % 10
+        d[i] = r
+        carry = int((t - r) / 10)
+        i += 1
+    while carry > 0:
+        r = carry % 10
+        push(d, r)
+        carry = int((carry - r) / 10)
+
+func nsRtTrim(d):
+    while len(d) > 1 and d[len(d) - 1] == 0:
+        pop(d)
+
+func nsRtCmp(a, b):
+    nsRtTrim(a)
+    nsRtTrim(b)
+    la = len(a)
+    lb = len(b)
+    if la != lb:
+        if la < lb:
+            return -1
+        return 1
+    i = la - 1
+    while i >= 0:
+        if a[i] != b[i]:
+            if a[i] < b[i]:
+                return -1
+            return 1
+        i -= 1
+    return 0
+
+func nsRtCmpLow(d, cut, other):
+    top = cut
+    if len(other) > top:
+        top = len(other)
+    i = top - 1
+    while i >= 0:
+        x = 0
+        if i < cut:
+            x = d[i]
+        y = 0
+        if i < len(other):
+            y = other[i]
+        if x != y:
+            if x < y:
+                return -1
+            return 1
+        i -= 1
+    return 0
+
+func nsRtCopy(a):
+    res = []
+    for v in a:
+        push(res, v)
+    return res
+
+func nsRtBig(a, f):
+    d = nsRtDigits(a)
+    if f >= 0:
+        k = f
+        while k >= 20:
+            nsRtMul(d, 1048576)
+            k -= 20
+        if k > 0:
+            nsRtMul(d, 1 << k)
+    else:
+        k = 0 - f
+        while k >= 8:
+            nsRtMul(d, 390625)
+            k -= 8
+        while k > 0:
+            nsRtMul(d, 5)
+            k -= 1
+    return d
+
+func nsRtShortest(m, e):
+    f = e - 2
+    narrow = m == 4503599627370496 and e > -1074
+    even = m % 2 == 0
+    bd = nsRtBig(4 * m, f)
+    dl = nsRtBig(2, f)
+    dh = nsRtCopy(dl)
+    if narrow:
+        dl = nsRtBig(1, f)
+    nsRtTrim(bd)
+    u = 0
+    if f < 0:
+        u = f
+    n = len(bd)
+    i = 1
+    while i <= n:
+        cut = n - i
+        useUp = False
+        if cut > 0:
+            dg = bd[cut - 1]
+            if dg > 5:
+                useUp = True
+            elif dg == 5:
+                lower = False
+                j = 0
+                while j < cut - 1:
+                    if bd[j] != 0:
+                        lower = True
+                    j += 1
+                if lower or bd[cut] % 2 == 1:
+                    useUp = True
+        ok = True
+        if cut > 0:
+            if useUp:
+                ur = []
+                carry = 1
+                j = 0
+                while j < cut:
+                    v = 9 - bd[j] + carry
+                    if v == 10:
+                        push(ur, 0)
+                        carry = 1
+                    else:
+                        push(ur, v)
+                        carry = 0
+                    j += 1
+                c2 = nsRtCmp(ur, dh)
+                ok = c2 < 0 or (c2 == 0 and even)
+            else:
+                c1 = nsRtCmpLow(bd, cut, dl)
+                ok = c1 < 0 or (c1 == 0 and even)
+        if ok:
+            digs = []
+            j = n - 1
+            while j >= cut:
+                push(digs, bd[j])
+                j -= 1
+            extra = 0
+            if useUp:
+                p = len(digs) - 1
+                done = False
+                while p >= 0 and not done:
+                    if digs[p] == 9:
+                        digs[p] = 0
+                        p -= 1
+                    else:
+                        digs[p] = digs[p] + 1
+                        done = True
+                if not done:
+                    extra = 1
+            s = ""
+            if extra == 1:
+                s = "1"
+            for dv in digs:
+                s = s + str(dv)
+            end = len(s)
+            while end > 1 and s[end - 1] == "0":
+                end -= 1
+            return [s[0:end], len(digs) + extra + cut + u]
+        i += 1
+    return ["0", 1]
+
+func nsRtZeros(n):
+    z = ""
+    while n > 0:
+        z = z + "0"
+        n -= 1
+    return z
+
+func nsRtFloatFormat(sign, m, e, special):
+    if special == 2:
+        return "NaN"
+    if special == 1:
+        if sign == 1:
+            return "-Inf"
+        return "+Inf"
+    prefix = ""
+    if sign == 1:
+        prefix = "-"
+    if m == 0:
+        return prefix + "0"
+    if e >= 0 and e <= 8:
+        return prefix + str(m * (1 << e))
+    if e < 0 and e >= -52:
+        if m % (1 << (0 - e)) == 0:
+            return prefix + str(m >> (0 - e))
+    if e == 9 or e == 10:
+        exact = nsRtBig(m, e)
+        text = ""
+        pos = len(exact) - 1
+        while pos >= 0:
+            text = text + str(exact[pos])
+            pos -= 1
+        return prefix + text
+    r = nsRtShortest(m, e)
+    digs = r[0]
+    decpt = r[1]
+    k = len(digs)
+    x = decpt - 1
+    if x < -4 or x >= 18:
+        body = digs[0:1]
+        if k > 1:
+            body = body + "." + digs[1:k]
+        sg = "+"
+        ax = x
+        if x < 0:
+            sg = "-"
+            ax = 0 - x
+        ex = str(ax)
+        if ax < 10:
+            ex = "0" + ex
+        return prefix + body + "e" + sg + ex
+    if decpt <= 0:
+        return prefix + "0." + nsRtZeros(0 - decpt) + digs
+    if decpt >= k:
+        return prefix + digs + nsRtZeros(decpt - k)
+    return prefix + digs[0:decpt] + "." + digs[decpt:k]
+
+func nsRtFloatStr(x):
+    p = floatParts(x)
+    return nsRtFloatFormat(p[0], p[1], p[2], p[3])
+"""

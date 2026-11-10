@@ -1,0 +1,96 @@
+func assert(cond, msg):
+    if not cond:
+        print("FAIL:", msg)
+        throw msg
+
+assert(1 + 2 * 3 == 7, "precedence")
+assert((10 - 4) / 2 == 3.0, "div float")
+assert(14 % 4 == 2, "modulo")
+assert(-5 + 10 == 5, "unary minus")
+f = 3.5 + 2.25
+assert(f > 5.7 and f < 5.8, "float arith")
+
+s = "halo nusantara"
+assert(len(s) == 14, "string len")
+assert(s[0] == "h", "string index")
+assert(s[0:4] == "halo", "string slice start")
+assert(s[5:] == "nusantara", "string slice end")
+assert("nusa" in s, "string in")
+assert(not ("xyz" in s), "string not in")
+assert("a" + "b" + "c" == "abc", "string concat")
+
+arr = [10, 20, 30, 40, 50]
+assert(len(arr) == 5, "array len")
+assert(arr[2] == 30, "array index read")
+arr[2] = 99
+assert(arr[2] == 99, "array index write")
+arr[2] = 30
+push(arr, 60)
+assert(len(arr) == 6, "push len")
+popped = pop(arr)
+assert(popped == 60 and len(arr) == 5, "pop value")
+sub = arr[1:4]
+assert(len(sub) == 3 and sub[0] == 20 and sub[2] == 40, "array slice")
+
+m = {"alpha": 1, "beta": 2}
+assert(len(m) == 2, "map len")
+assert(m["alpha"] == 1, "map get")
+m["gamma"] = 3
+assert(m["gamma"] == 3, "map set")
+assert("alpha" in m, "map in true")
+assert(not ("delta" in m), "map in false")
+
+sumFor = 0
+for (i = 0; i < 5; i += 1):
+    sumFor += i
+assert(sumFor == 10, "for loop sum")
+
+sumWhile = 0
+w = 0
+while w < 5:
+    sumWhile += w
+    w += 1
+assert(sumWhile == 10, "while loop sum")
+
+sumForIn = 0
+for val in [1, 2, 3, 4]:
+    sumForIn += val
+assert(sumForIn == 10, "for in sum")
+
+func fib(n):
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+assert(fib(10) == 55, "fib 10")
+
+func multiArg(a, b, c, d, e, f, g):
+    return a + b + c + d + e + f + g
+
+assert(multiArg(1, 2, 3, 4, 5, 6, 7) == 28, "spill args")
+
+doubleVal = lambda x: x * 2
+assert(doubleVal(21) == 42, "lambda call")
+
+class Animal:
+    func __init__(self, name):
+        self.name = name
+    func sound(self):
+        return "none"
+
+class Dog(Animal):
+    func sound(self):
+        return "bark"
+
+d = Dog("Rex")
+assert(d.name == "Rex", "oop inherited field")
+assert(d.sound() == "bark", "oop method override")
+
+caughtErr = ""
+try:
+    throw "custom error"
+catch e:
+    caughtErr = e
+assert(caughtErr == "custom error", "throw catch")
+
+print("ALL NATIVE TESTS PASSED")

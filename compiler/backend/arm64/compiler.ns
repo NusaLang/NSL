@@ -1,4 +1,3 @@
-import sys
 
 func loadModule(path):
     candidates = [
@@ -24,7 +23,6 @@ astModule = loadModule("core/parser/ast.ns")
 BinaryExpr = astModule.BinaryExpr
 FuncStmt = astModule.FuncStmt
 BlockStmt = astModule.BlockStmt
-
 func loadSubmodule(path):
     candidates = [
         path,
@@ -45,6 +43,7 @@ func loadSubmodule(path):
     return impor(path)
 
 runtimeModule = loadSubmodule("runtime.ns")
+preludeModule = loadModule("compiler/prelude.ns")
 resolverModule = loadModule("core/resolver.ns")
 resolveModulePath = resolverModule.resolveModulePath
 
@@ -53,14 +52,15 @@ FileAda = file_ada
 BacaFile = baca_file
 TulisFile = tulis_file
 
+INTLIMIT = 4503599627370496 * 1024
 REGS = ["x19", "x20", "x21", "x22", "x23"]
 JUMPS = {"<": "b.ge", "<=": "b.gt", ">": "b.le", ">=": "b.lt", "==": "b.ne", "!=": "b.eq"}
 ARITH = {"+": "rtAdd", "-": "rtSub", "*": "rtMul", "/": "rtDiv", "//": "rtDiv", "%": "rtMod"}
 BITWISE = {"&": "rtBitAnd", "|": "rtBitOr", "^": "rtBitXor", "<<": "rtShl", ">>": "rtShr"}
+STRMETHODS = {"find": "rtStrFind", "startswith": "rtStrStartsWith", "endswith": "rtStrEndsWith", "join": "rtStrJoin", "strip": "rtStrStrip", "lower": "rtStrLower", "upper": "rtStrUpper", "split": "rtStrSplit", "isdigit": "rtStrIsDigit", "isalpha": "rtStrIsAlpha", "isalnum": "rtStrIsAlnum"}
 
 func fail(msg):
-    print("native (arm64): " + msg)
-    sys.exit(1)
+    lempar "native: " + msg
 
 func fnLabel(name):
     return "fn" + name
@@ -81,98 +81,349 @@ func walkStmtOrExpr(node, onExpr, onStmt):
     else:
         onExpr(node)
 
-func scanExpr(e, queue):
-    if e == None:
+func scanExpr(e, found):
+    if e == None or not hasattr(e, "type"):
         return None
     t = e.type
     if t == "CALL":
-        if e.callee.type == "IDENT" and e.callee.name == "impor":
-            if len(e.args) == 1 and e.args[0].type == "STRING":
-                queue.append(e.args[0].value)
-        scanExpr(e.callee, queue)
+        if e.callee.type == "IDENT" and e.callee.name == "impor" and len(e.args) == 1 and e.args[0].type == "STRING":
+            p = e.args[0].value
+            if p != "sys" and not (p in found):
+                found.append(p)
+        scanExpr(e.callee, found)
         for a in e.args:
-            scanExpr(a, queue)
+            scanExpr(a, found)
     elif t == "BINARY":
-        scanExpr(e.left, queue)
-        scanExpr(e.right, queue)
+        scanExpr(e.left, found)
+        scanExpr(e.right, found)
     elif t == "UNARY":
-        scanExpr(e.operand, queue)
-    elif t == "ARRAY":
+        scanExpr(e.operand, found)
+    elif t == "ASSIGN":
+        scanExpr(e.target, found)
+        scanExpr(e.value, found)
+    elif t == "MEMBER":
+        scanExpr(e.target, found)
+    elif t == "INDEX":
+        scanExpr(e.target, found)
+        scanExpr(e.index, found)
+    elif t == "SLICE":
+        scanExpr(e.target, found)
+        if e.start != None:
+            scanExpr(e.start, found)
+        if e.stop != None:
+            scanExpr(e.stop, found)
+    elif t == "LIST":
         for el in e.elements:
-            scanExpr(el, queue)
+            scanExpr(el, found)
     elif t == "MAP":
         for v in e.values:
-            scanExpr(v, queue)
-    elif t == "INDEX":
-        scanExpr(e.target, queue)
-        scanExpr(e.index, queue)
-    elif t == "MEMBER":
-        scanExpr(e.target, queue)
+            scanExpr(v, found)
+    elif t == "TERNARY":
+        scanExpr(e.condition, found)
+        scanExpr(e.thenVal, found)
+        scanExpr(e.elseVal, found)
     elif t == "LAMBDA":
-        scanStmt(e.body, queue)
+        walkStmtOrExpr(e.body, lambda x: scanExpr(x, found), lambda x: scanStmt(x, found))
 
-func scanStmt(s, queue):
+func scanStmt(s, found):
     if s == None:
         return None
     t = s.type
     if t == "BLOCK":
         for st in s.stmts:
-            scanStmt(st, queue)
+            scanStmt(st, found)
     elif t == "VAR":
-        scanExpr(s.value, queue)
-    elif t == "ASSIGN":
-        scanExpr(s.value, queue)
-        scanExpr(s.target, queue)
+        scanExpr(s.value, found)
     elif t == "FUNC":
-        walkStmtOrExpr(s.body, lambda x: scanExpr(x, queue), lambda x: scanStmt(x, queue))
-    elif t == "CLASS":
-        for m in s.methods:
-            walkStmtOrExpr(m.body, lambda x: scanExpr(x, queue), lambda x: scanStmt(x, queue))
+        walkStmtOrExpr(s.body, lambda x: scanExpr(x, found), lambda x: scanStmt(x, found))
     elif t == "IF":
-        scanExpr(s.condition, queue)
-        walkStmtOrExpr(s.thenBranch, lambda x: scanExpr(x, queue), lambda x: scanStmt(x, queue))
-        if s.elseBranch != None:
-            walkStmtOrExpr(s.elseBranch, lambda x: scanExpr(x, queue), lambda x: scanStmt(x, queue))
+        scanExpr(s.condition, found)
+        walkStmtOrExpr(s.thenBranch, lambda x: scanExpr(x, found), lambda x: scanStmt(x, found))
+        walkStmtOrExpr(s.elseBranch, lambda x: scanExpr(x, found), lambda x: scanStmt(x, found))
     elif t == "WHILE":
-        scanExpr(s.condition, queue)
-        walkStmtOrExpr(s.body, lambda x: scanExpr(x, queue), lambda x: scanStmt(x, queue))
+        scanExpr(s.condition, found)
+        walkStmtOrExpr(s.body, lambda x: scanExpr(x, found), lambda x: scanStmt(x, found))
     elif t == "FOR":
-        if s.init != None:
-            scanStmt(s.init, queue)
+        walkStmtOrExpr(s.init, lambda x: scanExpr(x, found), lambda x: scanStmt(x, found))
         if s.condition != None:
-            scanExpr(s.condition, queue)
-        if s.post != None:
-            scanStmt(s.post, queue)
-        walkStmtOrExpr(s.body, lambda x: scanExpr(x, queue), lambda x: scanStmt(x, queue))
+            scanExpr(s.condition, found)
+        walkStmtOrExpr(s.post, lambda x: scanExpr(x, found), lambda x: scanStmt(x, found))
+        walkStmtOrExpr(s.body, lambda x: scanExpr(x, found), lambda x: scanStmt(x, found))
     elif t == "FOR_IN":
-        scanExpr(s.iterable, queue)
-        walkStmtOrExpr(s.body, lambda x: scanExpr(x, queue), lambda x: scanStmt(x, queue))
+        scanExpr(s.iterable, found)
+        walkStmtOrExpr(s.body, lambda x: scanExpr(x, found), lambda x: scanStmt(x, found))
     elif t == "RETURN":
         if s.value != None:
-            scanExpr(s.value, queue)
+            scanExpr(s.value, found)
     elif t == "THROW":
-        if s.value != None:
-            scanExpr(s.value, queue)
+        scanExpr(s.value, found)
     elif t == "TRY":
-        walkStmtOrExpr(s.tryBlock, lambda x: scanExpr(x, queue), lambda x: scanStmt(x, queue))
-        walkStmtOrExpr(s.catchBlock, lambda x: scanExpr(x, queue), lambda x: scanStmt(x, queue))
-        if s.finallyBlock != None:
-            walkStmtOrExpr(s.finallyBlock, lambda x: scanExpr(x, queue), lambda x: scanStmt(x, queue))
+        walkStmtOrExpr(s.tryBlock, lambda x: scanExpr(x, found), lambda x: scanStmt(x, found))
+        walkStmtOrExpr(s.catchBlock, lambda x: scanExpr(x, found), lambda x: scanStmt(x, found))
+        walkStmtOrExpr(s.finallyBlock, lambda x: scanExpr(x, found), lambda x: scanStmt(x, found))
     elif t == "EXPR":
-        scanExpr(s.expr, queue)
+        scanExpr(s.expr, found)
+    elif t == "CLASS":
+        for m in s.methods:
+            scanStmt(m, found)
 
-func collectModuleExports(tree, funcNames, varNames, classNames, classStmts, initStmts):
-    for s in tree:
-        if s.type == "FUNC":
-            funcNames.append(s.name)
-        elif s.type == "CLASS":
-            classNames.append(s.name)
-            classStmts.append(s)
-        elif s.type == "VAR":
-            varNames.append(s.name)
-            initStmts.append(s)
-        else:
-            initStmts.append(s)
+func renameExpr(e, renameMap):
+    if e == None or not hasattr(e, "type"):
+        return None
+    t = e.type
+    if t == "IDENT":
+        if e.name in renameMap:
+            e.name = renameMap[e.name]
+    elif t == "CALL":
+        renameExpr(e.callee, renameMap)
+        for a in e.args:
+            renameExpr(a, renameMap)
+    elif t == "BINARY":
+        renameExpr(e.left, renameMap)
+        renameExpr(e.right, renameMap)
+    elif t == "UNARY":
+        renameExpr(e.operand, renameMap)
+    elif t == "ASSIGN":
+        renameExpr(e.target, renameMap)
+        renameExpr(e.value, renameMap)
+    elif t == "MEMBER":
+        renameExpr(e.target, renameMap)
+    elif t == "INDEX":
+        renameExpr(e.target, renameMap)
+        renameExpr(e.index, renameMap)
+    elif t == "SLICE":
+        renameExpr(e.target, renameMap)
+        if e.start != None:
+            renameExpr(e.start, renameMap)
+        if e.stop != None:
+            renameExpr(e.stop, renameMap)
+    elif t == "LIST":
+        for el in e.elements:
+            renameExpr(el, renameMap)
+    elif t == "MAP":
+        for v in e.values:
+            renameExpr(v, renameMap)
+    elif t == "TERNARY":
+        renameExpr(e.condition, renameMap)
+        renameExpr(e.thenVal, renameMap)
+        renameExpr(e.elseVal, renameMap)
+    elif t == "LAMBDA":
+        walkStmtOrExpr(e.body, lambda x: renameExpr(x, renameMap), lambda x: renameStmt(x, renameMap))
+
+func renameStmt(s, renameMap):
+    if s == None:
+        return None
+    t = s.type
+    if t == "BLOCK":
+        for st in s.stmts:
+            renameStmt(st, renameMap)
+    elif t == "VAR":
+        if s.name in renameMap:
+            s.name = renameMap[s.name]
+        renameExpr(s.value, renameMap)
+    elif t == "FUNC":
+        if s.name in renameMap:
+            s.name = renameMap[s.name]
+        walkStmtOrExpr(s.body, lambda x: renameExpr(x, renameMap), lambda x: renameStmt(x, renameMap))
+    elif t == "IF":
+        renameExpr(s.condition, renameMap)
+        walkStmtOrExpr(s.thenBranch, lambda x: renameExpr(x, renameMap), lambda x: renameStmt(x, renameMap))
+        walkStmtOrExpr(s.elseBranch, lambda x: renameExpr(x, renameMap), lambda x: renameStmt(x, renameMap))
+    elif t == "WHILE":
+        renameExpr(s.condition, renameMap)
+        walkStmtOrExpr(s.body, lambda x: renameExpr(x, renameMap), lambda x: renameStmt(x, renameMap))
+    elif t == "FOR":
+        walkStmtOrExpr(s.init, lambda x: renameExpr(x, renameMap), lambda x: renameStmt(x, renameMap))
+        if s.condition != None:
+            renameExpr(s.condition, renameMap)
+        walkStmtOrExpr(s.post, lambda x: renameExpr(x, renameMap), lambda x: renameStmt(x, renameMap))
+        walkStmtOrExpr(s.body, lambda x: renameExpr(x, renameMap), lambda x: renameStmt(x, renameMap))
+    elif t == "FOR_IN":
+        renameExpr(s.iterable, renameMap)
+        walkStmtOrExpr(s.body, lambda x: renameExpr(x, renameMap), lambda x: renameStmt(x, renameMap))
+    elif t == "RETURN":
+        if s.value != None:
+            renameExpr(s.value, renameMap)
+    elif t == "THROW":
+        renameExpr(s.value, renameMap)
+    elif t == "TRY":
+        walkStmtOrExpr(s.tryBlock, lambda x: renameExpr(x, renameMap), lambda x: renameStmt(x, renameMap))
+        walkStmtOrExpr(s.catchBlock, lambda x: renameExpr(x, renameMap), lambda x: renameStmt(x, renameMap))
+        walkStmtOrExpr(s.finallyBlock, lambda x: renameExpr(x, renameMap), lambda x: renameStmt(x, renameMap))
+    elif t == "EXPR":
+        renameExpr(s.expr, renameMap)
+    elif t == "CLASS":
+        for m in s.methods:
+            renameStmt(m, renameMap)
+
+func collectAssignedExpr(e, found):
+    if e == None or not hasattr(e, "type"):
+        return None
+    t = e.type
+    if t == "ASSIGN":
+        if e.target.type == "IDENT":
+            found[e.target.name] = True
+        collectAssignedExpr(e.target, found)
+        collectAssignedExpr(e.value, found)
+    elif t == "CALL":
+        collectAssignedExpr(e.callee, found)
+        for a in e.args:
+            collectAssignedExpr(a, found)
+    elif t == "BINARY":
+        collectAssignedExpr(e.left, found)
+        collectAssignedExpr(e.right, found)
+    elif t == "UNARY":
+        collectAssignedExpr(e.operand, found)
+    elif t == "MEMBER":
+        collectAssignedExpr(e.target, found)
+    elif t == "INDEX":
+        collectAssignedExpr(e.target, found)
+        collectAssignedExpr(e.index, found)
+    elif t == "SLICE":
+        collectAssignedExpr(e.target, found)
+        if e.start != None:
+            collectAssignedExpr(e.start, found)
+        if e.stop != None:
+            collectAssignedExpr(e.stop, found)
+    elif t == "LIST":
+        for el in e.elements:
+            collectAssignedExpr(el, found)
+    elif t == "MAP":
+        for v in e.values:
+            collectAssignedExpr(v, found)
+    elif t == "TERNARY":
+        collectAssignedExpr(e.condition, found)
+        collectAssignedExpr(e.thenVal, found)
+        collectAssignedExpr(e.elseVal, found)
+    elif t == "LAMBDA":
+        walkStmtOrExpr(e.body, lambda x: collectAssignedExpr(x, found), lambda x: collectAssignedStmt(x, found))
+
+func collectAssignedStmt(s, found):
+    if s == None:
+        return None
+    t = s.type
+    if t == "BLOCK":
+        for st in s.stmts:
+            collectAssignedStmt(st, found)
+    elif t == "VAR":
+        found[s.name] = True
+        collectAssignedExpr(s.value, found)
+    elif t == "FUNC":
+        walkStmtOrExpr(s.body, lambda x: collectAssignedExpr(x, found), lambda x: collectAssignedStmt(x, found))
+    elif t == "IF":
+        collectAssignedExpr(s.condition, found)
+        walkStmtOrExpr(s.thenBranch, lambda x: collectAssignedExpr(x, found), lambda x: collectAssignedStmt(x, found))
+        walkStmtOrExpr(s.elseBranch, lambda x: collectAssignedExpr(x, found), lambda x: collectAssignedStmt(x, found))
+    elif t == "WHILE":
+        collectAssignedExpr(s.condition, found)
+        walkStmtOrExpr(s.body, lambda x: collectAssignedExpr(x, found), lambda x: collectAssignedStmt(x, found))
+    elif t == "FOR":
+        walkStmtOrExpr(s.init, lambda x: collectAssignedExpr(x, found), lambda x: collectAssignedStmt(x, found))
+        if s.condition != None:
+            collectAssignedExpr(s.condition, found)
+        walkStmtOrExpr(s.post, lambda x: collectAssignedExpr(x, found), lambda x: collectAssignedStmt(x, found))
+        walkStmtOrExpr(s.body, lambda x: collectAssignedExpr(x, found), lambda x: collectAssignedStmt(x, found))
+    elif t == "FOR_IN":
+        found[s.variable] = True
+        collectAssignedExpr(s.iterable, found)
+        walkStmtOrExpr(s.body, lambda x: collectAssignedExpr(x, found), lambda x: collectAssignedStmt(x, found))
+    elif t == "RETURN":
+        if s.value != None:
+            collectAssignedExpr(s.value, found)
+    elif t == "THROW":
+        collectAssignedExpr(s.value, found)
+    elif t == "TRY":
+        walkStmtOrExpr(s.tryBlock, lambda x: collectAssignedExpr(x, found), lambda x: collectAssignedStmt(x, found))
+        walkStmtOrExpr(s.catchBlock, lambda x: collectAssignedExpr(x, found), lambda x: collectAssignedStmt(x, found))
+        walkStmtOrExpr(s.finallyBlock, lambda x: collectAssignedExpr(x, found), lambda x: collectAssignedStmt(x, found))
+    elif t == "EXPR":
+        collectAssignedExpr(s.expr, found)
+    elif t == "CLASS":
+        for m in s.methods:
+            collectAssignedStmt(m, found)
+
+func collectSelfFieldExpr(e, found):
+    if e == None or not hasattr(e, "type"):
+        return None
+    t = e.type
+    if t == "ASSIGN":
+        tgt = e.target
+        if tgt.type == "MEMBER" and tgt.target.type == "IDENT" and (tgt.target.name == "self" or tgt.target.name == "this" or tgt.target.name == "ini"):
+            if not (tgt.name in found):
+                found.append(tgt.name)
+        collectSelfFieldExpr(tgt, found)
+        collectSelfFieldExpr(e.value, found)
+    elif t == "CALL":
+        collectSelfFieldExpr(e.callee, found)
+        for a in e.args:
+            collectSelfFieldExpr(a, found)
+    elif t == "BINARY":
+        collectSelfFieldExpr(e.left, found)
+        collectSelfFieldExpr(e.right, found)
+    elif t == "UNARY":
+        collectSelfFieldExpr(e.operand, found)
+    elif t == "MEMBER":
+        collectSelfFieldExpr(e.target, found)
+    elif t == "INDEX":
+        collectSelfFieldExpr(e.target, found)
+        collectSelfFieldExpr(e.index, found)
+    elif t == "SLICE":
+        collectSelfFieldExpr(e.target, found)
+        if e.start != None:
+            collectSelfFieldExpr(e.start, found)
+        if e.stop != None:
+            collectSelfFieldExpr(e.stop, found)
+    elif t == "LIST":
+        for el in e.elements:
+            collectSelfFieldExpr(el, found)
+    elif t == "MAP":
+        for v in e.values:
+            collectSelfFieldExpr(v, found)
+    elif t == "TERNARY":
+        collectSelfFieldExpr(e.condition, found)
+        collectSelfFieldExpr(e.thenVal, found)
+        collectSelfFieldExpr(e.elseVal, found)
+    elif t == "LAMBDA":
+        walkStmtOrExpr(e.body, lambda x: collectSelfFieldExpr(x, found), lambda x: collectSelfFieldStmt(x, found))
+
+func collectSelfFieldStmt(s, found):
+    if s == None:
+        return None
+    t = s.type
+    if t == "BLOCK":
+        for st in s.stmts:
+            collectSelfFieldStmt(st, found)
+    elif t == "VAR":
+        collectSelfFieldExpr(s.value, found)
+    elif t == "FUNC":
+        walkStmtOrExpr(s.body, lambda x: collectSelfFieldExpr(x, found), lambda x: collectSelfFieldStmt(x, found))
+    elif t == "IF":
+        collectSelfFieldExpr(s.condition, found)
+        walkStmtOrExpr(s.thenBranch, lambda x: collectSelfFieldExpr(x, found), lambda x: collectSelfFieldStmt(x, found))
+        walkStmtOrExpr(s.elseBranch, lambda x: collectSelfFieldExpr(x, found), lambda x: collectSelfFieldStmt(x, found))
+    elif t == "WHILE":
+        collectSelfFieldExpr(s.condition, found)
+        walkStmtOrExpr(s.body, lambda x: collectSelfFieldExpr(x, found), lambda x: collectSelfFieldStmt(x, found))
+    elif t == "FOR":
+        walkStmtOrExpr(s.init, lambda x: collectSelfFieldExpr(x, found), lambda x: collectSelfFieldStmt(x, found))
+        if s.condition != None:
+            collectSelfFieldExpr(s.condition, found)
+        walkStmtOrExpr(s.post, lambda x: collectSelfFieldExpr(x, found), lambda x: collectSelfFieldStmt(x, found))
+        walkStmtOrExpr(s.body, lambda x: collectSelfFieldExpr(x, found), lambda x: collectSelfFieldStmt(x, found))
+    elif t == "FOR_IN":
+        collectSelfFieldExpr(s.iterable, found)
+        walkStmtOrExpr(s.body, lambda x: collectSelfFieldExpr(x, found), lambda x: collectSelfFieldStmt(x, found))
+    elif t == "RETURN":
+        if s.value != None:
+            collectSelfFieldExpr(s.value, found)
+    elif t == "THROW":
+        collectSelfFieldExpr(s.value, found)
+    elif t == "TRY":
+        walkStmtOrExpr(s.tryBlock, lambda x: collectSelfFieldExpr(x, found), lambda x: collectSelfFieldStmt(x, found))
+        walkStmtOrExpr(s.catchBlock, lambda x: collectSelfFieldExpr(x, found), lambda x: collectSelfFieldStmt(x, found))
+        walkStmtOrExpr(s.finallyBlock, lambda x: collectSelfFieldExpr(x, found), lambda x: collectSelfFieldStmt(x, found))
+    elif t == "EXPR":
+        collectSelfFieldExpr(s.expr, found)
 
 class Arm64Compiler:
     func __init__(self):
@@ -181,6 +432,9 @@ class Arm64Compiler:
         self.funcs = {}
         self.funcParams = {}
         self.funcDefaults = {}
+        self.usesGoBridge = False
+        self.noRegs = False
+        self.knownGlobals = {}
         self.classes = {}
         self.moduleVars = {}
         self.classAliases = {}
@@ -199,9 +453,6 @@ class Arm64Compiler:
         self.locals = {}
         self.regOf = {}
         self.loops = []
-        self.classFieldOffsets = {}
-        self.classFieldCounts = {}
-        self.usesGoBridge = False
 
     func emit(self, line):
         self.out.append("    " + line)
@@ -271,131 +522,298 @@ class Arm64Compiler:
             resolved = self.resolveImportPath(path)
             if resolved == None:
                 fail("cannot resolve import '" + path + "'")
-            modTree = Parser(Lexer(BacaFile(resolved)).tokenize()).parse()
+            modParser = Parser(Lexer(BacaFile(resolved)).tokenize())
+            modTree = modParser.parse()
+            if modParser.errorCount > 0:
+                fail("syntax errors in imported module '" + path + "'")
             idx = len(self.importOrder)
             self.importIndex[path] = idx
             self.importOrder.append(path)
-            funcNames = []
-            varNames = []
-            classNames = []
-            classStmts = []
-            initStmts = []
-            prefix = "m" + str(idx) + "_"
-            collectModuleExports(modTree, funcNames, varNames, classNames, classStmts, initStmts)
+            prefix = "mod" + str(idx) + "_"
+
+            localFuncs = []
+            localVars = []
+            localClasses = []
+            otherStmts = []
+            funcStmtsLocal = []
+            classStmtsLocal = []
+            for ms in modTree:
+                if ms.type == "FUNC":
+                    localFuncs.append(ms.name)
+                    funcStmtsLocal.append(ms)
+                elif ms.type == "CLASS":
+                    localClasses.append(ms.name)
+                    classStmtsLocal.append(ms)
+                elif ms.type == "VAR":
+                    localVars.append(ms.name)
+                    otherStmts.append(ms)
+                elif ms.type == "EXPR" and ms.expr.type == "ASSIGN" and ms.expr.target.type == "IDENT" and ms.expr.op == "=":
+                    localVars.append(ms.expr.target.name)
+                    otherStmts.append(ms)
+                else:
+                    otherStmts.append(ms)
+
+            renameMap = {}
+            for n in localFuncs:
+                renameMap[n] = prefix + n
+            for n in localVars:
+                renameMap[n] = prefix + n
+            for n in localClasses:
+                renameMap[n] = prefix + n
+
+            for fs in funcStmtsLocal:
+                renameStmt(fs, renameMap)
+            for cs in classStmtsLocal:
+                cs.name = prefix + cs.name
+                if cs.baseClass != None and (cs.baseClass in renameMap):
+                    cs.baseClass = renameMap[cs.baseClass]
+                for m in cs.methods:
+                    renameStmt(m, renameMap)
+            for os in otherStmts:
+                renameStmt(os, renameMap)
+
+            nested = []
+            for fs in funcStmtsLocal:
+                scanStmt(fs, nested)
+            for cs in classStmtsLocal:
+                scanStmt(cs, nested)
+            for os in otherStmts:
+                scanStmt(os, nested)
+            for p in nested:
+                if not (p in self.importIndex) and not (p in queue):
+                    queue.append(p)
+
             self.importInfo[path] = {
-                "prefix": prefix,
-                "tree": modTree,
-                "funcNames": funcNames,
-                "varNames": varNames,
-                "classNames": classNames,
-                "classStmts": classStmts,
-                "initStmts": initStmts
+                "funcStmts": funcStmtsLocal,
+                "classStmts": classStmtsLocal,
+                "initStmts": otherStmts,
+                "funcNames": localFuncs,
+                "classNames": localClasses,
+                "varNames": localVars,
+                "prefix": prefix
             }
-            for s in modTree:
-                scanStmt(s, queue)
+
+    func varOff(self, name):
+        if name in self.params:
+            return 16 + 16 * (self.paramCount - 1 - self.params[name])
+        return 0 - 8 * (len(REGS) + self.locals[name] + 1)
+
+    func stackAccess(self, op, reg, off):
+        if off >= -256 and off <= 32760:
+            self.emit(op + " " + reg + ", [x29, " + str(off) + "]")
+        else:
+            self.emit("ldr x16, =" + str(0 - off))
+            self.emit("sub x16, x29, x16")
+            self.emit(op + " " + reg + ", [x16]")
+
+    func varLoad(self, name, reg):
+        if self.inFn:
+            if name in self.regOf:
+                self.emit("mov " + reg + ", " + self.regOf[name])
+                return None
+            if name in self.params or name in self.locals:
+                self.stackAccess("ldr", reg, self.varOff(name))
+                return None
+        self.globalNames[name] = True
+        self.emit("ldr x16, =gv" + name)
+        self.emit("ldr " + reg + ", [x16]")
+
+    func varStore(self, name, reg):
+        if self.inFn:
+            if name in self.regOf:
+                self.emit("mov " + self.regOf[name] + ", " + reg)
+                return None
+            if name in self.params:
+                self.stackAccess("str", reg, self.varOff(name))
+                return None
+            if name in self.locals:
+                self.stackAccess("str", reg, self.varOff(name))
+                return None
+            if not (name in self.globalNames):
+                if len(self.regOf) < len(REGS) and not self.noRegs:
+                    self.regOf[name] = REGS[len(self.regOf)]
+                    self.emit("mov " + self.regOf[name] + ", " + reg)
+                    return None
+                self.locals[name] = len(self.locals)
+                self.stackAccess("str", reg, self.varOff(name))
+                return None
+        self.globalNames[name] = True
+        self.emit("ldr x16, =gv" + name)
+        self.emit("str " + reg + ", [x16]")
+
+    func newTemp(self):
+        self.tempCount += 1
+        return "tmp" + str(self.tempCount)
+
+    func constTo(self, reg, value):
+        if value >= -65535 and value <= 65535:
+            self.emit("mov " + reg + ", " + str(value))
+        else:
+            self.emit("ldr " + reg + ", =" + str(value))
+
+    func smallInt(self, e):
+        if e.type != "NUMBER" or e.isFloat:
+            return False
+        v = e.value
+        return v == int(v) and int(v) < 1000000000 and int(v) > -1000000000
+
+    func tagged(self, e):
+        return 2 * int(e.value) + 1
+
+    func isSimple(self, e):
+        if e.type == "IDENT":
+            if e.name in self.funcs or e.name in self.classes or e.name == "sys":
+                return False
+            return True
+        return self.smallInt(e)
+
+    func loadSimple(self, e, reg):
+        if e.type == "IDENT":
+            self.varLoad(e.name, reg)
+        else:
+            self.constTo(reg, self.tagged(e))
+
+    func push(self, reg):
+        self.emit("str " + reg + ", [sp, -16]!")
+
+    func pop(self, reg):
+        self.emit("ldr " + reg + ", [sp], 16")
 
     func genModuleObject(self, idx, funcNames, varNames, classNames, prefix):
         self.emit("bl rtMapNew")
-        self.emit("str x0, [sp, -16]!")
+        self.push("x0")
         for name in funcNames:
+            self.emit("ldr x0, [sp]")
             self.emit("ldr x1, =" + self.internString(name))
             self.emit("ldr x2, =fn" + prefix + name)
             self.emit("lsl x2, x2, 1")
             self.emit("add x2, x2, 1")
-            self.emit("ldr x0, [sp]")
             self.emit("bl rtMapSet")
         for name in classNames:
-            self.emit("ldr x1, =" + self.internString(name))
-            self.emit("ldr x2, =class" + prefix + name)
-            self.emit("ldr x2, [x2]")
+            self.varLoad("class" + prefix + name, "x2")
             self.emit("ldr x0, [sp]")
+            self.emit("ldr x1, =" + self.internString(name))
             self.emit("bl rtMapSet")
         for name in varNames:
-            self.emit("ldr x1, =" + self.internString(name))
-            self.emit("ldr x2, =gv" + prefix + name)
-            self.emit("ldr x2, [x2]")
+            self.varLoad(prefix + name, "x2")
             self.emit("ldr x0, [sp]")
+            self.emit("ldr x1, =" + self.internString(name))
             self.emit("bl rtMapSet")
-        self.emit("ldr x0, [sp], 16")
-        self.emit("ldr x1, =modobj" + str(idx))
-        self.emit("str x0, [x1]")
+        self.pop("x0")
+        self.varStore("modobj" + str(idx), "x0")
 
     func compile(self, tree, sourceDir = None):
         self.sourceDir = sourceDir
         self.processImports(tree)
         for s in tree:
-            if s.type == "FUNC":
-                self.funcs[s.name] = s
-                self.funcParams[s.name] = s.params
-                self.funcDefaults[s.name] = s.defaults if hasattr(s, "defaults") and s.defaults != None else {}
-            elif s.type == "CLASS":
-                self.classes[s.name] = s
+            if s.type == "EXPR" and s.expr.type == "ASSIGN" and s.expr.target.type == "IDENT":
+                if s.expr.value.type == "CALL" and s.expr.value.callee.type == "IDENT" and s.expr.value.callee.name == "impor" and len(s.expr.value.args) == 1 and s.expr.value.args[0].type == "STRING":
+                    self.moduleVars[s.expr.target.name] = s.expr.value.args[0].value
+                elif s.expr.value.type == "MEMBER" and s.expr.value.target.type == "IDENT" and (s.expr.value.target.name in self.moduleVars):
+                    mpath = self.moduleVars[s.expr.value.target.name]
+                    if mpath in self.importInfo:
+                        pfx = self.importInfo[mpath]["prefix"]
+                        if s.expr.value.name in self.importInfo[mpath]["classNames"]:
+                            self.classAliases[s.expr.target.name] = pfx + s.expr.value.name
             elif s.type == "VAR":
-                self.globalNames[s.name] = True
-                if s.value != None and s.value.type == "CALL" and s.value.callee.type == "IDENT" and s.value.callee.name == "impor":
-                    if len(s.value.args) == 1 and s.value.args[0].type == "STRING":
-                        self.moduleVars[s.name] = s.value.args[0].value
+                if s.value != None and s.value.type == "CALL" and s.value.callee.type == "IDENT" and s.value.callee.name == "impor" and len(s.value.args) == 1 and s.value.args[0].type == "STRING":
+                    self.moduleVars[s.name] = s.value.args[0].value
+                elif s.value != None and s.value.type == "MEMBER" and s.value.target.type == "IDENT" and (s.value.target.name in self.moduleVars):
+                    mpath = self.moduleVars[s.value.target.name]
+                    if mpath in self.importInfo:
+                        pfx = self.importInfo[mpath]["prefix"]
+                        if s.value.name in self.importInfo[mpath]["classNames"]:
+                            self.classAliases[s.name] = pfx + s.value.name
 
+        self.knownGlobals = {}
+        for s in tree:
+            collectAssignedStmt(s, self.knownGlobals)
         for path in self.importOrder:
             info = self.importInfo[path]
-            pfx = info["prefix"]
-            for s in info["tree"]:
-                if s.type == "FUNC":
-                    prefixed = pfx + s.name
-                    self.funcs[prefixed] = s
-                    self.funcParams[prefixed] = s.params
-                    self.funcDefaults[prefixed] = s.defaults if hasattr(s, "defaults") and s.defaults != None else {}
-                elif s.type == "CLASS":
-                    self.classes[pfx + s.name] = s
-                elif s.type == "VAR":
-                    self.globalNames[pfx + s.name] = True
-
-        funcText = []
-        for path in self.importOrder:
-            info = self.importInfo[path]
-            pfx = info["prefix"]
-            for s in info["tree"]:
-                if s.type == "FUNC":
-                    funcText.append(self.genFunc(s, fnLabel(pfx + s.name), s.name))
-                elif s.type == "CLASS":
-                    for m in s.methods:
-                        funcText.append(self.genFunc(m, methodLabel(pfx + s.name, m.name), m.name))
+            for s in info["initStmts"]:
+                collectAssignedStmt(s, self.knownGlobals)
+            for f in info["funcStmts"]:
+                collectAssignedStmt(f, self.knownGlobals)
 
         mainStmts = []
+        funcStmts = []
+        classStmts = []
+        for path in self.importOrder:
+            info = self.importInfo[path]
+            for f in info["funcStmts"]:
+                self.funcs[f.name] = len(f.params)
+                self.funcParams[f.name] = f.params
+                self.funcDefaults[f.name] = f.defaults
+                funcStmts.append(f)
+            for c in info["classStmts"]:
+                self.registerClass(c)
+                classStmts.append(c)
+        preludeParser = Parser(Lexer(preludeModule.PRELUDE).tokenize())
+        for pf in preludeParser.parse():
+            if pf.type == "FUNC":
+                self.funcs[pf.name] = len(pf.params)
+                self.funcParams[pf.name] = pf.params
+                self.funcDefaults[pf.name] = pf.defaults
+                funcStmts.append(pf)
         for s in tree:
             if s.type == "FUNC":
-                funcText.append(self.genFunc(s, fnLabel(s.name), s.name))
+                self.funcs[s.name] = len(s.params)
+                self.funcParams[s.name] = s.params
+                self.funcDefaults[s.name] = s.defaults
+                funcStmts.append(s)
             elif s.type == "CLASS":
-                for m in s.methods:
-                    funcText.append(self.genFunc(m, methodLabel(s.name, m.name), m.name))
+                self.registerClass(s)
+                classStmts.append(s)
+                mainStmts.append(s)
             else:
                 mainStmts.append(s)
 
+        classStmtsByName = {}
+        for c in classStmts:
+            classStmtsByName[c.name] = c
+        for c in classStmts:
+            self.resolveClassFields(c.name, classStmtsByName)
+
+        funcText = []
+        for f in funcStmts:
+            funcText.append(self.genFunc(f, fnLabel(f.name), f.name))
+        for c in classStmts:
+            for m in c.methods:
+                self.currentSelfClass = c.name
+                hasSelfParam = "self" in m.params or "this" in m.params or "ini" in m.params
+                mForGen = m
+                if not hasSelfParam:
+                    renameStmt(m.body, {"this": "self", "ini": "self"})
+                    mForGen = FuncStmt(m.name, ["self"] + m.params, m.body, m.defaults)
+                funcText.append(self.genFunc(mForGen, methodLabel(c.name, m.name), m.name))
+                self.currentSelfClass = None
+
         self.out = []
+        self.cold = []
+        self.inFn = False
+        self.regOf = {}
         self.emit("ldr x0, [sp]")
         self.emit("ldr x1, =gArgc")
         self.emit("str x0, [x1]")
         self.emit("add x0, sp, 8")
         self.emit("ldr x1, =gArgv")
         self.emit("str x0, [x1]")
+        self.emit("ldr x2, [sp]")
+        self.emit("add x3, sp, 16")
+        self.emit("add x3, x3, x2, lsl 3")
+        self.emit("ldr x1, =gEnvp")
+        self.emit("str x3, [x1]")
         self.emit("bl rtInit")
         self.emit("bl rtSysInit")
-
         for path in self.importOrder:
             info = self.importInfo[path]
             for cs in info["classStmts"]:
-                self.genClass(cs, info["prefix"])
+                self.genClass(cs)
             for s in info["initStmts"]:
                 self.genStmt(s)
             self.genModuleObject(self.importIndex[path], info["funcNames"], info["varNames"], info["classNames"], info["prefix"])
-
-        for cs in tree:
-            if cs.type == "CLASS":
-                self.genClass(cs, "")
-
         for s in mainStmts:
             self.genStmt(s)
-
         self.emit("mov x0, 0")
         self.emit("mov x8, 94")
         self.emit("svc #0")
@@ -410,6 +828,7 @@ class Arm64Compiler:
             lines.append(ft)
         lines.append("_start:")
         lines.append(mainText)
+        lines.append("    .ltorg")
         lines.append(".data")
         lines.append(runtimeModule.DATA)
         for d in self.dataLines:
@@ -421,13 +840,22 @@ class Arm64Compiler:
         lines.append("gEnvp: .zero 8")
         lines.append("gvsys: .zero 8")
         lines.append("gvsys_argv: .zero 8")
-        for i in range(len(self.importOrder)):
-            lines.append("modobj" + str(i) + ": .zero 8")
         for g in self.globalNames:
             lines.append("gv" + g + ": .zero 8")
-        for c in self.classes:
-            lines.append("class" + c + ": .zero 8")
         return "\n".join(lines) + "\n"
+
+    func registerClass(self, c):
+        methods = {}
+        methodParams = {}
+        methodDefaults = {}
+        for m in c.methods:
+            nonSelfParams = m.params
+            if len(nonSelfParams) > 0 and (nonSelfParams[0] == "self" or nonSelfParams[0] == "this" or nonSelfParams[0] == "ini"):
+                nonSelfParams = nonSelfParams[1:]
+            methods[m.name] = len(m.params)
+            methodParams[m.name] = nonSelfParams
+            methodDefaults[m.name] = m.defaults
+        self.classes[c.name] = {"base": c.baseClass, "methods": methods, "methodParams": methodParams, "methodDefaults": methodDefaults}
 
     func genFunc(self, f, label, plainName):
         self.inFn = True
@@ -438,142 +866,103 @@ class Arm64Compiler:
         self.regOf = {}
         self.loops = []
         self.cold = []
+        self.noRegs = hasTry(f.body)
         loads = []
         i = 0
         for p in f.params:
-            if len(self.regOf) < len(REGS):
+            off = 16 + 16 * (self.paramCount - 1 - i)
+            if len(self.regOf) < len(REGS) and not self.noRegs:
                 reg = REGS[len(self.regOf)]
                 self.regOf[p] = reg
+                loads.append("    ldr " + reg + ", [x29, " + str(off) + "]")
             else:
                 self.params[p] = i
             i += 1
-
         self.out = []
         body = f.body
-        self.genBlock(body)
+        stmts = body.stmts if body.type == "BLOCK" else [body]
+        for s in stmts:
+            self.genStmt(s)
         self.emit("mov x0, 0")
         bodyLines = self.out
-
-        frame = 16 + 8 * (len(REGS) + len(self.locals))
+        frame = 8 * (len(REGS) + len(self.locals))
         if frame % 16 != 0:
-            frame += 8
-
-        head = [label + ":", "    stp x29, lr, [sp, -" + str(frame) + "]!", "    mov x29, sp"]
+            frame = frame + 8
+        head = [label + ":", "    stp x29, lr, [sp, -16]!", "    mov x29, sp"]
+        if frame <= 4095:
+            head.append("    sub sp, sp, " + str(frame))
+        else:
+            head.append("    ldr x16, =" + str(frame))
+            head.append("    sub sp, sp, x16")
         tail = ["epi" + label + ":"]
-
         k = 0
         while k < len(REGS):
-            head.append("    str " + REGS[k] + ", [x29, " + str(16 + 8 * k) + "]")
-            tail.append("    ldr " + REGS[k] + ", [x29, " + str(16 + 8 * k) + "]")
+            head.append("    stur " + REGS[k] + ", [x29, " + str(0 - 8 * (k + 1)) + "]")
+            tail.append("    ldur " + REGS[k] + ", [x29, " + str(0 - 8 * (k + 1)) + "]")
             k += 1
-
-        pIdx = 0
-        for p in f.params:
-            off = str(frame + 16 * (self.paramCount - 1 - pIdx))
-            if p in self.regOf:
-                loads.append("    ldr " + self.regOf[p] + ", [x29, " + off + "]")
-            pIdx += 1
-
-        tail.append("    ldp x29, lr, [sp], " + str(frame))
+        tail.append("    mov sp, x29")
+        tail.append("    ldp x29, lr, [sp], 16")
         tail.append("    ret")
         self.inFn = False
-        return "\n".join(head + loads + bodyLines + tail + self.cold)
-
-    func loadVar(self, name):
-        if self.inFn:
-            if name in self.regOf:
-                self.emit("mov x0, " + self.regOf[name])
-                return None
-            if name in self.params:
-                frame = 16 + 8 * (len(REGS) + len(self.locals))
-                if frame % 16 != 0:
-                    frame += 8
-                off = str(frame + 16 * (self.paramCount - 1 - self.params[name]))
-                self.emit("ldr x0, [x29, " + off + "]")
-                return None
-            if name in self.locals:
-                off = str(16 + 8 * (len(REGS) + self.locals[name]))
-                self.emit("ldr x0, [x29, " + off + "]")
-                return None
-        if name in self.funcs:
-            self.emit("ldr x0, =" + fnLabel(name))
-            self.emit("lsl x0, x0, 1")
-            self.emit("add x0, x0, 1")
-        elif name in self.classes:
-            self.emit("ldr x1, =class" + name)
-            self.emit("ldr x0, [x1]")
-        elif name == "sys":
-            self.emit("ldr x1, =gvsys")
-            self.emit("ldr x0, [x1]")
-        else:
-            if not (name in self.globalNames):
-                self.globalNames[name] = True
-            self.emit("ldr x1, =gv" + name)
-            self.emit("ldr x0, [x1]")
-
-    func storeVar(self, name):
-        if self.inFn:
-            if name in self.regOf:
-                self.emit("mov " + self.regOf[name] + ", x0")
-                return None
-            if name in self.params:
-                frame = 16 + 8 * (len(REGS) + len(self.locals))
-                if frame % 16 != 0:
-                    frame += 8
-                off = str(frame + 16 * (self.paramCount - 1 - self.params[name]))
-                self.emit("str x0, [x29, " + off + "]")
-                return None
-            if name in self.locals:
-                off = str(16 + 8 * (len(REGS) + self.locals[name]))
-                self.emit("str x0, [x29, " + off + "]")
-                return None
-            if not (name in self.globalNames):
-                if len(self.regOf) < len(REGS):
-                    reg = REGS[len(self.regOf)]
-                    self.regOf[name] = reg
-                    self.emit("mov " + reg + ", x0")
-                    return None
-                self.locals[name] = len(self.locals)
-                off = str(16 + 8 * (len(REGS) + self.locals[name]))
-                self.emit("str x0, [x29, " + off + "]")
-                return None
-        if not (name in self.globalNames):
-            self.globalNames[name] = True
-        self.emit("ldr x1, =gv" + name)
-        self.emit("str x0, [x1]")
+        return "\n".join(head + loads + bodyLines + tail + self.cold + ["    .ltorg"])
 
     func genBlock(self, node):
         if node == None:
             return None
-        if hasattr(node, "stmts"):
+        if node.type == "BLOCK":
             for s in node.stmts:
                 self.genStmt(s)
-        elif hasattr(node, "type") and (node.type in BLOCKLIKE):
-            self.genStmt(node)
         else:
-            self.genExpr(node)
+            self.genStmt(node)
+
+    func genTruthy(self, falseLabel):
+        okLabel = self.newLabel()
+        self.emit("cmp x0, 2")
+        self.emit("b.ls " + falseLabel)
+        self.emit("tbnz x0, 0, " + okLabel)
+        self.emit("cmp x0, 4")
+        self.emit("b.eq " + okLabel)
+        self.emit("bl rtTruthy")
+        self.emit("cbz x0, " + falseLabel)
+        self.label(okLabel)
+
+    func genCond(self, e, falseLabel):
+        if e.type == "BINARY" and (e.op in JUMPS):
+            if self.isSimple(e.left) and self.isSimple(e.right):
+                self.loadSimple(e.left, "x0")
+                self.loadSimple(e.right, "x1")
+            else:
+                self.genExpr(e.left)
+                self.push("x0")
+                self.genExpr(e.right)
+                self.emit("mov x1, x0")
+                self.pop("x0")
+            cold = self.newLabel()
+            back = self.newLabel()
+            self.emit("and x2, x0, x1")
+            self.emit("tbz x2, 0, " + cold)
+            self.emit("cmp x0, x1")
+            self.emit(JUMPS[e.op] + " " + falseLabel)
+            self.label(back)
+            self.cold.append(cold + ":")
+            self.cold.append("    bl rtCmp")
+            self.cold.append("    cmp x0, 0")
+            self.cold.append("    " + JUMPS[e.op] + " " + falseLabel)
+            self.cold.append("    b " + back)
+        elif e.type == "BINARY" and (e.op == "and" or e.op == "&&"):
+            self.genCond(e.left, falseLabel)
+            self.genCond(e.right, falseLabel)
+        else:
+            self.genExpr(e)
+            self.genTruthy(falseLabel)
 
     func genStmt(self, s):
-        if s == None:
-            return None
         t = s.type
-        if t == "VAR":
-            if s.value != None:
-                self.genExpr(s.value)
-            else:
-                self.emit("mov x0, 0")
-            self.storeVar(s.name)
-        elif t == "ASSIGN":
-            self.genAssign(s)
-        elif t == "EXPR":
+        if t == "EXPR":
             self.genExpr(s.expr)
-        elif t == "RETURN":
-            if s.value != None:
-                self.genExpr(s.value)
-            else:
-                self.emit("mov x0, 0")
-            if self.inFn:
-                self.emit("b epi" + self.fnName)
+        elif t == "VAR":
+            self.genExpr(s.value)
+            self.varStore(s.name, "x0")
         elif t == "IF":
             elseLabel = self.newLabel()
             endLabel = self.newLabel()
@@ -586,43 +975,34 @@ class Arm64Compiler:
                 self.genBlock(s.elseBranch)
                 self.label(endLabel)
         elif t == "WHILE":
-            startLabel = self.newLabel()
-            endLabel = self.newLabel()
-            self.loops.append({"start": startLabel, "end": endLabel})
-            self.label(startLabel)
-            self.genCond(s.condition, endLabel)
+            top = self.newLabel()
+            end = self.newLabel()
+            self.loops.append([top, end])
+            self.label(top)
+            self.genCond(s.condition, end)
             self.genBlock(s.body)
-            self.emit("b " + startLabel)
-            self.label(endLabel)
+            self.emit("b " + top)
+            self.label(end)
             self.loops.pop()
         elif t == "FOR":
             if s.init != None:
                 self.genStmt(s.init)
-            startLabel = self.newLabel()
-            stepLabel = self.newLabel()
-            endLabel = self.newLabel()
-            self.loops.append({"start": stepLabel, "end": endLabel})
-            self.label(startLabel)
+            top = self.newLabel()
+            cont = self.newLabel()
+            end = self.newLabel()
+            self.loops.append([cont, end])
+            self.label(top)
             if s.condition != None:
-                self.genCond(s.condition, endLabel)
+                self.genCond(s.condition, end)
             self.genBlock(s.body)
-            self.label(stepLabel)
+            self.label(cont)
             if s.post != None:
-                self.genStmt(s.post)
-            self.emit("b " + startLabel)
-            self.label(endLabel)
+                self.genExpr(s.post)
+            self.emit("b " + top)
+            self.label(end)
             self.loops.pop()
         elif t == "FOR_IN":
             self.genForIn(s)
-        elif t == "BREAK":
-            if len(self.loops) > 0:
-                self.emit("b " + self.loops[-1]["end"])
-        elif t == "CONTINUE":
-            if len(self.loops) > 0:
-                self.emit("b " + self.loops[-1]["start"])
-        elif t == "THROW":
-            self.genExpr(s.value)
-            self.emit("b rtFail")
         elif t == "TRY":
             catchLabel = self.newLabel()
             endLabel = self.newLabel()
@@ -642,326 +1022,253 @@ class Arm64Compiler:
             self.emit("ldr x2, [sp]")
             self.emit("str x2, [x1]")
             self.emit("add sp, sp, 32")
+            if s.finallyBlock != None:
+                self.genBlock(s.finallyBlock)
             self.emit("b " + endLabel)
             self.label(catchLabel)
-            if hasattr(s, "catchVar") and s.catchVar != None:
-                self.storeVar(s.catchVar)
-            self.genBlock(s.catchBlock)
+            if s.catchVar != None and s.catchVar != "":
+                self.varStore(s.catchVar, "x0")
+            if s.catchBlock != None:
+                self.genBlock(s.catchBlock)
+            if s.finallyBlock != None:
+                self.genBlock(s.finallyBlock)
             self.label(endLabel)
+        elif t == "THROW":
+            self.genExpr(s.value)
+            self.emit("b rtThrow")
+        elif t == "RETURN":
+            if s.value == None:
+                self.emit("mov x0, 0")
+            else:
+                self.genExpr(s.value)
+            if not self.inFn:
+                fail("return outside function")
+            self.emit("b epi" + self.fnName)
+        elif t == "BREAK":
+            self.emit("b " + self.loops[-1][1])
+        elif t == "CONTINUE":
+            self.emit("b " + self.loops[-1][0])
+        elif t == "BLOCK":
+            self.genBlock(s)
+        elif t == "CLASS":
+            self.genClass(s)
+        elif t == "FUNC":
+            return None
+        elif t == "PASS":
+            return None
+        else:
+            fail("unsupported statement " + t)
 
     func genForIn(self, s):
-        self.genExpr(s.iterable)
-        self.emit("str x0, [sp, -16]!")
-        idxReg = "x24"
-        self.emit("str " + idxReg + ", [sp, -16]!")
-        self.emit("mov " + idxReg + ", 0")
-        loopStart = self.newLabel()
-        loopEnd = self.newLabel()
-        self.loops.append({"start": loopStart, "end": loopEnd})
-        self.label(loopStart)
-        self.emit("ldr x0, [sp, 16]")
-        self.emit("ldr x1, [x0, 8]")
-        self.emit("cmp " + idxReg + ", x1")
-        self.emit("b.ge " + loopEnd)
-        self.emit("ldr x0, [sp, 16]")
-        self.emit("mov x1, " + idxReg)
-        self.emit("lsl x1, x1, 1")
-        self.emit("add x1, x1, 1")
-        self.emit("bl rtIndex")
-        self.storeVar(s.variable)
-        self.genBlock(s.body)
-        self.emit("add " + idxReg + ", " + idxReg + ", 1")
-        self.emit("b " + loopStart)
-        self.label(loopEnd)
-        self.loops.pop()
-        self.emit("ldr " + idxReg + ", [sp], 16")
-        self.emit("add sp, sp, 16")
+        isRange = False
+        rangeArgs = []
+        if s.iterable.type == "CALL":
+            callee = s.iterable.callee
+            calleeName = callee.name if hasattr(callee, "name") else (callee.nama if hasattr(callee, "nama") else "")
+            if calleeName == "range" or calleeName == "rentang":
+                rangeArgs = s.iterable.arguments if hasattr(s.iterable, "arguments") else (s.iterable.args if hasattr(s.iterable, "args") else [])
+                if len(rangeArgs) == 1 or len(rangeArgs) == 2:
+                    isRange = True
 
-    func genAssign(self, s):
-        target = s.target
-        op = s.op
-        if target.type == "IDENT":
-            if op == "=":
-                self.genExpr(s.value)
+        top = self.newLabel()
+        cont = self.newLabel()
+        end = self.newLabel()
+        curName = self.newTemp()
+        stopName = self.newTemp()
+        if isRange:
+            if len(rangeArgs) == 1:
+                self.emit("mov x0, 1")
+                self.varStore(curName, "x0")
+                self.genExpr(rangeArgs[0])
+                self.varStore(stopName, "x0")
             else:
-                self.loadVar(target.name)
-                self.emit("str x0, [sp, -16]!")
-                self.genExpr(s.value)
-                self.emit("mov x1, x0")
-                self.emit("ldr x0, [sp], 16")
-                baseOp = op[:len(op) - 1]
-                if baseOp in ARITH:
-                    self.emit("bl " + ARITH[baseOp])
-                elif baseOp in BITWISE:
-                    self.emit("bl " + BITWISE[baseOp])
-            self.storeVar(target.name)
-        elif target.type == "INDEX":
-            self.genExpr(target.target)
-            self.emit("str x0, [sp, -16]!")
-            self.genExpr(target.index)
-            self.emit("str x0, [sp, -16]!")
-            self.genExpr(s.value)
-            self.emit("mov x2, x0")
-            self.emit("ldr x1, [sp], 16")
-            self.emit("ldr x0, [sp], 16")
-            self.emit("bl rtSetIndex")
-        elif target.type == "MEMBER":
-            self.genExpr(target.target)
-            self.emit("str x0, [sp, -16]!")
-            self.genExpr(s.value)
-            self.emit("mov x2, x0")
-            self.emit("ldr x0, [sp], 16")
-            self.emit("ldr x1, =" + self.internString(target.name))
-            self.emit("bl rtFieldSet")
-
-    func genClass(self, c, prefix):
-        clsName = prefix + c.name
-        self.emit("ldr x0, =" + self.internString(clsName))
-        self.emit("bl rtNewClass")
-        self.emit("ldr x1, =class" + clsName)
-        self.emit("str x0, [x1]")
-
-    func genCond(self, e, falseLabel):
-        if e == None:
+                self.genExpr(rangeArgs[0])
+                self.varStore(curName, "x0")
+                self.genExpr(rangeArgs[1])
+                self.varStore(stopName, "x0")
+            self.loops.append([cont, end])
+            self.label(top)
+            self.varLoad(curName, "x0")
+            self.varLoad(stopName, "x1")
+            self.emit("cmp x0, x1")
+            self.emit("b.ge " + end)
+            self.varStore(s.variable, "x0")
+            self.genBlock(s.body)
+            self.label(cont)
+            self.varLoad(curName, "x0")
+            self.emit("add x0, x0, 2")
+            self.varStore(curName, "x0")
+            self.emit("b " + top)
+            self.label(end)
+            self.loops.pop()
             return None
-        if hasattr(e, "type") and e.type == "BINARY" and hasattr(e, "op") and (e.op in JUMPS):
+
+        self.genExpr(s.iterable)
+        self.emit("bl rtIter")
+        self.varStore(stopName, "x0")
+        self.emit("mov x0, 1")
+        self.varStore(curName, "x0")
+        self.loops.append([cont, end])
+        self.label(top)
+        self.varLoad(stopName, "x2")
+        self.emit("ldr x0, [x2, 8]")
+        self.emit("lsl x0, x0, 1")
+        self.emit("add x0, x0, 1")
+        self.varLoad(curName, "x1")
+        self.emit("cmp x1, x0")
+        self.emit("b.ge " + end)
+        self.emit("ldr x0, [x2, 24]")
+        self.emit("asr x1, x1, 1")
+        self.emit("ldr x0, [x0, x1, lsl 3]")
+        self.varStore(s.variable, "x0")
+        self.genBlock(s.body)
+        self.label(cont)
+        self.varLoad(curName, "x0")
+        self.emit("add x0, x0, 2")
+        self.varStore(curName, "x0")
+        self.emit("b " + top)
+        self.label(end)
+        self.loops.pop()
+
+    func resolveClassFields(self, name, classStmtsByName):
+        info = self.classes[name]
+        if "fields" in info:
+            return None
+        fields = []
+        fieldOffset = {}
+        if info["base"] != None:
+            self.resolveClassFields(info["base"], classStmtsByName)
+            baseInfo = self.classes[info["base"]]
+            for f in baseInfo["fields"]:
+                fields.append(f)
+                fieldOffset[f] = baseInfo["fieldOffset"][f]
+        ownFound = []
+        for m in classStmtsByName[name].methods:
+            collectSelfFieldStmt(m.body, ownFound)
+        for f in ownFound:
+            if not (f in fieldOffset):
+                fieldOffset[f] = 16 + 8 * len(fields)
+                fields.append(f)
+        info["fields"] = fields
+        info["fieldOffset"] = fieldOffset
+
+    func selfFieldOffset(self, target, fieldName):
+        if self.currentSelfClass == None:
+            return None
+        if target.type != "IDENT":
+            return None
+        if target.name != "self" and target.name != "this" and target.name != "ini":
+            return None
+        offsets = self.classes[self.currentSelfClass]["fieldOffset"]
+        if fieldName in offsets:
+            return offsets[fieldName]
+        return None
+
+    func genInstantiateClass(self, name, args):
+        instSize = 16 + 8 * len(self.classes[name]["fields"])
+        initLabel = self.resolveInit(name)
+        sig = self.resolveInitSignature(name) if initLabel != None else [[], {}]
+        self.varLoad("class" + name, "x0")
+        self.constTo("x1", instSize)
+        self.emit("bl rtNewInst")
+        self.push("x0")
+        if initLabel != None:
+            self.pushArgsWithDefaults(name, sig[0], sig[1], args)
+            self.emit("bl " + initLabel)
+            self.emit("ldr x0, [sp, " + str(16 * len(sig[0])) + "]")
+            self.emit("add sp, sp, " + str(16 * (len(sig[0]) + 1)))
+        else:
+            self.pop("x0")
+
+    func genClass(self, c):
+        clsName = "class" + c.name
+        if c.baseClass == None:
+            self.emit("mov x0, 0")
+        else:
+            self.varLoad("class" + c.baseClass, "x0")
+        self.emit("bl rtNewClass")
+        self.varStore(clsName, "x0")
+        for m in c.methods:
+            self.varLoad(clsName, "x0")
+            self.emit("ldr x0, [x0, 8]")
+            self.emit("ldr x1, =" + self.internString(m.name))
+            self.emit("ldr x2, =" + methodLabel(c.name, m.name))
+            self.emit("lsl x2, x2, 1")
+            self.emit("add x2, x2, 1")
+            self.emit("bl rtMapSet")
+        for fname in self.classes[c.name]["fields"]:
+            off = self.classes[c.name]["fieldOffset"][fname]
+            self.varLoad(clsName, "x0")
+            self.emit("ldr x0, [x0, 16]")
+            self.emit("ldr x1, =" + self.internString(fname))
+            self.constTo("x2", 2 * off + 1)
+            self.emit("bl rtMapSet")
+
+    func genOperands(self, e):
+        if self.isSimple(e.left) and self.isSimple(e.right):
+            self.loadSimple(e.left, "x0")
+            self.loadSimple(e.right, "x1")
+        else:
             self.genExpr(e.left)
-            self.emit("str x0, [sp, -16]!")
+            self.push("x0")
             self.genExpr(e.right)
             self.emit("mov x1, x0")
-            self.emit("ldr x0, [sp], 16")
-            self.emit("cmp x0, x1")
-            self.emit(JUMPS[e.op] + " " + falseLabel)
-        elif hasattr(e, "type") and e.type == "BINARY" and (e.op == "and" or e.op == "&&"):
-            self.genCond(e.left, falseLabel)
-            self.genCond(e.right, falseLabel)
-        elif hasattr(e, "type") and e.type == "BINARY" and (e.op == "or" or e.op == "||"):
-            okLabel = self.newLabel()
-            self.genTruthy(e.left, okLabel, None)
-            self.genCond(e.right, falseLabel)
-            self.label(okLabel)
-        elif hasattr(e, "type") and e.type == "UNARY" and (e.op == "not" or e.op == "!"):
-            okLabel = self.newLabel()
-            self.genTruthy(e.operand, falseLabel, okLabel)
-        else:
-            self.genExpr(e)
-            self.emit("bl rtTruthy")
-            self.emit("cbz x0, " + falseLabel)
+            self.pop("x0")
 
-    func genTruthy(self, e, okLabel, falseLabel):
-        self.genExpr(e)
-        self.emit("bl rtTruthy")
-        if okLabel != None:
-            self.emit("cbnz x0, " + okLabel)
-        elif falseLabel != None:
-            self.emit("cbz x0, " + falseLabel)
-
-    func pushArgs(self, args):
-        for a in args:
-            self.genExpr(a)
-            self.emit("str x0, [sp, -16]!")
-
-    func genCall(self, e):
-        callee = e.callee
-        args = e.args
-        if callee.type == "IDENT":
-            name = callee.name
-            if name == "print" or name == "cetak":
-                i = 0
-                for a in args:
-                    if i > 0:
-                        self.emit("ldr x0, =strSp")
-                        self.emit("bl rtWriteStr")
-                    if a.type == "STRING":
-                        self.emit("ldr x0, =" + self.internString(a.value))
-                    else:
-                        self.genExpr(a)
-                        self.emit("bl rtToStr")
-                    self.emit("bl rtWriteStr")
-                    i += 1
-                self.emit("ldr x0, =strNl")
-                self.emit("bl rtWriteStr")
-                self.emit("mov x0, 0")
-                return None
-            elif name == "len" or name == "panjang":
-                self.genExpr(args[0])
-                self.emit("bl rtLen")
-                return None
-            elif name == "str" or name == "ke_teks":
-                self.genExpr(args[0])
-                self.emit("bl rtToStr")
-                return None
-            elif name == "int" or name == "ke_angka":
-                self.genExpr(args[0])
-                self.emit("bl rtInt")
-                return None
-            elif name == "time" or name == "waktu":
-                self.emit("bl rtTime")
-                return None
-            elif name == "push" or name == "tambah":
-                self.genExpr(args[0])
-                self.emit("str x0, [sp, -16]!")
-                self.genExpr(args[1])
-                self.emit("mov x1, x0")
-                self.emit("ldr x0, [sp], 16")
-                self.emit("bl rtArrPush")
-                return None
-            elif name == "pop" or name == "hapus_akhir":
-                self.genExpr(args[0])
-                self.emit("bl rtArrPop")
-                return None
-            elif name == "type" or name == "tipe":
-                self.genExpr(args[0])
-                self.emit("bl rtType")
-                return None
-            elif name == "ord":
-                self.genExpr(args[0])
-                self.emit("bl rtOrd")
-                return None
-            elif name == "chr":
-                self.genExpr(args[0])
-                self.emit("bl rtChr")
-                return None
-            elif name == "range" or name == "rentang":
-                if len(args) == 1:
-                    self.genExpr(args[0])
-                    self.emit("mov x1, x0")
-                    self.emit("mov x0, 1")
-                else:
-                    self.genExpr(args[0])
-                    self.emit("str x0, [sp, -16]!")
-                    self.genExpr(args[1])
-                    self.emit("mov x1, x0")
-                    self.emit("ldr x0, [sp], 16")
-                self.emit("bl rtRange")
-                return None
-            elif name in self.classes:
-                self.instantiateClass(name, args)
-                return None
-            elif name in self.funcs:
-                self.pushArgs(args)
-                self.emit("bl " + fnLabel(name))
-                if len(args) > 0:
-                    self.emit("add sp, sp, " + str(16 * len(args)))
-                return None
+    func genArith(self, op, e):
+        self.genOperands(e)
+        if op == "+" or op == "-":
+            cold = self.newLabel()
+            back = self.newLabel()
+            self.emit("and x2, x0, x1")
+            self.emit("tbz x2, 0, " + cold)
+            if op == "+":
+                self.emit("sub x3, x1, 1")
+                self.emit("adds x3, x3, x0")
+                self.emit("b.vs " + cold)
             else:
-                self.pushArgs(args)
-                self.loadVar(name)
-                self.emit("asr x11, x0, 1")
-                self.emit("blr x11")
-                if len(args) > 0:
-                    self.emit("add sp, sp, " + str(16 * len(args)))
-                return None
-        elif callee.type == "MEMBER":
-            name = callee.name
-            if callee.target.type == "IDENT" and callee.target.name == "sys" and name == "exit":
-                if len(args) > 0:
-                    self.genExpr(args[0])
-                    self.emit("asr x0, x0, 1")
-                else:
-                    self.emit("mov x0, 0")
-                self.emit("mov x8, 94")
-                self.emit("svc #0")
-                return None
-            if callee.target.type == "IDENT" and (callee.target.name in self.moduleVars):
-                mpath = self.moduleVars[callee.target.name]
-                if mpath in self.importInfo:
-                    pfx = self.importInfo[mpath]["prefix"]
-                    prefixedCls = pfx + name
-                    if prefixedCls in self.classes:
-                        self.instantiateClass(prefixedCls, args)
-                        return None
-            if name == "append" or name == "push":
-                self.genExpr(callee.target)
-                self.emit("str x0, [sp, -16]!")
-                self.genExpr(args[0])
-                self.emit("mov x1, x0")
-                self.emit("ldr x0, [sp], 16")
-                self.emit("bl rtArrPush")
-                return None
-            if name == "pop":
-                self.genExpr(callee.target)
-                self.emit("bl rtArrPop")
-                return None
-
-            self.genExpr(callee.target)
-            self.emit("str x0, [sp, -16]!")
-            for a in args:
-                self.genExpr(a)
-                self.emit("str x0, [sp, -16]!")
-
-            methodCallLabel = None
-            for cName in self.classes:
-                clsObj = self.classes[cName]
-                for m in clsObj.methods:
-                    if m.name == name:
-                        methodCallLabel = methodLabel(cName, name)
-                        break
-                if methodCallLabel != None:
-                    break
-
-            if methodCallLabel != None:
-                self.emit("bl " + methodCallLabel)
-            else:
-                self.emit("ldr x0, [sp, " + str(16 * len(args)) + "]")
-                self.emit("ldr x1, =" + self.internString(name))
-                self.emit("bl rtFindMethod")
-                self.emit("asr x11, x0, 1")
-                self.emit("blr x11")
-            self.emit("add sp, sp, " + str(16 * (len(args) + 1)))
-            return None
+                self.emit("subs x3, x0, x1")
+                self.emit("b.vs " + cold)
+                self.emit("adds x3, x3, 1")
+                self.emit("b.vs " + cold)
+            self.emit("mov x0, x3")
+            self.label(back)
+            self.cold.append(cold + ":")
+            self.cold.append("    bl " + ARITH[op])
+            self.cold.append("    b " + back)
         else:
-            self.pushArgs(args)
-            self.genExpr(callee)
-            self.emit("asr x11, x0, 1")
-            self.emit("blr x11")
-            if len(args) > 0:
-                self.emit("add sp, sp, " + str(16 * len(args)))
+            self.emit("bl " + ARITH[op])
 
-    func instantiateClass(self, name, args):
-        cls = self.classes[name]
-        numFields = 8
-        self.emit("mov x0, " + str(numFields * 8 + 16))
-        self.emit("bl rtAlloc")
-        self.emit("mov x1, 5")
-        self.emit("str x1, [x0]")
-        self.emit("ldr x1, =class" + name)
-        self.emit("ldr x1, [x1]")
-        self.emit("str x1, [x0, 8]")
+    func genBitwise(self, op, e):
+        self.genOperands(e)
+        self.emit("bl " + BITWISE[op])
 
-        initMethod = None
-        for m in cls.methods:
-            if m.name == "__init__":
-                initMethod = m
-                break
-
-        if initMethod != None:
-            self.emit("str x0, [sp, -16]!")
-            self.emit("str x0, [sp, -16]!")
-            for a in args:
-                self.genExpr(a)
-                self.emit("str x0, [sp, -16]!")
-            self.emit("bl " + methodLabel(name, "__init__"))
-            self.emit("add sp, sp, " + str(16 * (len(args) + 1)))
-            self.emit("ldr x0, [sp], 16")
+    func genCompareValue(self, e):
+        falseLabel = self.newLabel()
+        endLabel = self.newLabel()
+        self.genCond(e, falseLabel)
+        self.emit("mov x0, 4")
+        self.emit("b " + endLabel)
+        self.label(falseLabel)
+        self.emit("mov x0, 2")
+        self.label(endLabel)
 
     func genExpr(self, e):
-        if e == None:
-            self.emit("mov x0, 0")
-            return None
         t = e.type
         if t == "NUMBER":
-            val = e.value
-            if val == int(val):
-                tval = int(val) * 2 + 1
-                if tval >= 0 and tval <= 65535:
-                    self.emit("mov x0, " + str(tval))
-                elif tval < 0 and tval >= -65535:
-                    self.emit("mov x0, " + str(tval))
-                else:
-                    self.emit("ldr x0, =" + str(tval))
+            v = e.value
+            if e.isFloat:
+                self.emit("ldr x0, =" + self.floatConst(v))
+            elif v == int(v) and (int(v) >= INTLIMIT or int(v) <= 0 - INTLIMIT):
+                self.emit("ldr x0, =" + self.floatConst(v))
+            elif v == int(v) and (int(v) > 1000000000000000 or int(v) < -1000000000000000):
+                self.emit("ldr x0, =" + str(int(v)))
+                self.emit("lsl x0, x0, 1")
+                self.emit("add x0, x0, 1")
+            elif v == int(v):
+                self.constTo("x0", 2 * int(v) + 1)
             else:
-                self.emit("ldr x0, =" + self.floatConst(val))
+                self.emit("ldr x0, =" + self.floatConst(v))
         elif t == "STRING":
             self.emit("ldr x0, =" + self.internString(e.value))
         elif t == "BOOL":
@@ -969,7 +1276,17 @@ class Arm64Compiler:
         elif t == "NULL":
             self.emit("mov x0, 0")
         elif t == "IDENT":
-            self.loadVar(e.name)
+            if e.name in self.funcs:
+                self.emit("ldr x0, =" + fnLabel(e.name))
+                self.emit("lsl x0, x0, 1")
+                self.emit("add x0, x0, 1")
+            elif e.name in self.classes:
+                self.varLoad("class" + e.name, "x0")
+            elif e.name == "sys":
+                self.emit("ldr x16, =gvsys")
+                self.emit("ldr x0, [x16]")
+            else:
+                self.varLoad(e.name, "x0")
         elif t == "UNARY":
             if e.op == "-":
                 self.genExpr(e.operand)
@@ -986,108 +1303,529 @@ class Arm64Compiler:
             elif e.op == "~":
                 self.genExpr(e.operand)
                 self.emit("bl rtBitNot")
+            else:
+                fail("unsupported unary " + e.op)
         elif t == "BINARY":
             op = e.op
-            if op in ARITH:
+            if op in JUMPS:
+                self.genCompareValue(e)
+            elif op == "and" or op == "&&":
+                end = self.newLabel()
                 self.genExpr(e.left)
-                self.emit("str x0, [sp, -16]!")
+                self.emit("cmp x0, 2")
+                self.emit("b.ls " + end)
                 self.genExpr(e.right)
-                self.emit("mov x1, x0")
-                self.emit("ldr x0, [sp], 16")
-                self.emit("bl " + ARITH[op])
-            elif op in BITWISE:
+                self.label(end)
+            elif op == "or" or op == "||":
+                end = self.newLabel()
                 self.genExpr(e.left)
-                self.emit("str x0, [sp, -16]!")
+                self.emit("mov x9, x0")
+                self.push("x9")
+                self.genTruthy(end + "f")
+                self.pop("x0")
+                self.emit("b " + end)
+                self.label(end + "f")
+                self.emit("add sp, sp, 16")
                 self.genExpr(e.right)
-                self.emit("mov x1, x0")
-                self.emit("ldr x0, [sp], 16")
-                self.emit("bl " + BITWISE[op])
-            elif op in JUMPS:
-                falseLabel = self.newLabel()
-                endLabel = self.newLabel()
-                self.genCond(e, falseLabel)
-                self.emit("mov x0, 4")
-                self.emit("b " + endLabel)
-                self.label(falseLabel)
-                self.emit("mov x0, 2")
-                self.label(endLabel)
+                self.label(end)
             elif op == "in":
                 self.genExpr(e.left)
-                self.emit("str x0, [sp, -16]!")
+                self.push("x0")
                 self.genExpr(e.right)
                 self.emit("mov x1, x0")
-                self.emit("ldr x0, [sp], 16")
+                self.pop("x0")
                 self.emit("bl rtIn")
-            elif op == "and" or op == "&&":
-                falseLabel = self.newLabel()
-                endLabel = self.newLabel()
-                self.genCond(e.left, falseLabel)
-                self.genExpr(e.right)
-                self.emit("b " + endLabel)
-                self.label(falseLabel)
-                self.emit("mov x0, 2")
-                self.label(endLabel)
-            elif op == "or" or op == "||":
-                trueLabel = self.newLabel()
-                endLabel = self.newLabel()
-                self.genExpr(e.left)
-                self.emit("str x0, [sp, -16]!")
-                self.emit("bl rtTruthy")
-                self.emit("cbnz x0, " + trueLabel)
-                self.emit("ldr x0, [sp], 16")
-                self.genExpr(e.right)
-                self.emit("b " + endLabel)
-                self.label(trueLabel)
-                self.emit("ldr x0, [sp], 16")
-                self.label(endLabel)
-        elif t == "CALL":
-            self.genCall(e)
-        elif t == "ARRAY":
+            elif op in ARITH:
+                self.genArith(op, e)
+            elif op in BITWISE:
+                self.genBitwise(op, e)
+            else:
+                fail("unsupported operator " + op)
+        elif t == "TERNARY":
+            elseLabel = self.newLabel()
+            endLabel = self.newLabel()
+            self.genCond(e.condition, elseLabel)
+            self.genExpr(e.thenVal)
+            self.emit("b " + endLabel)
+            self.label(elseLabel)
+            self.genExpr(e.elseVal)
+            self.label(endLabel)
+        elif t == "LIST":
             self.emit("bl rtArrNew")
-            self.emit("str x0, [sp, -16]!")
+            self.push("x0")
             for el in e.elements:
                 self.genExpr(el)
                 self.emit("mov x1, x0")
                 self.emit("ldr x0, [sp]")
                 self.emit("bl rtArrPush")
-            self.emit("ldr x0, [sp], 16")
+            self.pop("x0")
         elif t == "MAP":
             self.emit("bl rtMapNew")
-            self.emit("str x0, [sp, -16]!")
-            i = 0
-            while i < len(e.keys):
-                self.genExpr(e.keys[i])
-                self.emit("str x0, [sp, -16]!")
-                self.genExpr(e.values[i])
+            self.push("x0")
+            k = 0
+            while k < len(e.keys):
+                key = e.keys[k]
+                if hasattr(key, "type"):
+                    self.genExpr(key)
+                elif type(key) == "teks" or type(key) == "string" or type(key) == "str":
+                    self.emit("ldr x0, =" + self.internString(key))
+                else:
+                    self.constTo("x0", 2 * int(key) + 1)
+                self.push("x0")
+                self.genExpr(e.values[k])
                 self.emit("mov x2, x0")
-                self.emit("ldr x1, [sp], 16")
+                self.pop("x1")
                 self.emit("ldr x0, [sp]")
                 self.emit("bl rtMapSet")
-                i += 1
-            self.emit("ldr x0, [sp], 16")
+                k += 1
+            self.pop("x0")
         elif t == "INDEX":
             self.genExpr(e.target)
-            self.emit("str x0, [sp, -16]!")
+            self.push("x0")
             self.genExpr(e.index)
             self.emit("mov x1, x0")
-            self.emit("ldr x0, [sp], 16")
+            self.pop("x0")
             self.emit("bl rtIndex")
-        elif t == "MEMBER":
-            if e.target.type == "IDENT" and (e.target.name in self.moduleVars):
-                mpath = self.moduleVars[e.target.name]
-                if mpath in self.importInfo:
-                    pfx = self.importInfo[mpath]["prefix"]
-                    self.loadVar(pfx + e.name)
-                    return None
+        elif t == "SLICE":
             self.genExpr(e.target)
-            self.emit("ldr x1, =" + self.internString(e.name))
-            self.emit("bl rtFieldGet")
+            self.push("x0")
+            if e.start != None:
+                self.genExpr(e.start)
+            else:
+                self.emit("mov x0, 0")
+            self.push("x0")
+            if e.stop != None:
+                self.genExpr(e.stop)
+            else:
+                self.emit("mov x0, 0")
+            self.emit("mov x2, x0")
+            self.pop("x1")
+            self.pop("x0")
+            self.emit("bl rtSlice")
         elif t == "LAMBDA":
             self.lambdaCount += 1
-            lname = "lambda" + str(self.lambdaCount)
-            lbl = "fn" + lname
-            synth = FuncStmt(lname, e.params, BlockStmt([astModule.ReturnStmt(e.body)]))
-            self.lambdas.append((synth, lbl, lname))
-            self.emit("ldr x0, =" + lbl)
+            lName = "lambda" + str(self.lambdaCount)
+            lLabel = "fn" + lName
+            fnNode = FuncStmt(lName, e.params, BlockStmt([e.body] if e.body.type != "BLOCK" else e.body.stmts))
+            self.lambdas.append([fnNode, lLabel, lName])
+            self.emit("ldr x0, =" + lLabel)
             self.emit("lsl x0, x0, 1")
             self.emit("add x0, x0, 1")
+        elif t == "MEMBER":
+            selfOff = self.selfFieldOffset(e.target, e.name)
+            if selfOff != None:
+                self.genExpr(e.target)
+                self.emit("ldr x0, [x0, " + str(selfOff) + "]")
+            else:
+                self.genExpr(e.target)
+                self.emit("ldr x1, =" + self.internString(e.name))
+                self.emit("bl rtFieldGet")
+        elif t == "ASSIGN":
+            self.genAssign(e)
+        elif t == "CALL":
+            self.genCall(e)
+        else:
+            fail("unsupported expression " + t)
+
+    func genAssign(self, e):
+        target = e.target
+        value = e.value
+        if e.op != "=":
+            value = BinaryExpr(e.op[:len(e.op) - 1], target, e.value)
+        if target.type == "IDENT":
+            self.genExpr(value)
+            self.varStore(target.name, "x0")
+        elif target.type == "INDEX":
+            self.genExpr(target.target)
+            self.push("x0")
+            self.genExpr(target.index)
+            self.push("x0")
+            if e.op == "=":
+                self.genExpr(value)
+            else:
+                self.genIndexCompound(e, target)
+            self.emit("mov x2, x0")
+            self.pop("x1")
+            self.pop("x0")
+            self.emit("bl rtSetIndex")
+        elif target.type == "MEMBER":
+            selfOff = self.selfFieldOffset(target.target, target.name)
+            if selfOff != None:
+                self.genExpr(target.target)
+                self.push("x0")
+                self.genExpr(value)
+                self.pop("x1")
+                self.emit("str x0, [x1, " + str(selfOff) + "]")
+            else:
+                self.genExpr(target.target)
+                self.push("x0")
+                self.genExpr(value)
+                self.emit("mov x2, x0")
+                self.pop("x0")
+                self.emit("ldr x1, =" + self.internString(target.name))
+                self.push("x2")
+                self.emit("bl rtFieldSet")
+                self.pop("x0")
+        else:
+            fail("unsupported assignment target " + target.type)
+
+    func genIndexCompound(self, e, target):
+        self.emit("ldr x0, [sp, 16]")
+        self.emit("ldr x1, [sp]")
+        self.emit("bl rtIndex")
+        self.push("x0")
+        self.genExpr(e.value)
+        self.emit("mov x1, x0")
+        self.pop("x0")
+        op = e.op[:len(e.op) - 1]
+        self.emit("bl " + ARITH[op])
+
+    func pushArgs(self, args):
+        for a in args:
+            self.genExpr(a)
+            self.push("x0")
+
+    func pushArgsWithDefaults(self, fname, params, defaults, args):
+        if len(args) > len(params):
+            fail(fname + " expects " + str(len(params)) + " arguments, got " + str(len(args)))
+        i = 0
+        while i < len(params):
+            if i < len(args):
+                self.genExpr(args[i])
+            elif params[i] in defaults:
+                self.genExpr(defaults[params[i]])
+            else:
+                fail(fname + " expects " + str(len(params)) + " arguments, got " + str(len(args)))
+            self.push("x0")
+            i += 1
+
+    func resolveMethod(self, clsName, method):
+        name = clsName
+        while name != None and (name in self.classes):
+            info = self.classes[name]
+            if method in info["methods"]:
+                return methodLabel(name, method)
+            name = info["base"]
+        return None
+
+    func resolveInit(self, clsName):
+        for candidate in ["__init__", "konstruktor", "init", "constructor"]:
+            label = self.resolveMethod(clsName, candidate)
+            if label != None:
+                return label
+        return None
+
+    func resolveInitSignature(self, clsName):
+        name = clsName
+        while name != None and (name in self.classes):
+            info = self.classes[name]
+            for candidate in ["__init__", "konstruktor", "init", "constructor"]:
+                if candidate in info["methods"]:
+                    return [info["methodParams"][candidate], info["methodDefaults"][candidate]]
+            name = info["base"]
+        return [[], {}]
+
+    func resolveMethodSignature(self, clsName, method):
+        name = clsName
+        while name != None and (name in self.classes):
+            info = self.classes[name]
+            if method in info["methods"]:
+                return [info["methodParams"][method], info["methodDefaults"][method]]
+            name = info["base"]
+        return None
+
+    func findMethodSignature(self, method):
+        matched = None
+        for clsName in self.classes:
+            info = self.classes[clsName]
+            if method in info["methods"]:
+                sig = [info["methodParams"][method], info["methodDefaults"][method]]
+                if matched == None:
+                    matched = sig
+                elif matched != sig:
+                    return None
+        return matched
+
+    func genMethodCallGeneric(self, callee, name, args):
+        sig = None
+        if callee.target.type == "IDENT" and (callee.target.name == "self" or callee.target.name == "this" or callee.target.name == "ini") and self.currentSelfClass != None:
+            sig = self.resolveMethodSignature(self.currentSelfClass, name)
+        if sig == None:
+            sig = self.findMethodSignature(name)
+
+        numArgs = len(sig[0]) if sig != None else len(args)
+        callLbl = self.newLabel()
+        notClassLbl = self.newLabel()
+
+        self.genExpr(callee.target)
+        self.push("x0")
+        if sig != None:
+            self.pushArgsWithDefaults(name, sig[0], sig[1], args)
+        else:
+            self.pushArgs(args)
+        self.emit("ldr x0, [sp, " + str(16 * numArgs) + "]")
+        self.emit("tbnz x0, 0, " + notClassLbl)
+        self.emit("cmp x0, 4")
+        self.emit("b.ls " + notClassLbl)
+        self.emit("ldr x2, [x0]")
+        self.emit("cmp x2, 5")
+        self.emit("b.ne " + notClassLbl)
+        self.emit("ldr x1, =" + self.internString(name))
+        self.emit("bl rtFindMethod")
+        self.emit("b " + callLbl)
+        self.label(notClassLbl)
+        self.emit("ldr x1, =" + self.internString(name))
+        self.emit("bl rtMapGet")
+        self.emit("asr x0, x0, 1")
+        self.label(callLbl)
+        self.emit("blr x0")
+        self.emit("add sp, sp, " + str(16 * (numArgs + 1)))
+
+    func genStringOrGenericCall(self, callee, name, args):
+        notStrLbl = self.newLabel()
+        doneLbl = self.newLabel()
+        self.genExpr(callee.target)
+        self.emit("tbnz x0, 0, " + notStrLbl)
+        self.emit("cmp x0, 4")
+        self.emit("b.ls " + notStrLbl)
+        self.emit("ldr x2, [x0]")
+        self.emit("cmp x2, 2")
+        self.emit("b.ne " + notStrLbl)
+        if len(args) == 0:
+            self.emit("bl " + STRMETHODS[name])
+        elif name == "find" and len(args) == 2:
+            self.push("x0")
+            self.genExpr(args[0])
+            self.push("x0")
+            self.genExpr(args[1])
+            self.emit("mov x2, x0")
+            self.pop("x1")
+            self.pop("x0")
+            self.emit("bl " + STRMETHODS[name])
+        else:
+            self.push("x0")
+            self.genExpr(args[0])
+            self.emit("mov x1, x0")
+            self.pop("x0")
+            if name == "find":
+                self.emit("mov x2, 1")
+            self.emit("bl " + STRMETHODS[name])
+        self.emit("b " + doneLbl)
+        self.label(notStrLbl)
+        self.genMethodCallGeneric(callee, name, args)
+        self.label(doneLbl)
+
+    func genIndirectCall(self, callee, args):
+        self.pushArgs(args)
+        self.genExpr(callee)
+        self.emit("asr x0, x0, 1")
+        self.emit("blr x0")
+        if len(args) > 0:
+            self.emit("add sp, sp, " + str(16 * len(args)))
+
+    func genCall(self, e):
+        callee = e.callee
+        args = e.args
+        if callee.type == "MEMBER":
+            name = callee.name
+            if callee.target.type == "IDENT" and callee.target.name == "sys" and name == "exit":
+                if len(args) > 0:
+                    self.genExpr(args[0])
+                    self.emit("asr x0, x0, 1")
+                else:
+                    self.emit("mov x0, 0")
+                self.emit("mov x8, 94")
+                self.emit("svc #0")
+                return None
+            if callee.target.type == "IDENT" and (callee.target.name in self.moduleVars):
+                mpath = self.moduleVars[callee.target.name]
+                if mpath in self.importInfo:
+                    pfx = self.importInfo[mpath]["prefix"]
+                    prefixedCls = pfx + name
+                    if prefixedCls in self.classes:
+                        self.genInstantiateClass(prefixedCls, args)
+                        return None
+            if name == "append" or name == "push":
+                self.genExpr(callee.target)
+                self.push("x0")
+                self.genExpr(args[0])
+                self.emit("mov x1, x0")
+                self.pop("x0")
+                self.emit("bl rtArrPush")
+                return None
+            if name == "pop":
+                self.genExpr(callee.target)
+                self.emit("bl rtArrPop")
+                return None
+            if name == "get" or name == "ambil":
+                self.genExpr(callee.target)
+                self.push("x0")
+                self.genExpr(args[0])
+                self.push("x0")
+                if len(args) > 1:
+                    self.genExpr(args[1])
+                else:
+                    self.emit("mov x0, 0")
+                self.emit("mov x2, x0")
+                self.pop("x1")
+                self.pop("x0")
+                self.emit("bl rtMapGetDef")
+                return None
+            if name in STRMETHODS:
+                self.genStringOrGenericCall(callee, name, args)
+                return None
+            self.genMethodCallGeneric(callee, name, args)
+            return None
+        if callee.type != "IDENT":
+            self.genIndirectCall(callee, args)
+            return None
+        name = callee.name
+        if name in self.classAliases:
+            self.genInstantiateClass(self.classAliases[name], args)
+        elif name in self.classes:
+            self.genInstantiateClass(name, args)
+        elif name == "exit":
+            if len(args) > 0:
+                self.genExpr(args[0])
+                self.emit("asr x0, x0, 1")
+            else:
+                self.emit("mov x0, 0")
+            self.emit("mov x8, 94")
+            self.emit("svc #0")
+        elif name in self.funcs:
+            nParams = len(self.funcParams[name])
+            self.pushArgsWithDefaults(name, self.funcParams[name], self.funcDefaults[name], args)
+            self.emit("bl " + fnLabel(name))
+            if nParams > 0:
+                self.emit("add sp, sp, " + str(16 * nParams))
+        elif name == "print" or name == "cetak":
+            i = 0
+            for a in args:
+                if i > 0:
+                    self.emit("ldr x0, =strSp")
+                    self.emit("bl rtWriteStr")
+                if a.type == "STRING":
+                    self.emit("ldr x0, =" + self.internString(a.value))
+                else:
+                    self.genExpr(a)
+                    self.emit("bl rtToStr")
+                self.emit("bl rtWriteStr")
+                i += 1
+            self.emit("ldr x0, =strNl")
+            self.emit("bl rtWriteStr")
+            self.emit("mov x0, 0")
+        elif name == "time" or name == "waktu":
+            self.emit("bl rtTime")
+        elif name == "gcInfo" or name == "gc_info":
+            self.emit("bl rtMapNew")
+        elif name == "gcForce" or name == "gc_paksa":
+            self.emit("mov x0, 0")
+        elif name == "len" or name == "panjang":
+            self.genExpr(args[0])
+            self.emit("bl rtLen")
+        elif name == "str" or name == "ke_teks":
+            self.genExpr(args[0])
+            self.emit("bl rtToStr")
+        elif name == "int" or name == "ke_angka":
+            self.genExpr(args[0])
+            self.emit("bl rtInt")
+        elif name == "float":
+            self.genExpr(args[0])
+            self.emit("bl rtFloat")
+        elif name == "floatParts":
+            self.genExpr(args[0])
+            self.emit("bl rtFloatParts")
+        elif name == "intDiv":
+            self.genExpr(args[0])
+            self.push("x0")
+            self.genExpr(args[1])
+            self.emit("mov x1, x0")
+            self.pop("x0")
+            self.emit("bl rtIntDiv")
+        elif name == "push" or name == "tambah":
+            self.genExpr(args[0])
+            self.push("x0")
+            self.genExpr(args[1])
+            self.emit("mov x1, x0")
+            self.pop("x0")
+            self.emit("bl rtArrPush")
+        elif name == "pop" or name == "hapus_akhir":
+            self.genExpr(args[0])
+            self.emit("bl rtArrPop")
+        elif name == "impor":
+            if len(args) == 1 and args[0].type == "STRING" and args[0].value == "sys":
+                self.emit("ldr x16, =gvsys")
+                self.emit("ldr x0, [x16]")
+            elif len(args) == 1 and args[0].type == "STRING" and (args[0].value in self.importIndex):
+                idx = self.importIndex[args[0].value]
+                self.varLoad("modobj" + str(idx), "x0")
+            else:
+                fail("impor() with a non-literal or unresolved path is not supported in --native builds")
+        elif name == "JalankanPerintah" or name == "runCommand":
+            self.genExpr(args[0])
+            self.push("x0")
+            self.genExpr(args[1])
+            self.emit("mov x1, x0")
+            self.pop("x0")
+            self.emit("bl rtRunCommand")
+        elif name == "file_ada" or name == "fileExists":
+            self.genExpr(args[0])
+            self.emit("bl rtFileExists")
+        elif name == "baca_file" or name == "readFile":
+            self.genExpr(args[0])
+            self.emit("bl rtReadFile")
+        elif name == "tulis_file" or name == "writeFile":
+            self.genExpr(args[0])
+            self.push("x0")
+            self.genExpr(args[1])
+            self.emit("mov x1, x0")
+            self.pop("x0")
+            self.emit("bl rtWriteFile")
+        elif name == "type" or name == "tipe":
+            self.genExpr(args[0])
+            self.emit("bl rtType")
+        elif name == "ord":
+            self.genExpr(args[0])
+            self.emit("bl rtOrd")
+        elif name == "chr":
+            self.genExpr(args[0])
+            self.emit("bl rtChr")
+        elif name == "range" or name == "rentang":
+            if len(args) == 1:
+                self.genExpr(args[0])
+                self.emit("mov x1, x0")
+                self.emit("mov x0, 1")
+            else:
+                self.genExpr(args[0])
+                self.push("x0")
+                self.genExpr(args[1])
+                self.emit("mov x1, x0")
+                self.pop("x0")
+            self.emit("bl rtRange")
+        elif (name in self.regOf) or (name in self.params) or (name in self.locals) or (name in self.knownGlobals):
+            self.genIndirectCall(callee, args)
+        else:
+            fail("unknown function '" + name + "' (not implemented in --native backend)")
+
+func hasTry(node):
+    if node == None:
+        return False
+    if hasattr(node, "stmts"):
+        for s in node.stmts:
+            if hasTry(s):
+                return True
+        return False
+    if not hasattr(node, "type"):
+        return False
+    t = node.type
+    if t == "TRY":
+        return True
+    if t == "IF":
+        return hasTry(node.thenBranch) or hasTry(node.elseBranch)
+    if t == "WHILE" or t == "FOR" or t == "FOR_IN":
+        return hasTry(node.body)
+    if t == "BLOCK":
+        for s in node.stmts:
+            if hasTry(s):
+                return True
+    return False

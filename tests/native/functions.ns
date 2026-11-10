@@ -1,0 +1,11 @@
+func ap(fn, a):
+    return fn(a)
+func sq(n):
+    return n * n
+print(ap(sq, 7))
+print(ap(lambda x: x * 3 + 1, 4))
+d = lambda x: x * 2
+print(d(21))
+func multiArg(a, b, c, d, e, f, g):
+    return a + b + c + d + e + f + g
+print(multiArg(1, 2, 3, 4, 5, 6, 7))

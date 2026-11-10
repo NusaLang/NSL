@@ -1,6 +1,16 @@
 SYS_RUNTIME = """rtFail:
     cmp qword ptr [excTop], 0
-    jne rtThrow
+    je rtFailPrint
+    push rdi
+    call rtMapNew
+    pop rdx
+    mov rdi, rax
+    lea rsi, [strPesanKey]
+    push rax
+    call rtMapSet
+    pop rdi
+    jmp rtThrow
+rtFailPrint:
     push rdi
     lea rdi, [strErr]
     mov rsi, 2
@@ -68,7 +78,14 @@ rtCStrToStr:
     rep movsb
     ret
 rtSysExit:
+    mov rdi, [rsp+8]
+    test dil, 1
+    jnz rtSeInt
+    xor rdi, rdi
+    jmp rtSeGo
+rtSeInt:
     sar rdi, 1
+rtSeGo:
     mov rax, 231
     syscall
     ret

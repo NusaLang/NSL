@@ -1,21 +1,412 @@
 IO_RUNTIME = """rtTime:
+    stp lr, xzr, [sp, -16]!
     sub sp, sp, 16
     mov x0, 0
     mov x1, sp
     mov x8, 113
     svc #0
-    ldr x0, [sp]
+    ldr x2, [sp]
+    ldr x3, [sp, 8]
     add sp, sp, 16
-    lsl x0, x0, 1
-    add x0, x0, 1
+    scvtf d0, x2
+    scvtf d1, x3
+    ldr x4, =1000000000
+    scvtf d2, x4
+    fdiv d1, d1, d2
+    fadd d0, d0, d1
+    bl rtBoxFloat
+    ldp lr, xzr, [sp], 16
     ret
+rtToCStr:
+    stp lr, x19, [sp, -16]!
+    stp x20, xzr, [sp, -16]!
+    mov x19, x0
+    ldr x20, [x0, 8]
+    add x0, x20, 1
+    bl rtAlloc
+    mov x2, 0
+rtCsCopy:
+    cmp x2, x20
+    b.ge rtCsTerm
+    add x3, x19, 16
+    ldrb w4, [x3, x2]
+    strb w4, [x0, x2]
+    add x2, x2, 1
+    b rtCsCopy
+rtCsTerm:
+    strb wzr, [x0, x2]
+    ldp x20, xzr, [sp], 16
+    ldp lr, x19, [sp], 16
+    ret
+rtResolveExecPath:
+    stp lr, x19, [sp, -16]!
+    stp x20, x21, [sp, -16]!
+    stp x22, x23, [sp, -16]!
+    stp x24, xzr, [sp, -16]!
+    sub sp, sp, 4096
+    mov x19, x0
+    bl rtCStrLen
+    mov x20, x0
+    mov x1, 0
+rtRepScan:
+    cmp x1, x20
+    b.ge rtRepNoSlash
+    ldrb w2, [x19, x1]
+    cmp w2, 47
+    b.eq rtRepHasSlash
+    add x1, x1, 1
+    b rtRepScan
+rtRepHasSlash:
+    mov x0, x19
+    b rtRepDone
+rtRepNoSlash:
+    ldr x21, =gEnvp
+    ldr x21, [x21]
+    cbz x21, rtRepNotFound
+rtRepEnvLoop:
+    ldr x0, [x21]
+    cbz x0, rtRepNotFound
+    ldrb w1, [x0]
+    cmp w1, 80
+    b.ne rtRepEnvNext
+    ldrb w1, [x0, 1]
+    cmp w1, 65
+    b.ne rtRepEnvNext
+    ldrb w1, [x0, 2]
+    cmp w1, 84
+    b.ne rtRepEnvNext
+    ldrb w1, [x0, 3]
+    cmp w1, 72
+    b.ne rtRepEnvNext
+    ldrb w1, [x0, 4]
+    cmp w1, 61
+    b.ne rtRepEnvNext
+    add x22, x0, 5
+    b rtRepDirLoop
+rtRepEnvNext:
+    add x21, x21, 8
+    b rtRepEnvLoop
+rtRepNotFound:
+    mov x0, x19
+    b rtRepDone
+rtRepDirLoop:
+    mov x23, x22
+    mov x24, 0
+rtRepDirScan:
+    ldrb w1, [x22]
+    cbz w1, rtRepDirEnd
+    cmp w1, 58
+    b.eq rtRepDirEnd
+    add x22, x22, 1
+    add x24, x24, 1
+    b rtRepDirScan
+rtRepDirEnd:
+    cbz x24, rtRepDirNext
+    cmp x24, 4000
+    b.hs rtRepDirNext
+    mov x2, 0
+rtRepCopyDir:
+    cmp x2, x24
+    b.ge rtRepCopyDirDone
+    ldrb w3, [x23, x2]
+    strb w3, [sp, x2]
+    add x2, x2, 1
+    b rtRepCopyDir
+rtRepCopyDirDone:
+    mov w3, 47
+    strb w3, [sp, x24]
+    add x4, sp, x24
+    add x4, x4, 1
+    mov x2, 0
+rtRepCopyCmd:
+    cmp x2, x20
+    b.ge rtRepCopyCmdDone
+    ldrb w3, [x19, x2]
+    strb w3, [x4, x2]
+    add x2, x2, 1
+    b rtRepCopyCmd
+rtRepCopyCmdDone:
+    strb wzr, [x4, x20]
+    mov x0, -100
+    mov x1, sp
+    mov x2, 1
+    mov x3, 0
+    mov x8, 48
+    svc #0
+    cbz x0, rtRepFound
+rtRepDirNext:
+    ldrb w1, [x22]
+    cbz w1, rtRepNotFound
+    add x22, x22, 1
+    b rtRepDirLoop
+rtRepFound:
+    add x0, x20, x24
+    add x0, x0, 2
+    bl rtAlloc
+    mov x2, 0
+rtRepFinalCopy:
+    ldrb w3, [sp, x2]
+    cbz w3, rtRepFinalDone
+    strb w3, [x0, x2]
+    add x2, x2, 1
+    b rtRepFinalCopy
+rtRepFinalDone:
+    strb wzr, [x0, x2]
+rtRepDone:
+    add sp, sp, 4096
+    ldp x24, xzr, [sp], 16
+    ldp x22, x23, [sp], 16
+    ldp x20, x21, [sp], 16
+    ldp lr, x19, [sp], 16
+    ret
+rtReadAllFd:
+    stp lr, x19, [sp, -16]!
+    stp x20, x21, [sp, -16]!
+    stp x22, xzr, [sp, -16]!
+    sub sp, sp, 4096
+    mov x19, x0
+    mov x0, 0
+    bl rtStrNew
+    mov x20, x0
+rtRafLoop:
+    mov x0, x19
+    mov x1, sp
+    mov x2, 4096
+    mov x8, 63
+    svc #0
+    cmp x0, 0
+    b.le rtRafDone
+    mov x21, x0
+    bl rtStrNew
+    mov x22, x0
+    add x0, x22, 16
+    mov x1, sp
+    mov x2, x21
+    bl rtMemCpy
+    mov x0, x20
+    mov x1, x22
+    bl rtConcat
+    mov x20, x0
+    b rtRafLoop
+rtRafDone:
+    mov x0, x20
+    add sp, sp, 4096
+    ldp x22, xzr, [sp], 16
+    ldp x20, x21, [sp], 16
+    ldp lr, x19, [sp], 16
+    ret
+rtRunCommand:
+    stp lr, x19, [sp, -16]!
+    stp x20, x21, [sp, -16]!
+    stp x22, x23, [sp, -16]!
+    stp x24, x25, [sp, -16]!
+    sub sp, sp, 64
+    mov x19, x0
+    mov x20, x1
+    mov x0, x19
+    bl rtToCStr
+    mov x21, x0
+    mov x0, x21
+    bl rtResolveExecPath
+    str x0, [sp, 32]
+    ldr x22, [x20, 8]
+    add x0, x22, 2
+    lsl x0, x0, 3
+    bl rtAlloc
+    str x0, [sp, 24]
+    str x21, [x0]
+    ldr x23, [x20, 24]
+    mov x24, 0
+rtRcArgvLoop:
+    cmp x24, x22
+    b.ge rtRcArgvDone
+    ldr x0, [x23, x24, lsl 3]
+    bl rtToCStr
+    ldr x1, [sp, 24]
+    add x2, x24, 1
+    str x0, [x1, x2, lsl 3]
+    add x24, x24, 1
+    b rtRcArgvLoop
+rtRcArgvDone:
+    ldr x1, [sp, 24]
+    add x2, x22, 1
+    str xzr, [x1, x2, lsl 3]
+    mov x0, sp
+    mov x1, 0
+    mov x8, 59
+    svc #0
+    add x0, sp, 8
+    mov x1, 0
+    mov x8, 59
+    svc #0
+    mov x0, 17
+    mov x1, 0
+    mov x2, 0
+    mov x3, 0
+    mov x4, 0
+    mov x8, 220
+    svc #0
+    cbz x0, rtRcChild
+    str x0, [sp, 16]
+    ldrsw x0, [sp, 4]
+    mov x8, 57
+    svc #0
+    ldrsw x0, [sp, 12]
+    mov x8, 57
+    svc #0
+    ldrsw x0, [sp]
+    bl rtReadAllFd
+    mov x22, x0
+    ldrsw x0, [sp, 8]
+    bl rtReadAllFd
+    mov x23, x0
+    ldrsw x0, [sp]
+    mov x8, 57
+    svc #0
+    ldrsw x0, [sp, 8]
+    mov x8, 57
+    svc #0
+    ldr x0, [sp, 16]
+    add x1, sp, 40
+    mov x2, 0
+    mov x3, 0
+    mov x8, 260
+    svc #0
+    ldr w0, [sp, 40]
+    ubfx x0, x0, 8, 8
+    lsl x24, x0, 1
+    add x24, x24, 1
+    bl rtMapNew
+    mov x25, x0
+    mov x0, x25
+    ldr x1, =strStatusKey
+    mov x2, x24
+    bl rtMapSet
+    mov x0, x25
+    ldr x1, =strKeluaranKey
+    mov x2, x22
+    bl rtMapSet
+    mov x0, x25
+    ldr x1, =strErrorKey
+    mov x2, x23
+    bl rtMapSet
+    mov x0, x25
+    add sp, sp, 64
+    ldp x24, x25, [sp], 16
+    ldp x22, x23, [sp], 16
+    ldp x20, x21, [sp], 16
+    ldp lr, x19, [sp], 16
+    ret
+rtRcChild:
+    ldrsw x0, [sp, 4]
+    mov x1, 1
+    mov x2, 0
+    mov x8, 24
+    svc #0
+    ldrsw x0, [sp, 12]
+    mov x1, 2
+    mov x2, 0
+    mov x8, 24
+    svc #0
+    ldrsw x0, [sp]
+    mov x8, 57
+    svc #0
+    ldrsw x0, [sp, 8]
+    mov x8, 57
+    svc #0
+    ldr x0, [sp, 32]
+    ldr x1, [sp, 24]
+    ldr x2, =gEnvp
+    ldr x2, [x2]
+    mov x8, 221
+    svc #0
+    mov x0, 127
+    mov x8, 93
+    svc #0
 rtFileExists:
+    stp lr, xzr, [sp, -16]!
+    bl rtToCStr
+    mov x1, x0
+    mov x0, -100
+    mov x2, 0
+    mov x3, 0
+    mov x8, 48
+    svc #0
+    ldp lr, xzr, [sp], 16
+    cbz x0, rtFeTrue
     mov x0, 2
     ret
+rtFeTrue:
+    mov x0, 4
+    ret
 rtReadFile:
-    ldr x0, =strEmpty
+    stp lr, x19, [sp, -16]!
+    stp x20, x21, [sp, -16]!
+    bl rtToCStr
+    mov x1, x0
+    mov x0, -100
+    mov x2, 0
+    mov x3, 0
+    mov x8, 56
+    svc #0
+    cmp x0, 0
+    b.lt rtRfEmpty
+    mov x19, x0
+    mov x0, x19
+    mov x1, 0
+    mov x2, 2
+    mov x8, 62
+    svc #0
+    mov x20, x0
+    mov x0, x19
+    mov x1, 0
+    mov x2, 0
+    mov x8, 62
+    svc #0
+    mov x0, x20
+    bl rtStrNew
+    mov x21, x0
+    mov x0, x19
+    add x1, x21, 16
+    mov x2, x20
+    mov x8, 63
+    svc #0
+    mov x0, x19
+    mov x8, 57
+    svc #0
+    mov x0, x21
+    b rtRfRet
+rtRfEmpty:
+    mov x0, 0
+    bl rtStrNew
+rtRfRet:
+    ldp x20, x21, [sp], 16
+    ldp lr, x19, [sp], 16
     ret
 rtWriteFile:
+    stp lr, x19, [sp, -16]!
+    stp x20, xzr, [sp, -16]!
+    mov x20, x1
+    bl rtToCStr
+    mov x1, x0
+    mov x0, -100
+    mov x2, 577
+    mov x3, 420
+    mov x8, 56
+    svc #0
+    cmp x0, 0
+    b.lt rtWfDone
+    mov x19, x0
+    add x1, x20, 16
+    ldr x2, [x20, 8]
+    mov x8, 64
+    svc #0
+    mov x0, x19
+    mov x8, 57
+    svc #0
+rtWfDone:
     mov x0, 0
+    ldp x20, xzr, [sp], 16
+    ldp lr, x19, [sp], 16
     ret
 """

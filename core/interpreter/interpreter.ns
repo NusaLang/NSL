@@ -121,6 +121,20 @@ func nusaList(arg = None):
         res.append(item)
     return res
 
+func intDivBuiltin(a, b):
+    return a // b
+
+func makeStrFind(text):
+    func finder(sub, start = 0):
+        if start <= 0:
+            return text.find(sub)
+        rest = text[start:]
+        found = rest.find(sub)
+        if found < 0:
+            return -1
+        return found + start
+    return finder
+
 class Interpreter:
     func __init__(self):
         self.globalScope = Scope(None)
@@ -137,6 +151,9 @@ class Interpreter:
         g.define("int", int)
         g.define("float", float)
         g.define("ke_angka", ke_angka)
+        g.define("ord", ord)
+        g.define("intDiv", intDivBuiltin)
+        g.define("chr", chr)
         g.define("type", type)
         g.define("tipe", tipe)
         g.define("range", makeLazyRange)
@@ -423,54 +440,7 @@ class Interpreter:
             leftVal = self.evaluate(leftExpr, env)
             rightVal = self.evaluate(rightExpr, env)
 
-            if op == "+":
-                return leftVal + rightVal
-            elif op == "-":
-                return leftVal - rightVal
-            elif op == "*":
-                if (tipe(leftVal) == "teks" or tipe(leftVal) == "string") and tipe(rightVal) == "angka":
-                    r = ""
-                    cnt = int(rightVal)
-                    while cnt > 0:
-                        r = r + leftVal
-                        cnt = cnt - 1
-                    return r
-                return leftVal * rightVal
-            elif op == "/":
-                if rightVal == 0:
-                    print("RuntimeError: Division by zero")
-                    sys.exit(1)
-                    return 0
-                return leftVal / rightVal
-            elif op == "%":
-                return leftVal % rightVal
-            elif op == "==":
-                return leftVal == rightVal
-            elif op == "!=":
-                return leftVal != rightVal
-            elif op == "<":
-                return leftVal < rightVal
-            elif op == "<=":
-                return leftVal <= rightVal
-            elif op == ">":
-                return leftVal > rightVal
-            elif op == ">=":
-                return leftVal >= rightVal
-            elif op == "&":
-                return leftVal & rightVal
-            elif op == "|":
-                return leftVal | rightVal
-            elif op == "^":
-                return leftVal ^ rightVal
-            elif op == "<<":
-                return leftVal << rightVal
-            elif op == ">>":
-                return leftVal >> rightVal
-            elif op == "in" or op == "dalam":
-                if tipe(rightVal) == "peta" or tipe(rightVal) == "larik" or tipe(rightVal) == "teks" or tipe(rightVal) == "string":
-                    return leftVal in rightVal
-                return False
-            return None
+            return self.binaryValue(op, leftVal, rightVal)
         elif t == "TERNARY" or t == "TERNER":
             condExpr = expr.condition if hasattr(expr, "condition") else expr.kondisi
             if self.isTruthy(self.evaluate(condExpr, env)):
@@ -485,6 +455,8 @@ class Interpreter:
                 return -val
             elif expr.op == "!" or expr.op == "bukan" or expr.op == "not":
                 return not self.isTruthy(val)
+            elif expr.op == "~":
+                return ~val
             return val
         elif t == "CALL" or t == "PANGGIL":
             calleeType = self.nodeType(expr.callee)
@@ -665,7 +637,9 @@ class Interpreter:
                 elif name == "endswith":
                     return lambda p: target.endswith(p)
                 elif name == "find":
-                    return lambda sub: target.find(sub)
+                    return makeStrFind(target)
+                elif name == "join":
+                    return lambda items: gabung(items, target)
                 elif name == "strip":
                     return lambda: target.strip()
                 elif name == "lower":
@@ -709,32 +683,33 @@ class Interpreter:
             valExpr = expr.value if hasattr(expr, "value") else expr.nilai
             val = self.evaluate(valExpr, env)
             targetType = self.nodeType(expr.target)
+            compound = expr.op != "="
+            baseOp = expr.op[:len(expr.op) - 1]
 
             if targetType == "IDENT" or targetType == "PENGENAL":
                 name = expr.target.name if hasattr(expr.target, "name") else expr.target.nama
-                if expr.op == "=":
-                    env.set(name, val)
-                elif expr.op == "+=":
-                    env.set(name, env.get(name) + val)
-                elif expr.op == "-=":
-                    env.set(name, env.get(name) - val)
-                elif expr.op == "*=":
-                    env.set(name, env.get(name) * val)
-                elif expr.op == "/=":
-                    env.set(name, env.get(name) / val)
+                if compound:
+                    val = self.binaryValue(baseOp, env.get(name), val)
+                env.set(name, val)
                 return val
             elif targetType == "INDEX":
                 t = self.evaluate(expr.target.target, env)
                 idx = self.evaluate(expr.target.index, env)
+                if compound:
+                    val = self.binaryValue(baseOp, t[idx], val)
                 t[idx] = val
                 return val
             elif targetType == "MEMBER":
                 obj = self.evaluate(expr.target.target, env)
                 mName = expr.target.name if hasattr(expr.target, "name") else expr.target.nama
                 if tipe(obj) == "peta" and "isInstance" in obj:
+                    if compound:
+                        val = self.binaryValue(baseOp, obj["fields"][mName], val)
                     obj["fields"][mName] = val
                     return val
                 elif tipe(obj) == "peta":
+                    if compound:
+                        val = self.binaryValue(baseOp, obj[mName], val)
                     obj[mName] = val
                     return val
 
@@ -742,6 +717,58 @@ class Interpreter:
             sys.exit(1)
             return None
 
+        return None
+
+    func binaryValue(self, op, leftVal, rightVal):
+        if op == "+":
+            return leftVal + rightVal
+        elif op == "-":
+            return leftVal - rightVal
+        elif op == "*":
+            if (tipe(leftVal) == "teks" or tipe(leftVal) == "string") and tipe(rightVal) == "angka":
+                r = ""
+                cnt = int(rightVal)
+                while cnt > 0:
+                    r = r + leftVal
+                    cnt = cnt - 1
+                return r
+            return leftVal * rightVal
+        elif op == "/":
+            if rightVal == 0:
+                divZero = {"pesan": "division by zero"}
+                lempar divZero
+            return leftVal / rightVal
+        elif op == "%":
+            if rightVal == 0:
+                divZero = {"pesan": "division by zero"}
+                lempar divZero
+            return leftVal % rightVal
+        elif op == "==":
+            return leftVal == rightVal
+        elif op == "!=":
+            return leftVal != rightVal
+        elif op == "<":
+            return leftVal < rightVal
+        elif op == "<=":
+            return leftVal <= rightVal
+        elif op == ">":
+            return leftVal > rightVal
+        elif op == ">=":
+            return leftVal >= rightVal
+        elif op == "&":
+            return leftVal & rightVal
+        elif op == "|":
+            return leftVal | rightVal
+        elif op == "^":
+            return leftVal ^ rightVal
+        elif op == "<<":
+            return leftVal << rightVal
+        elif op == ">>":
+            return leftVal >> rightVal
+        elif op == "in" or op == "dalam":
+            if tipe(rightVal) == "peta" or tipe(rightVal) == "larik" or tipe(rightVal) == "teks" or tipe(rightVal) == "string":
+                return leftVal in rightVal
+            return False
         return None
 
     func isTruthy(self, val):

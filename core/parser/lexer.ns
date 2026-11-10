@@ -301,7 +301,18 @@ class Lexer:
         while self.pos < self.length and (self.source[self.pos].isdigit() or self.source[self.pos] == "."):
             text += self.advance()
 
-        val = float(text) if "." in text else int(text)
+        isFloat = "." in text
+        if self.pos < self.length and (self.source[self.pos] == "e" or self.source[self.pos] == "E"):
+            nxt = self.peek(1)
+            hasExp = nxt.isdigit() or ((nxt == "+" or nxt == "-") and self.peek(2).isdigit())
+            if hasExp:
+                text += self.advance()
+                if self.source[self.pos] == "+" or self.source[self.pos] == "-":
+                    text += self.advance()
+                while self.pos < self.length and self.source[self.pos].isdigit():
+                    text += self.advance()
+                isFloat = True
+        val = float(text) if isFloat else int(text)
         return Token(TokenType.NUMBER, text, val, startLine, startCol)
 
     func readString(self, quote):
@@ -407,6 +418,8 @@ class Lexer:
                 return Token("/=", "/=", 0, startLine, startCol)
             return Token(TokenType.SLASH, "/", 0, startLine, startCol)
         elif ch == "%":
+            if self.match("="):
+                return Token("%=", "%=", 0, startLine, startCol)
             return Token(TokenType.PERCENT, "%", 0, startLine, startCol)
         elif ch == "=":
             if self.match("="):
@@ -418,21 +431,31 @@ class Lexer:
             return Token("!", "!", 0, startLine, startCol)
         elif ch == "<":
             if self.match("<"):
+                if self.match("="):
+                    return Token("<<=", "<<=", 0, startLine, startCol)
                 return Token(TokenType.SHL, "<<", 0, startLine, startCol)
             if self.match("="):
                 return Token(TokenType.LTE, "<=", 0, startLine, startCol)
             return Token(TokenType.LT, "<", 0, startLine, startCol)
         elif ch == ">":
             if self.match(">"):
+                if self.match("="):
+                    return Token(">>=", ">>=", 0, startLine, startCol)
                 return Token(TokenType.SHR, ">>", 0, startLine, startCol)
             if self.match("="):
                 return Token(TokenType.GTE, ">=", 0, startLine, startCol)
             return Token(TokenType.GT, ">", 0, startLine, startCol)
         elif ch == "&":
+            if self.match("="):
+                return Token("&=", "&=", 0, startLine, startCol)
             return Token(TokenType.AMP, "&", 0, startLine, startCol)
         elif ch == "|":
+            if self.match("="):
+                return Token("|=", "|=", 0, startLine, startCol)
             return Token(TokenType.PIPE, "|", 0, startLine, startCol)
         elif ch == "^":
+            if self.match("="):
+                return Token("^=", "^=", 0, startLine, startCol)
             return Token(TokenType.CARET, "^", 0, startLine, startCol)
         elif ch == "~":
             return Token(TokenType.TILDE, "~", 0, startLine, startCol)

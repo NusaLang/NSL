@@ -4,52 +4,49 @@ ARRAY_RUNTIME = """rtArrNew:
     bl rtAlloc
     mov x1, 3
     str x1, [x0]
-    mov x1, 0
-    str x1, [x0, 8]
-    str x1, [x0, 16]
-    str x1, [x0, 24]
     ldp lr, xzr, [sp], 16
     ret
 rtArrPush:
+    ldr x2, [x0, 8]
+    ldr x3, [x0, 16]
+    cmp x2, x3
+    b.lo rtApStore
     stp lr, x19, [sp, -16]!
-    stp x20, x21, [sp, -16]!
+    stp x20, xzr, [sp, -16]!
     mov x19, x0
     mov x20, x1
-    ldr x1, [x19, 8]
-    ldr x2, [x19, 16]
-    cmp x1, x2
-    b.lt rtApStore
-    lsl x0, x2, 1
-    cmp x0, 4
-    b.ge rtApCap
-    mov x0, 4
+    lsl x3, x3, 1
+    cmp x3, 4
+    b.hs rtApCap
+    mov x3, 4
 rtApCap:
-    mov x21, x0
-    lsl x0, x0, 3
+    str x3, [x19, 16]
+    lsl x0, x3, 3
     bl rtAlloc
-    ldr x1, [x19, 24]
-    ldr x2, [x19, 8]
-    lsl x2, x2, 3
-    mov x3, x0
-    mov x4, 0
-rtApCpy:
-    cmp x4, x2
-    b.ge rtApCpyDone
-    ldrb w5, [x1, x4]
-    strb w5, [x3, x4]
-    add x4, x4, 1
-    b rtApCpy
-rtApCpyDone:
-    str x21, [x19, 16]
+    ldr x4, [x19, 24]
+    ldr x5, [x19, 8]
     str x0, [x19, 24]
-rtApStore:
-    ldr x1, [x19, 8]
-    ldr x2, [x19, 24]
-    str x20, [x2, x1, lsl 3]
-    add x1, x1, 1
-    str x1, [x19, 8]
-    ldp x20, x21, [sp], 16
+    mov x6, 0
+rtApCopy:
+    cmp x6, x5
+    b.ge rtApCopyDone
+    ldr x7, [x4, x6, lsl 3]
+    str x7, [x0, x6, lsl 3]
+    add x6, x6, 1
+    b rtApCopy
+rtApCopyDone:
+    mov x0, x19
+    mov x1, x20
+    ldp x20, xzr, [sp], 16
     ldp lr, x19, [sp], 16
+rtApStore:
+    ldr x2, [x0, 8]
+    ldr x3, [x0, 24]
+    str x1, [x3, x2, lsl 3]
+    add x2, x2, 1
+    str x2, [x0, 8]
+    lsl x0, x2, 1
+    add x0, x0, 1
     ret
 rtArrPop:
     ldr x1, [x0, 8]
@@ -61,8 +58,5 @@ rtArrPop:
     ret
 rtApEmpty:
     mov x0, 0
-    ret
-rtArrStr:
-    ldr x0, =strEmptyArr
     ret
 """

@@ -1,0 +1,28 @@
+total = 0
+for i in range(5):
+    total += i
+print(total)
+for i in range(2, 6):
+    print(i)
+for ch in "abc":
+    print(ch)
+m = {"x": 1, "y": 2}
+for k in m:
+    print(k, m[k])
+n = 0
+while n < 3:
+    n += 1
+    for j in range(3):
+        if j == 1:
+            continue
+        if n == 2:
+            break
+        print(n, j)
+nested = [[1, 2], [3, 4]]
+for row in nested:
+    for v in row:
+        print(v)
+big = 0
+for i in range(100000):
+    big += i % 7
+print(big)

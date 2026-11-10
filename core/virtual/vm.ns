@@ -1004,6 +1004,9 @@ class VmCompiler:
             if hasattr(body, "stmts"):
                 self.compileBlock(body.stmts)
                 self.emitOp(Op.RETURNNULL)
+            elif hasattr(body, "type") and body.type == "RETURN":
+                self.compileStmt(body, False)
+                self.emitOp(Op.RETURNNULL)
             elif hasattr(body, "type") or hasattr(body, "jenis"):
                 self.compileExpr(body)
                 self.emitOp(Op.RETURN)
@@ -1072,29 +1075,58 @@ class VmCompiler:
                 else:
                     self.compileIdentGet(name)
                     self.compileExpr(val)
-                    bop = expr.op[0]
-                    if bop == "+":
-                        self.emitOp(Op.ADD)
-                    elif bop == "-":
-                        self.emitOp(Op.SUB)
-                    elif bop == "*":
-                        self.emitOp(Op.MUL)
-                    elif bop == "/":
-                        self.emitOp(Op.DIV)
+                    self.emitCompoundOp(expr.op)
                     self.compileIdentSet(name)
             elif targetType == "INDEX":
                 self.compileExpr(target.target)
                 self.compileExpr(target.index)
-                self.compileExpr(val)
+                if expr.op != "=":
+                    self.compileExpr(target.target)
+                    self.compileExpr(target.index)
+                    self.emitOp(Op.GETINDEX)
+                    self.compileExpr(val)
+                    self.emitCompoundOp(expr.op)
+                else:
+                    self.compileExpr(val)
                 self.emitOp(Op.SETINDEX)
             elif targetType == "MEMBER" or targetType == "AKSES_ANGGOTA":
                 mTarget = target.target if hasattr(target, "target") else target.target
                 mName = target.name if hasattr(target, "name") else target.nama
-                self.compileExpr(mTarget)
-                self.compileExpr(val)
                 fIdx = self.addConstant(mName)
+                self.compileExpr(mTarget)
+                if expr.op != "=":
+                    self.compileExpr(mTarget)
+                    self.emitOp(Op.GETFIELD)
+                    self.emitU16(fIdx)
+                    self.compileExpr(val)
+                    self.emitCompoundOp(expr.op)
+                else:
+                    self.compileExpr(val)
                 self.emitOp(Op.SETFIELD)
                 self.emitU16(fIdx)
+
+    func emitCompoundOp(self, assignOp):
+        bop = assignOp[:len(assignOp) - 1]
+        if bop == "+":
+            self.emitOp(Op.ADD)
+        elif bop == "-":
+            self.emitOp(Op.SUB)
+        elif bop == "*":
+            self.emitOp(Op.MUL)
+        elif bop == "/":
+            self.emitOp(Op.DIV)
+        elif bop == "%":
+            self.emitOp(Op.MOD)
+        elif bop == "&":
+            self.emitOp(Op.BITAND)
+        elif bop == "|":
+            self.emitOp(Op.BITOR)
+        elif bop == "^":
+            self.emitOp(Op.BITXOR)
+        elif bop == "<<":
+            self.emitOp(Op.SHL)
+        elif bop == ">>":
+            self.emitOp(Op.SHR)
 
     func compileIdentGet(self, name):
         slot = self.resolveLocal(name)
@@ -1136,6 +1168,9 @@ class VmCompiler:
         cIdx = self.addConstant(name)
         self.emitOp(Op.SETGLOBAL)
         self.emitU16(cIdx)
+
+func intDivBuiltin(a, b):
+    return a // b
 
 func makeLazyRange(a, b = None, c = None):
     start = 0
@@ -1220,6 +1255,9 @@ class VmRunner:
         self.globals["int"] = int
         self.globals["float"] = float
         self.globals["ke_angka"] = ke_angka
+        self.globals["ord"] = ord
+        self.globals["intDiv"] = intDivBuiltin
+        self.globals["chr"] = chr
         self.globals["type"] = type
         self.globals["tipe"] = tipe
         self.globals["range"] = makeLazyRange
@@ -1555,14 +1593,15 @@ class VmRunner:
                     b = self.pop()
                     a = self.pop()
                     if b == 0:
-                        print("RuntimeError: Division by zero")
-                        sys.exit(1)
-                        self.push(0)
-                    else:
-                        self.push(a / b)
+                        divZero = {"pesan": "division by zero"}
+                        lempar divZero
+                    self.push(a / b)
                 elif op == Op.MOD:
                     b = self.pop()
                     a = self.pop()
+                    if b == 0:
+                        divZero = {"pesan": "division by zero"}
+                        lempar divZero
                     self.push(a % b)
                 elif op == Op.NEG:
                     a = self.pop()
@@ -1789,12 +1828,17 @@ class VmRunner:
                 elif op == Op.NEWMAP:
                     cnt = self.readU16()
                     m = {}
+                    pairKeys = []
+                    pairVals = []
                     k = 0
                     while k < cnt:
-                        v = self.pop()
-                        kKey = self.pop()
-                        m[kKey] = v
+                        pairVals.append(self.pop())
+                        pairKeys.append(self.pop())
                         k += 1
+                    k = cnt - 1
+                    while k >= 0:
+                        m[pairKeys[k]] = pairVals[k]
+                        k -= 1
                     self.push(m)
                 elif op == Op.GETINDEX:
                     idx = self.pop()
@@ -1948,7 +1992,33 @@ class VmRunner:
                             self.push(target.endswith(callArgs[0]))
                             continue
                         elif name == "find":
-                            self.push(target.find(callArgs[0]))
+                            findStart = callArgs[1] if len(callArgs) > 1 else 0
+                            if findStart <= 0:
+                                self.push(target.find(callArgs[0]))
+                            else:
+                                restText = target[findStart:]
+                                foundAt = restText.find(callArgs[0])
+                                self.push(-1 if foundAt < 0 else foundAt + findStart)
+                            continue
+                        elif name == "join":
+                            self.push(gabung(callArgs[0], target))
+                            continue
+                        elif name == "isdigit":
+                            self.push(target.isdigit())
+                            continue
+                        elif name == "isalpha":
+                            self.push(target.isalpha())
+                            continue
+                        elif name == "isalnum":
+                            self.push(target.isalnum())
+                            continue
+                    if tipe(target) == "larik" or type(target) == "list":
+                        if name == "append" or name == "push":
+                            target.append(callArgs[0])
+                            self.push(len(target))
+                            continue
+                        elif name == "pop":
+                            self.push(target.pop())
                             continue
                     if tipe(target) == "peta" or type(target) == "dict":
                         if name in target and callable(target[name]):

@@ -1,7 +1,16 @@
 SYS_RUNTIME = """rtFail:
     ldr x1, =excTop
     ldr x2, [x1]
-    cbnz x2, rtThrow
+    cbz x2, rtFailPrint
+    stp lr, x0, [sp, -16]!
+    bl rtMapNew
+    ldr x2, [sp, 8]
+    str x0, [sp, 8]
+    ldr x1, =strPesanKey
+    bl rtMapSet
+    ldp lr, x0, [sp], 16
+    b rtThrow
+rtFailPrint:
     stp x0, lr, [sp, -16]!
     ldr x0, =strErr
     mov x1, 2
@@ -88,7 +97,13 @@ rtCpyLoop:
 rtCpyDone:
     ret
 rtSysExit:
+    ldr x0, [sp]
+    tbnz x0, 0, rtSeInt
+    mov x0, 0
+    b rtSeGo
+rtSeInt:
     asr x0, x0, 1
+rtSeGo:
     mov x8, 94
     svc #0
     ret

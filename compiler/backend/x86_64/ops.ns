@@ -274,15 +274,11 @@ rtItMap:
     mov r13, rax
     xor r14, r14
 rtItMLoop:
-    cmp r14, [r12+16]
+    cmp r14, [r12+8]
     jae rtItEnd
-    mov rax, r14
-    shl rax, 4
-    add rax, [r12+24]
-    mov rsi, [rax]
+    mov rax, [r12+32]
+    mov rsi, [rax+r14*8]
     inc r14
-    test rsi, rsi
-    jz rtItMLoop
     mov rdi, r13
     call rtArrPush
     jmp rtItMLoop

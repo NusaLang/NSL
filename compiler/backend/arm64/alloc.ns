@@ -11,7 +11,7 @@ rtInit:
     mov x0, 0
     ldr x1, =17179869184
     mov x2, 3
-    mov x3, 0x22
+    mov x3, 0x4022
     mov x4, -1
     mov x5, 0
     mov x8, 222

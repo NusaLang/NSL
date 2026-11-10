@@ -1,0 +1,61 @@
+class Counter:
+    func __init__(self):
+        self.n = 0
+        self.items = []
+        self.map = {"a": 1}
+    func inc(self, by = 1):
+        self.n += by
+        return self
+    func add(self, v):
+        push(self.items, v)
+        return self
+    func total(self):
+        t = 0
+        for v in self.items:
+            t += v
+        return t
+c = Counter()
+c.inc().inc(5).inc()
+print(c.n)
+c.add(1).add(2).add(3)
+print(c.total(), len(c.items))
+c.map["a"] += 10
+c.map["b"] = 5
+c.map["b"] *= 3
+print(c.map["a"], c.map["b"])
+arr = [1, 2, 3, 4]
+arr[0] += 10
+arr[-1] = 40
+arr[1] *= 5
+arr[2] -= 1
+print(arr)
+c.n -= 2
+c.n *= 3
+print(c.n)
+x = 0
+print(x or 7, 5 or 7, 0 and 7, 3 and 7, None or "d", "" or "e", [] or 1)
+print(1 and 2 and 3, 0 or 0 or 9)
+print("a" <= "b", "b" >= "b", "b" > "a", "a" < "a", "abc" < "abcd", "" < "a")
+t = True
+f = False
+print(t and f, t or f, not t, not f, t == f, t != f)
+v = [1, 2, 3]
+w = v
+w[0] = 99
+print(v[0], v == w)
+s = "x"
+s += "y"
+s *= 2
+print(s)
+def2 = {}
+def2["k"] = [1, 2]
+def2["k"][0] += 5
+push(def2["k"], 7)
+print(def2)
+print(-2.5 < -1, 0.5 > 0.25, 2.5 == 2.5, 1 == 1.0, 3 > 2.5)
+print(1.5 + 1, 1 + 1.5, 10 - 0.5, 2 * 0.25, 7.5 / 2, 7 / 2.0, 5.5 % 2)
+print(0.1, 1.0 / 3, 123456.789, 0.000001, 1234567.0, -0.25)
+n = 5
+n2 = n
+n2 += 1
+print(n, n2)
