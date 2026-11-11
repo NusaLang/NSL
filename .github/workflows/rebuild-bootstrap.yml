@@ -53,7 +53,7 @@ jobs:
           sha256sum nusa-android-arm64 > nusa-android-arm64.sha256
           mkdir -p dist/bundle
           cp nusa-android-arm64 dist/bundle/nusa-engine
-          printf '#!/bin/sh\nDIR="$(cd "$(dirname "$0")" && pwd)"\nexec "$DIR/nusa-engine" "$DIR/core/main.ns" "$@"\n' > dist/bundle/nusa
+          printf '#!/bin/sh\nDIR="$(cd "$(dirname "$0")" && pwd)"\nexec sh "$DIR/core/launcher.sh" "$DIR" "$@"\n' > dist/bundle/nusa
           chmod +x dist/bundle/nusa dist/bundle/nusa-engine
           cp -r core compiler std net crypto media lib Makefile README.md LICENSE NOTICE dist/bundle/
           tar -czf dist/nusa-android-arm64.tar.gz -C dist/bundle .
@@ -189,13 +189,13 @@ jobs:
 
           mkdir -p dist/bundle-arm64 dist/bundle-x86_64
           cp nusa-darwin-arm64 dist/bundle-arm64/nusa-engine
-          printf '#!/bin/sh\nDIR="$(cd "$(dirname "$0")" && pwd)"\nexec "$DIR/nusa-engine" "$DIR/core/main.ns" "$@"\n' > dist/bundle-arm64/nusa
+          printf '#!/bin/sh\nDIR="$(cd "$(dirname "$0")" && pwd)"\nexec sh "$DIR/core/launcher.sh" "$DIR" "$@"\n' > dist/bundle-arm64/nusa
           chmod +x dist/bundle-arm64/nusa dist/bundle-arm64/nusa-engine
           cp -r core compiler std net crypto media lib Makefile README.md LICENSE NOTICE dist/bundle-arm64/
           tar -czf dist/nusa-darwin-arm64.tar.gz -C dist/bundle-arm64 .
 
           cp nusa-darwin-x86_64 dist/bundle-x86_64/nusa-engine
-          printf '#!/bin/sh\nDIR="$(cd "$(dirname "$0")" && pwd)"\nexec "$DIR/nusa-engine" "$DIR/core/main.ns" "$@"\n' > dist/bundle-x86_64/nusa
+          printf '#!/bin/sh\nDIR="$(cd "$(dirname "$0")" && pwd)"\nexec sh "$DIR/core/launcher.sh" "$DIR" "$@"\n' > dist/bundle-x86_64/nusa
           chmod +x dist/bundle-x86_64/nusa dist/bundle-x86_64/nusa-engine
           cp -r core compiler std net crypto media lib Makefile README.md LICENSE NOTICE dist/bundle-x86_64/
           tar -czf dist/nusa-darwin-x86_64.tar.gz -C dist/bundle-x86_64 .

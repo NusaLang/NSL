@@ -86,6 +86,23 @@ func exec(src, vm, tokens, ast, runtime = None):
     runtime.run(tree)
     return runtime
 
+func setScriptDirFor(path):
+    slash = -1
+    i = len(path) - 1
+    while i >= 0 and slash == -1:
+        if path[i] == "/":
+            slash = i
+        i -= 1
+    scriptDir = "."
+    if slash > 0:
+        scriptDir = path[:slash]
+    elif slash == 0:
+        scriptDir = "/"
+    if not scriptDir.startswith("/"):
+        cwd = JalankanPerintah("pwd", []).keluaran.strip()
+        scriptDir = cwd if scriptDir == "." else cwd + "/" + scriptDir
+    resolverModule.setScriptDir(scriptDir)
+
 func readSource(path, skipFirst):
     if not FileAda(path):
         fail("cannot open " + path)
@@ -408,6 +425,7 @@ func main():
 
     runtime = None
     if mode == "file":
+        setScriptDirFor(arg)
         runtime = guarded(lambda: exec(readSource(arg, skipFirst), vm, tokens, ast))
     elif mode == "eval":
         runtime = guarded(lambda: exec(arg, vm, tokens, ast))

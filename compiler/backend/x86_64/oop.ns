@@ -62,7 +62,16 @@ rtFgMiss:
     pop r12
     ret
 rtFgMapFallback:
+    test dil, 1
+    jnz rtFgNull
+    cmp rdi, 4
+    jbe rtFgNull
+    cmp qword ptr [rdi], 4
+    jne rtFgNull
     call rtMapGet
+    ret
+rtFgNull:
+    xor eax, eax
     ret
 rtFieldSet:
     test dil, 1
@@ -109,8 +118,44 @@ rtFsMiss:
     lea rdi, [strNoField]
     jmp rtFail
 rtFsMapFallback:
+    test dil, 1
+    jnz rtFsMiss
+    cmp rdi, 4
+    jbe rtFsMiss
+    cmp qword ptr [rdi], 4
+    jne rtFsMiss
     call rtMapSet
     ret
+rtCallable:
+    test dil, 1
+    jz rtNotCallable
+    mov rax, rdi
+    shr rax, 1
+    lea rcx, [rtAlloc]
+    cmp rax, rcx
+    jb rtNotCallable
+    lea rcx, [rtTextEnd]
+    cmp rax, rcx
+    jae rtNotCallable
+    ret
+rtNotCallable:
+    lea rdi, [strNotCallable]
+    jmp rtFail
+rtMapMethod:
+    test dil, 1
+    jnz rtMmFail
+    cmp rdi, 4
+    jbe rtMmFail
+    cmp qword ptr [rdi], 4
+    jne rtMmFail
+    call rtMapGet
+    test rax, rax
+    jz rtMmFail
+    mov rdi, rax
+    jmp rtCallable
+rtMmFail:
+    lea rdi, [strNoMethod]
+    jmp rtFail
 rtFindMethod:
     mov rcx, [rdi+8]
 rtFmLoop:

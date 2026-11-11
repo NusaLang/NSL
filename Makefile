@@ -41,7 +41,7 @@ $(BIN): core/main.ns $(wildcard core/*.ns) $(wildcard core/*/*.ns)
 		chmod +x ./$(ENGINE) 2>/dev/null || true; \
 	fi
 	@if [ -x "./$(ENGINE)" ] || [ -n "$(HOST_NUSA)" ]; then \
-		printf '#!/bin/sh\nDIR="$$(cd "$$(dirname "$$0")" && pwd)"\nif [ -x "$$DIR/$(ENGINE)" ]; then\n    exec "$$DIR/$(ENGINE)" "$$DIR/core/main.ns" "$$@"\nfi\nexec nusa "$$DIR/core/main.ns" "$$@"\n' > $(BIN); \
+		printf '#!/bin/sh\nDIR="$$(cd "$$(dirname "$$0")" && pwd)"\nexec sh "$$DIR/core/launcher.sh" "$$DIR" "$$@"\n' > $(BIN); \
 	else \
 		printf "#!/usr/bin/env nusa\n" > $(BIN); \
 		cat core/main.ns >> $(BIN); \
@@ -84,7 +84,7 @@ install: $(BIN)
 		chmod +x $(DESTDIR)$(PREFIX)/share/nusa/$(ENGINE); \
 		cp -r core compiler std net crypto media lib Makefile README.md LICENSE NOTICE $(DESTDIR)$(PREFIX)/share/nusa/ 2>/dev/null || true; \
 		printf '#!/bin/sh\nexec "%s/nusa" "$$@"\n' "$(DESTDIR)$(PREFIX)/share/nusa" > $(DESTDIR)$(BINDIR)/$(BIN); \
-		printf '#!/bin/sh\nDIR="$$(cd "$$(dirname "$$0")" && pwd)"\nexec "$$DIR/$(ENGINE)" "$$DIR/core/main.ns" "$$@"\n' > $(DESTDIR)$(PREFIX)/share/nusa/$(BIN); \
+		printf '#!/bin/sh\nDIR="$$(cd "$$(dirname "$$0")" && pwd)"\nexec sh "$$DIR/core/launcher.sh" "$$DIR" "$$@"\n' > $(DESTDIR)$(PREFIX)/share/nusa/$(BIN); \
 		chmod +x $(DESTDIR)$(BINDIR)/$(BIN) $(DESTDIR)$(PREFIX)/share/nusa/$(BIN); \
 		echo "Installed to $(DESTDIR)$(BINDIR)/$(BIN) (runtime at $(DESTDIR)$(PREFIX)/share/nusa)"; \
 	elif [ -f "$(DESTDIR)$(BINDIR)/nusantara" ] && file "$(DESTDIR)$(BINDIR)/nusantara" | grep -q "ELF"; then \

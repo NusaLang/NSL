@@ -641,6 +641,32 @@ class Arm64Compiler:
         self.emit("ldr x16, =gv" + name)
         self.emit("str " + reg + ", [x16]")
 
+    func checkDefined(self, name):
+        if self.inFn and (name in self.regOf or name in self.params or name in self.locals):
+            return None
+        if name in self.knownGlobals or name in self.globalNames:
+            return None
+        if name == "import" or name == "impor":
+            return None
+        fail("undefined variable '" + name + "'")
+
+    func genMapViewCall(self, callee, name, args):
+        helper = {"keys": "nsRtMapKeys", "kunci": "nsRtMapKeys", "values": "nsRtMapValues", "nilai": "nsRtMapValues", "items": "nsRtMapItems"}[name]
+        notMap = self.newLabel()
+        done = self.newLabel()
+        self.genExpr(callee.target)
+        self.emit("tbnz x0, 0, " + notMap)
+        self.emit("cmp x0, 4")
+        self.emit("b.ls " + notMap)
+        self.emit("ldr x2, [x0]")
+        self.emit("cmp x2, 4")
+        self.emit("b.ne " + notMap)
+        self.genCall(astModule.CallExpr(astModule.IdentExpr(helper), [callee.target]))
+        self.emit("b " + done)
+        self.label(notMap)
+        self.genMethodCallGeneric(callee, name, args)
+        self.label(done)
+
     func newTemp(self):
         self.tempCount += 1
         return "tmp" + str(self.tempCount)
@@ -669,6 +695,7 @@ class Arm64Compiler:
 
     func loadSimple(self, e, reg):
         if e.type == "IDENT":
+            self.checkDefined(e.name)
             self.varLoad(e.name, reg)
         else:
             self.constTo(reg, self.tagged(e))
@@ -829,6 +856,7 @@ class Arm64Compiler:
         lines.append("_start:")
         lines.append(mainText)
         lines.append("    .ltorg")
+        lines.append("rtTextEnd:")
         lines.append(".data")
         lines.append(runtimeModule.DATA)
         for d in self.dataLines:
@@ -1286,6 +1314,7 @@ class Arm64Compiler:
                 self.emit("ldr x16, =gvsys")
                 self.emit("ldr x0, [x16]")
             else:
+                self.checkDefined(e.name)
                 self.varLoad(e.name, "x0")
         elif t == "UNARY":
             if e.op == "-":
@@ -1575,8 +1604,7 @@ class Arm64Compiler:
         self.emit("b " + callLbl)
         self.label(notClassLbl)
         self.emit("ldr x1, =" + self.internString(name))
-        self.emit("bl rtMapGet")
-        self.emit("asr x0, x0, 1")
+        self.emit("bl rtMapMethod")
         self.label(callLbl)
         self.emit("blr x0")
         self.emit("add sp, sp, " + str(16 * (numArgs + 1)))
@@ -1618,7 +1646,7 @@ class Arm64Compiler:
     func genIndirectCall(self, callee, args):
         self.pushArgs(args)
         self.genExpr(callee)
-        self.emit("asr x0, x0, 1")
+        self.emit("bl rtCallable")
         self.emit("blr x0")
         if len(args) > 0:
             self.emit("add sp, sp, " + str(16 * len(args)))
@@ -1670,6 +1698,9 @@ class Arm64Compiler:
                 self.pop("x1")
                 self.pop("x0")
                 self.emit("bl rtMapGetDef")
+                return None
+            if (name == "keys" or name == "kunci" or name == "values" or name == "nilai" or name == "items") and len(args) == 0:
+                self.genMapViewCall(callee, name, args)
                 return None
             if name in STRMETHODS:
                 self.genStringOrGenericCall(callee, name, args)

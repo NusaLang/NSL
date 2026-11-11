@@ -13,7 +13,7 @@ total=0
 for src in tests/lang/*.ns; do
     name=$(basename "$src" .ns)
     expected="tests/lang/expected/$name.out"
-    ./nusa "$src" >"$work/interp.out" 2>&1
+    NUSA_INTERP=1 ./nusa "$src" >"$work/interp.out" 2>&1
     [ -n "$UPDATE" ] && cp "$work/interp.out" "$expected"
     ./nusa --vm "$src" >"$work/vm.out" 2>&1
     modes="interp vm native"

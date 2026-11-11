@@ -111,6 +111,19 @@ func compile(tree, targetArch = None, sourceDir = None):
 
 toolchainOptions = {"external": False}
 
+func absolutePath(p):
+    if p.startswith("/"):
+        return p
+    return getCwd() + "/" + p
+
+func writeDeps(path, inputFile, backend):
+    lines = [absolutePath(inputFile)]
+    for name in backend.importOrder:
+        resolved = backend.resolveImportPath(name)
+        if resolved != None:
+            lines.append(absolutePath(resolved))
+    TulisFile(path, "\n".join(lines) + "\n")
+
 func isTermux():
     return FileAda("/data/data/com.termux/files/usr/bin") or FileAda("/data/data/com.termux")
 
@@ -170,6 +183,10 @@ func build(inputFile, outputFile, keepAsm = False, targetArch = None):
     except e:
         print(e)
         builtinsSys.exit(1)
+
+    depsPath = ambil_env("NUSA_DEPS")
+    if depsPath != None and depsPath != "":
+        writeDeps(depsPath, inputFile, compiler.backend)
 
     asmPath = outputFile + ".s"
     objPath = outputFile + ".o"

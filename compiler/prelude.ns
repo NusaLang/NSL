@@ -227,6 +227,24 @@ func nsRtFloatFormat(sign, m, e, special):
         return prefix + digs + nsRtZeros(decpt - k)
     return prefix + digs[0:decpt] + "." + digs[decpt:k]
 
+func nsRtMapKeys(m):
+    out = []
+    for k in m:
+        push(out, k)
+    return out
+
+func nsRtMapValues(m):
+    out = []
+    for k in m:
+        push(out, m[k])
+    return out
+
+func nsRtMapItems(m):
+    out = []
+    for k in m:
+        push(out, [k, m[k]])
+    return out
+
 func nsRtFloatStr(x):
     p = floatParts(x)
     return nsRtFloatFormat(p[0], p[1], p[2], p[3])
