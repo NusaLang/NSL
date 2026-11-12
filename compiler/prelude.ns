@@ -190,6 +190,8 @@ func nsRtFloatFormat(sign, m, e, special):
         prefix = "-"
     if m == 0:
         return "0"
+    if sign == 1 and m == 4503599627370496 and e == 11:
+        return "-9223372036854775808"
     if e >= 0 and e <= 8:
         return prefix + str(m * (1 << e))
     if e < 0 and e >= -52:

@@ -24,7 +24,7 @@ for i in range(10):
 ./app                       # no runtime, no dependencies
 ```
 
-`nusa main.ns` works like `go run`: the first run compiles, later runs start from the cache until the source or one of its imports changes. The compiler turns `.ns` source into x86-64 or ARM64 machine code — tagged integers, fixed-offset structs for classes, inline caches for field and method lookups — with its own assembler and ELF writer, so no `as`, `ld`, or C compiler is needed, on Linux or in Termux on Android. Programs that use something the compiler does not support yet (closures, comprehensions, `*args`, sockets, and a few more) run in the interpreter instead, with identical results; `NUSA_INTERP=1` forces the interpreter.
+`nusa main.ns` works like `go run`: the first run compiles, later runs start from the cache until the source or one of its imports changes. The compiler turns `.ns` source into x86-64 or ARM64 machine code — tagged integers, fixed-offset structs for classes, inline caches for field and method lookups — with its own assembler and ELF writer, so no `as`, `ld`, or C compiler is needed, on Linux or in Termux on Android. Programs that use something the compiler does not support yet (closures, comprehensions, `*args`, `with`, typed `catch`, operator methods, text with non-ASCII characters, sockets, and more) run in the interpreter instead, with identical results; `NUSA_INTERP=1` forces the interpreter.
 
 ## Benchmarks
 
@@ -103,12 +103,16 @@ Functions are values. `lambda x: x * x` and nested functions capture the variabl
 
 An assignment updates the variable of that name when one is already visible: a parameter, a variable of an enclosing function, or a module variable. Otherwise it creates a new local. `buat` always declares a new variable in the current block, and `global name` is accepted for readers coming from Python. See `examples/scopes.ns`.
 
+### Classes
+
+Single inheritance with `super()`, class attributes, `@property` with `.setter`, `@staticmethod`, `@classmethod`. Special methods work as in Python: `__add__` and the other arithmetic and comparison operators, `__eq__`, `__len__`, `__getitem__`/`__setitem__`, `__contains__`, `__iter__`, `__call__`, `__bool__`, `__str__`, `__repr__`, `__enter__`/`__exit__` for `with`. Builtin error classes (`Exception`, `ValueError`, `KeyError`, ...) can be subclassed and caught by type: `catch NotFound as e:`. See `examples/objects.ns`.
+
 ### Text, collections, errors
 
 - `f"{value:.2f}"`, `"{x}"`-free templates in backticks, slices with steps (`s[::-1]`), `in` on text, lists, and maps.
 - Comprehensions (`[n * n for n in xs if n > 1]`, `{k: v for ...}`), tuple assignment (`a, b = b, a`), `for key, value in pairs`.
-- `try`/`catch`/`finally` with `throw`. Errors raised by the runtime are maps with a `pesan` field. A missing map key reads as `kosong`.
-- Numbers are doubles; integer literals above 2^53 are rejected.
+- `try`/`catch`/`finally` with `throw`. Errors raised by the runtime are maps with a `pesan` field. A missing map key reads as `kosong`. `import name`, `from name import x`, decorators, and `print(a, b, sep = "-", end = "")` work as in Python.
+- Numbers are doubles; integer literals above 2^53 are rejected. Native code keeps whole numbers in registers while they stay exact (below 2^53) and switches to doubles beyond that, so results match the interpreter bit for bit.
 
 ## Standard library highlights
 
