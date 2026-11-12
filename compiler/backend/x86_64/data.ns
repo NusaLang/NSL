@@ -131,6 +131,14 @@ strPesanKey: .quad 2
  .quad 5
  .ascii "pesan"
 .align 8
+strNotCallable: .quad 2
+ .quad 21
+ .ascii "value is not callable"
+.align 8
+strBadLen: .quad 2
+ .quad 31
+ .ascii "len() needs text, array, or map"
+.align 8
 excTop: .quad 0
 .align 8
 heapPtr: .quad 0

@@ -795,6 +795,7 @@ class X86_64Compiler:
             lines.append(ft)
         lines.append(entryLabel + ":")
         lines.append(mainText)
+        lines.append("rtTextEnd:")
         lines.append(".data")
         lines.append(runtimeModule.DATA)
         for d in self.dataLines:
@@ -871,6 +872,32 @@ class X86_64Compiler:
         self.globalNames[name] = True
         return "[gv" + name + "]"
 
+    func checkDefined(self, name):
+        if self.inFn and (name in self.regOf or name in self.params or name in self.locals):
+            return None
+        if name in self.knownGlobals or name in self.globalNames:
+            return None
+        if name == "import" or name == "impor":
+            return None
+        fail("undefined variable '" + name + "'")
+
+    func genMapViewCall(self, callee, name, args):
+        helper = {"keys": "nsRtMapKeys", "kunci": "nsRtMapKeys", "values": "nsRtMapValues", "nilai": "nsRtMapValues", "items": "nsRtMapItems"}[name]
+        notMap = self.newLabel()
+        done = self.newLabel()
+        self.genExpr(callee.target)
+        self.emit("test al, 1")
+        self.emit("jnz " + notMap)
+        self.emit("cmp rax, 4")
+        self.emit("jbe " + notMap)
+        self.emit("cmp qword ptr [rax], 4")
+        self.emit("jne " + notMap)
+        self.genCall(astModule.CallExpr(astModule.IdentExpr(helper), [callee.target]))
+        self.emit("jmp " + done)
+        self.label(notMap)
+        self.genMethodCallGeneric(callee, name, args)
+        self.label(done)
+
     func newTemp(self):
         self.tempCount += 1
         name = "tmp" + str(self.tempCount)
@@ -887,6 +914,7 @@ class X86_64Compiler:
 
     func loadSimple(self, e, reg):
         if e.type == "IDENT":
+            self.checkDefined(e.name)
             self.emit("mov " + reg + ", " + self.addr(e.name, False))
         else:
             self.emit("mov " + reg + ", " + self.tagged(e))
@@ -1347,6 +1375,7 @@ class X86_64Compiler:
             elif e.name == "sys":
                 self.emit("mov rax, [gvsys]")
             else:
+                self.checkDefined(e.name)
                 self.emit("mov rax, " + self.addr(e.name, False))
         elif t == "UNARY":
             if e.op == "-":
@@ -1677,8 +1706,7 @@ class X86_64Compiler:
         self.emit("jmp " + callLbl)
         self.label(notClassLbl)
         self.emit("lea rsi, [" + self.internString(name) + "]")
-        self.emit("call rtMapGet")
-        self.emit("shr rax, 1")
+        self.emit("call rtMapMethod")
         self.emit("jmp " + callLbl)
         self.label(hitLbl)
         self.emit("mov rax, [" + micFn + "]")
@@ -1792,6 +1820,9 @@ class X86_64Compiler:
                 self.emit("call rtMapGetDef")
                 self.label(lblDone)
                 return None
+            if (name == "keys" or name == "kunci" or name == "values" or name == "nilai" or name == "items") and len(args) == 0:
+                self.genMapViewCall(callee, name, args)
+                return None
             if name in STRMETHODS:
                 self.genStringOrGenericCall(callee, name, args)
                 return None
@@ -1803,9 +1834,9 @@ class X86_64Compiler:
                 self.emit("sub rsp, " + str(extraIndirect))
             self.pushArgs(args)
             self.genExpr(callee)
-            self.emit("mov r11, rax")
-            self.emit("shr r11, 1")
-            self.emit("call r11")
+            self.emit("mov rdi, rax")
+            self.emit("call rtCallable")
+            self.emit("call rax")
             if len(args) > 0 or extraIndirect > 0:
                 self.emit("add rsp, " + str(8 * len(args) + extraIndirect))
             return None
@@ -1998,9 +2029,9 @@ class X86_64Compiler:
                 self.emit("sub rsp, " + str(extraGlobal))
             self.pushArgs(args)
             self.genExpr(callee)
-            self.emit("mov r11, rax")
-            self.emit("shr r11, 1")
-            self.emit("call r11")
+            self.emit("mov rdi, rax")
+            self.emit("call rtCallable")
+            self.emit("call rax")
             if len(args) > 0 or extraGlobal > 0:
                 self.emit("add rsp, " + str(8 * len(args) + extraGlobal))
         else:

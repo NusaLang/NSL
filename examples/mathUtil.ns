@@ -1,0 +1,9 @@
+# A module: imported by modules.ns.
+func square(x):
+    return x * x
+
+func average(items):
+    total = 0
+    for v in items:
+        total = total + v
+    return total / len(items)

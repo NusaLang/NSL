@@ -293,6 +293,12 @@ class HttpHeaders:
     func all(self):
         return self.data
 
+    func allOriginal(self):
+        out = {}
+        for k in self.data:
+            out[self.originalKeys[k]] = self.data[k]
+        return out
+
     func semua(self):
         return self.all()
 
@@ -321,6 +327,8 @@ class HttpRequest:
         self.tubuh = body
         self.header = header if hasattr(header, "data") else HttpHeaders(header)
         self.ip = ""
+        self.query = ""
+        self.params = {}
 
     func getHeader(self, name, defaultVal = ""):
         return self.header.get(name, defaultVal)
@@ -693,13 +701,21 @@ class HttpServer:
                 for k in ph:
                     hdr.set(k, ph[k])
 
+            rawPath = rawReq["path"]
+            queryText = ""
+            qpos = rawPath.find("?")
+            if qpos >= 0:
+                queryText = rawPath[qpos + 1:]
+                rawPath = rawPath[:qpos]
             req = HttpRequest(
                 rawReq["metode"],
-                rawReq["path"],
+                rawPath,
                 hdr,
                 rawReq["tubuh"]
             )
             req.ip = rawReq["ip"]
+            req.query = queryText
+            req.params = parseQuery(queryText)
 
             resp = directHandler(req) if directHandler != None else srv.handleRequest(req)
 
@@ -713,7 +729,7 @@ class HttpServer:
             out = {}
             out["status"] = resp.status
             out["tubuh"] = resp.body
-            out["header"] = resp.header.all()
+            out["header"] = resp.header.allOriginal()
             return out
 
         httpListen(port, netHandler)

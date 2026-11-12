@@ -62,6 +62,9 @@ func loadSubmodule(path):
             pass
     return impor(path)
 
+assemblerModule = loadSubmodule("compiler/assembler/assembler.ns")
+assembleToFile = assemblerModule.assembleToFile
+
 func getBackendCompiler(targetArch):
     if targetArch == "arm64":
         arm64Mod = loadSubmodule("compiler/backend/arm64/compiler.ns")
@@ -105,6 +108,21 @@ NativeCompiler = DriverCompiler
 func compile(tree, targetArch = None, sourceDir = None):
     compiler = DriverCompiler(targetArch)
     return compiler.compile(tree, sourceDir)
+
+toolchainOptions = {"external": False}
+
+func absolutePath(p):
+    if p.startswith("/"):
+        return p
+    return getCwd() + "/" + p
+
+func writeDeps(path, inputFile, backend):
+    lines = [absolutePath(inputFile)]
+    for name in backend.importOrder:
+        resolved = backend.resolveImportPath(name)
+        if resolved != None:
+            lines.append(absolutePath(resolved))
+    TulisFile(path, "\n".join(lines) + "\n")
 
 func isTermux():
     return FileAda("/data/data/com.termux/files/usr/bin") or FileAda("/data/data/com.termux")
@@ -166,6 +184,10 @@ func build(inputFile, outputFile, keepAsm = False, targetArch = None):
         print(e)
         builtinsSys.exit(1)
 
+    depsPath = ambil_env("NUSA_DEPS")
+    if depsPath != None and depsPath != "":
+        writeDeps(depsPath, inputFile, compiler.backend)
+
     asmPath = outputFile + ".s"
     objPath = outputFile + ".o"
     TulisFile(asmPath, asm)
@@ -176,6 +198,18 @@ func build(inputFile, outputFile, keepAsm = False, targetArch = None):
 
     hostArch = detectTarget()["arch"]
     isNativeHost = arch == hostArch
+
+    if not toolchainOptions["external"] and not compiler.usesGoBridge:
+        assembled = False
+        try:
+            assembleToFile(asm, arch, outputFile)
+            assembled = True
+        except e:
+            print("assembler internal gagal, memakai toolchain sistem: " + str(e))
+        if assembled:
+            if not keepAsm:
+                JalankanPerintah("rm", ["-f", asmPath])
+            return None
 
     if arch == "x86_64":
         asmCandidates = [
@@ -230,7 +264,7 @@ func build(inputFile, outputFile, keepAsm = False, targetArch = None):
 func main():
     args = builtinsSys.argv
     if len(args) < 2:
-        print("usage: nusa compiler/driver.ns <file.ns> [-o output] [-S] [--target x86_64|arm64]")
+        print("usage: nusa compiler/driver.ns <file.ns> [-o output] [-S] [--external] [--target x86_64|arm64]")
         builtinsSys.exit(1)
     inputFile = args[1]
     outputFile = "a.out"
@@ -243,6 +277,9 @@ func main():
             i += 2
         elif args[i] == "-S" or args[i] == "-s" or args[i] == "--keep-asm":
             keepAsm = True
+            i += 1
+        elif args[i] == "--external":
+            toolchainOptions["external"] = True
             i += 1
         elif args[i] == "--target" and i + 1 < len(args):
             targetArch = args[i + 1]

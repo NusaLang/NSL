@@ -1,8 +1,0 @@
-func tryIt(f):
-    try:
-        return f()
-    catch e:
-        return "ERR"
-print(tryIt(lambda: int(" 12 ")), tryIt(lambda: int("12abc")), tryIt(lambda: int("")), tryIt(lambda: int("-5")), tryIt(lambda: int("+7")), tryIt(lambda: int("1.5")))
-print(tryIt(lambda: float(" 1.5 ")), tryIt(lambda: float("1.5x")), tryIt(lambda: float("")), tryIt(lambda: float(".5")), tryIt(lambda: float("5.")), tryIt(lambda: float("1e3")), tryIt(lambda: float("abc")), tryIt(lambda: float("e5")))
-print(tryIt(lambda: int(3.9)), tryIt(lambda: int(0 - 3.9)), tryIt(lambda: int("42")), tryIt(lambda: float("-2.5e-1")))

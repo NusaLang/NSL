@@ -55,8 +55,32 @@ func resolveModulePath(name, fileExistsFn = None):
             return c
     return None
 
-func resolveAndImport(name):
+scriptState = {"dir": ""}
+
+func setScriptDir(path):
+    scriptState["dir"] = path
+
+func importModule(name):
+    tries = []
+    if scriptState["dir"] != "" and not name.startswith("/"):
+        local = scriptState["dir"] + "/" + name
+        if FileAda(local):
+            tries.append(local)
+        elif FileAda(local + ".ns"):
+            tries.append(local + ".ns")
     target = resolveModulePath(name, FileAda)
     if target != None:
-        return impor(target)
+        tries.append(target)
+    tries.append(name)
+    for c in getModuleCandidates(name):
+        tries.append("../" + c)
+    lastError = None
+    for t in tries:
+        try:
+            return impor(t)
+        except failure:
+            lastError = failure
     return impor(name)
+
+func resolveAndImport(name):
+    return importModule(name)

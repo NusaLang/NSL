@@ -1,6 +1,0 @@
-m = {"alpha": 1, "beta": 2}
-print(len(m), m["alpha"])
-m["gamma"] = 3
-print(m["gamma"], "alpha" in m, "delta" in m)
-for k in m:
-    print(k)

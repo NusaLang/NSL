@@ -1,0 +1,125 @@
+func loadAsm(name):
+    candidates = [
+        "compiler/assembler/" + name,
+        "assembler/" + name,
+        "../compiler/assembler/" + name,
+        "../assembler/" + name,
+        "experiment/compiler/assembler/" + name,
+        name
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor("compiler/assembler/" + name)
+text = loadAsm("text.ns")
+asmFail = text.asmFail
+poolModule = loadAsm("arm64Pool.ns")
+dataModule = loadAsm("arm64Data.ns")
+memoryModule = loadAsm("arm64Memory.ns")
+floatModule = loadAsm("arm64Float.ns")
+operands = loadAsm("arm64Operands.ns")
+regNum = operands.regNum
+is64 = operands.is64
+CONDS = operands.CONDS
+
+MEMORY = ["ldr", "str", "ldur", "stur", "ldrb", "strb", "ldrsw"]
+FLOATING = ["scvtf", "fcvtzs", "fmov", "fadd", "fsub", "fmul", "fdiv", "fneg", "frintm", "fcmp"]
+
+class Arm64Encoder:
+    func __init__(self):
+        self.asm = None
+        self.pool = None
+        self.data = None
+        self.memory = None
+        self.floating = None
+
+    func bind(self, asm):
+        self.asm = asm
+        self.pool = poolModule.LiteralPool(asm)
+        self.data = dataModule.Arm64DataEncoder(asm)
+        self.memory = memoryModule.Arm64MemoryEncoder(asm)
+        self.floating = floatModule.Arm64FloatEncoder(asm)
+
+    func machine(self):
+        return 183
+
+    func alignUnit(self, a):
+        if a < 3:
+            return 1 << a
+        return 8
+
+    func layoutInstruction(self, st, off):
+        if st["mnem"] == "ldr" and len(st["ops"]) == 2 and st["ops"][1].startswith("="):
+            self.pool.add(st)
+        return 4
+
+    func layoutDirective(self, st, off):
+        if st["name"] == ".ltorg":
+            return self.pool.flush(off)
+        return None
+
+    func finishText(self, off):
+        return self.pool.flush(off)
+
+    func emitTrailer(self, code):
+        self.pool.emitTrailer(code)
+
+    func encodeBytes(self, st):
+        w = self.encodeInstruction(st)
+        return [w % 256, (w // 256) % 256, (w // 65536) % 256, (w // 16777216) % 256]
+
+    func encodeOther(self, st):
+        m = st["mnem"]
+        if m in MEMORY:
+            return self.memory.encode(st)
+        if m == "stp" or m == "ldp":
+            return self.memory.encodePair(m, st["ops"])
+        if m in FLOATING:
+            return self.floating.encode(st)
+        return self.data.encode(st)
+
+    func relOffset(self, st, label, bits):
+        target = self.asm.addr(label)
+        pc = self.asm.textBase + st["off"]
+        d = target - pc
+        if d % 4 != 0:
+            asmFail("misaligned branch target " + label)
+        d = d // 4
+        limit = 1 << (bits - 1)
+        if d >= limit or d < 0 - limit:
+            asmFail("branch out of range " + label)
+        return d % (1 << bits)
+
+    func encodeInstruction(self, st):
+        m = st["mnem"]
+        ops = st["ops"]
+        if m == "ret":
+            return 0xD65F03C0
+        if m == "svc":
+            return 0xD4000001
+        if m == "b":
+            return 0x14000000 + self.relOffset(st, ops[0], 26)
+        if m == "bl":
+            return 0x94000000 + self.relOffset(st, ops[0], 26)
+        if m.startswith("b.") and (m[2:] in CONDS):
+            return 0x54000000 + self.relOffset(st, ops[0], 19) * 32 + CONDS[m[2:]]
+        if m == "br":
+            return 0xD61F0000 + regNum(ops[0]) * 32
+        if m == "blr":
+            return 0xD63F0000 + regNum(ops[0]) * 32
+        if m == "cbz" or m == "cbnz":
+            base = 0xB4000000 if m == "cbz" else 0xB5000000
+            if not is64(ops[0]):
+                base = base - 0x80000000
+            return base + self.relOffset(st, ops[1], 19) * 32 + regNum(ops[0])
+        if m == "tbz" or m == "tbnz":
+            bit = int(ops[1])
+            base = 0x36000000 if m == "tbz" else 0x37000000
+            return base + (bit // 32) * 0x80000000 + (bit % 32) * 0x80000 + self.relOffset(st, ops[2], 14) * 32 + regNum(ops[0])
+        if m == "adr":
+            d = (self.asm.addr(ops[1]) - (self.asm.textBase + st["off"])) % 0x200000
+            return 0x10000000 + (d % 4) * 0x20000000 + (d // 4) * 32 + regNum(ops[0])
+        return self.encodeOther(st)
+

@@ -1,0 +1,401 @@
+func loadAsm(name):
+    candidates = [
+        "compiler/assembler/" + name,
+        "assembler/" + name,
+        "../compiler/assembler/" + name,
+        "../assembler/" + name,
+        "experiment/compiler/assembler/" + name,
+        name
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor("compiler/assembler/" + name)
+
+text = loadAsm("text.ns")
+operands = loadAsm("x86Operands.ns")
+asmFail = text.asmFail
+parseOperand = operands.parseOperand
+isNumberStart = text.isNumberStart
+parseNumber = text.parseNumber
+signedValue = text.signedValue
+
+CC = {"o": 0, "no": 1, "b": 2, "c": 2, "nae": 2, "ae": 3, "nb": 3, "nc": 3, "e": 4, "z": 4, "ne": 5, "nz": 5, "be": 6, "na": 6, "a": 7, "nbe": 7, "s": 8, "ns": 9, "p": 10, "np": 11, "l": 12, "nge": 12, "ge": 13, "nl": 13, "le": 14, "ng": 14, "g": 15, "nle": 15}
+ALU = {"add": 0, "or": 1, "and": 4, "sub": 5, "xor": 6, "cmp": 7}
+SHIFT = {"shl": 4, "sal": 4, "shr": 5, "sar": 7}
+SSE = {"addsd": 88, "mulsd": 89, "subsd": 92, "divsd": 94}
+
+func fitsInt8(v):
+    return v >= -128 and v <= 127
+
+func fitsInt32(v):
+    return v >= -2147483648 and v <= 2147483647
+
+func le(v, n):
+    out = []
+    if v < 0:
+        v = v + 4294967296 * 4294967296 if n == 8 else v + (1 << (8 * n))
+    i = 0
+    while i < n:
+        out.append(v % 256)
+        v = v // 256
+        i += 1
+    return out
+
+class X86Encoder:
+    func __init__(self):
+        self.asm = None
+        self.sizing = False
+
+    func bind(self, asm):
+        self.asm = asm
+
+    func machine(self):
+        return 62
+
+    func alignUnit(self, a):
+        if a > 8:
+            return 8
+        return a
+
+    func layoutDirective(self, st, off):
+        return None
+
+    func finishText(self, off):
+        return off
+
+    func emitTrailer(self, code):
+        return None
+
+    func layoutInstruction(self, st, off):
+        self.sizing = True
+        bs = self.encodeAt(st)
+        self.sizing = False
+        return len(bs)
+
+    func encodeBytes(self, st):
+        return self.encodeAt(st)
+
+    func dryRun(self, st):
+        self.sizing = True
+        bs = self.encodeAt(st)
+        self.sizing = False
+        return bs
+
+    func symValue(self, name):
+        if self.sizing:
+            return 0
+        return self.asm.addr(name)
+
+    func immValue(self, op):
+        t = op["text"]
+        if isNumberStart(t):
+            return signedValue(parseNumber(t))
+        if self.sizing:
+            return 0
+        return self.asm.value(t)
+
+    func isNumber(self, op):
+        return op["kind"] == "imm" and isNumberStart(op["text"])
+
+    func wide(self, p):
+        return p[1] != 0 and not (p[1] == 4294967295 and p[0] >= 2147483648)
+
+    func memBytes(self, low, m):
+        disp = m["disp"]
+        hasSym = m["sym"] != None
+        if hasSym:
+            disp += m["symSign"] * self.symValue(m["sym"])
+        base = m["base"]
+        index = m["index"]
+        sc = {1: 0, 2: 1, 4: 2, 8: 3}[m["scale"]]
+        rexX = 0
+        rexB = 0
+        if base == -1 and index == -1:
+            return {"rexX": 0, "rexB": 0, "bytes": [low * 8 + 4, 37] + le(disp, 4)}
+        if base == -1:
+            rexX = index // 8
+            return {"rexX": rexX, "rexB": 0, "bytes": [low * 8 + 4, sc * 64 + (index % 8) * 8 + 5] + le(disp, 4)}
+        rexB = base // 8
+        needSib = index != -1 or base % 8 == 4
+        if hasSym or not fitsInt8(disp):
+            mode = 2
+        elif disp == 0 and base % 8 != 5:
+            mode = 0
+        else:
+            mode = 1
+        rm = 4 if needSib else base % 8
+        out = [mode * 64 + low * 8 + rm]
+        if needSib:
+            idx = 4
+            if index != -1:
+                idx = index % 8
+                rexX = index // 8
+            out.append(sc * 64 + idx * 8 + base % 8)
+        if mode == 1:
+            out.extend(le(disp, 1))
+        elif mode == 2:
+            out.extend(le(disp, 4))
+        return {"rexX": rexX, "rexB": rexB, "bytes": out}
+
+    func build(self, prefix, w, opc, regField, rm, force):
+        rexR = regField // 8
+        low = regField % 8
+        tail = []
+        rexX = 0
+        rexB = 0
+        if rm["kind"] == "reg":
+            rexB = rm["num"] // 8
+            tail = [192 + low * 8 + rm["num"] % 8]
+            if rm["rex8"]:
+                force = True
+        else:
+            mb = self.memBytes(low, rm)
+            rexX = mb["rexX"]
+            rexB = mb["rexB"]
+            tail = mb["bytes"]
+        out = []
+        out.extend(prefix)
+        rex = 64 + w * 8 + rexR * 4 + rexX * 2 + rexB
+        if rex != 64 or force:
+            out.append(rex)
+        out.extend(opc)
+        out.extend(tail)
+        return out
+
+    func encodeAt(self, st):
+        m = st["mnem"]
+        ops = []
+        for o in st["ops"]:
+            ops.append(parseOperand(o))
+        if m == "ret":
+            return [195]
+        if m == "syscall":
+            return [15, 5]
+        if m == "cqo":
+            return [72, 153]
+        if m == "rep" or m == "repe":
+            return self.encString(m, st["ops"][0])
+        if m == "mov":
+            return self.encMov(ops, st)
+        if m == "lea":
+            return self.build([], 1, [141], ops[0]["num"], ops[1], ops[0]["rex8"])
+        if m in ALU:
+            return self.encAlu(m, ops)
+        if m == "test":
+            return self.encTest(ops)
+        if m == "inc" or m == "dec":
+            ext = 0 if m == "inc" else 1
+            return self.encUnary(254, 255, ext, ops[0])
+        if m == "neg":
+            return self.encUnary(246, 247, 3, ops[0])
+        if m == "not":
+            return self.encUnary(246, 247, 2, ops[0])
+        if m == "idiv":
+            return self.encUnary(246, 247, 7, ops[0])
+        if m == "div":
+            return self.encUnary(246, 247, 6, ops[0])
+        if m == "imul":
+            return self.encImul(ops)
+        if m in SHIFT:
+            return self.encShift(m, ops)
+        if m == "movzx":
+            return self.encMovzx(ops)
+        if m == "movsxd":
+            return self.build([], 1, [99], ops[0]["num"], ops[1], False)
+        if (m == "push" or m == "pop") and ops[0]["kind"] == "mem":
+            if m == "push":
+                return self.build([], 0, [255], 6, ops[0], False)
+            return self.build([], 0, [143], 0, ops[0], False)
+        if m == "push" or m == "pop":
+            n = ops[0]["num"]
+            base = 80 if m == "push" else 88
+            if n >= 8:
+                return [65, base + n % 8]
+            return [base + n]
+        if m == "call" or m == "jmp":
+            return self.encCallJmp(m, ops, st)
+        if m.startswith("j") and (m[1:] in CC):
+            return self.encJcc(m[1:], ops, st)
+        if m.startswith("set") and (m[3:] in CC):
+            return self.build([], 0, [15, 144 + CC[m[3:]]], 0, ops[0], ops[0]["rex8"])
+        if m.startswith("cmov") and (m[4:] in CC):
+            return self.build([], 1, [15, 64 + CC[m[4:]]], ops[0]["num"], ops[1], False)
+        if m == "xchg":
+            return self.build([], 1, [135], ops[0]["num"], ops[1], False)
+        return self.encSse(m, ops)
+
+    func encString(self, m, what):
+        if m == "rep" and what == "movsb":
+            return [243, 164]
+        if m == "rep" and what == "movsq":
+            return [243, 72, 165]
+        if m == "repe" and what == "cmpsb":
+            return [243, 166]
+        asmFail("unsupported string op " + m + " " + what)
+
+    func encMov(self, ops, st):
+        d = ops[0]
+        s = ops[1]
+        if d["kind"] == "reg" and s["kind"] == "reg":
+            if d["size"] == 8:
+                return self.build([], 0, [136], s["num"], d, s["rex8"])
+            return self.build([], 1 if d["size"] == 64 else 0, [137], s["num"], d, False)
+        if d["kind"] == "reg" and s["kind"] == "mem":
+            if d["size"] == 8:
+                return self.build([], 0, [138], d["num"], s, d["rex8"])
+            return self.build([], 1 if d["size"] == 64 else 0, [139], d["num"], s, False)
+        if d["kind"] == "mem" and s["kind"] == "reg":
+            if s["size"] == 8:
+                return self.build([], 0, [136], s["num"], d, s["rex8"])
+            return self.build([], 1 if s["size"] == 64 else 0, [137], s["num"], d, False)
+        if d["kind"] == "reg" and s["kind"] == "imm":
+            return self.encMovImm(d, s)
+        if d["kind"] == "mem" and s["kind"] == "imm":
+            v = self.immValue(s)
+            if d["size"] == 8:
+                return self.build([], 0, [198], 0, d, False) + le(v, 1)
+            return self.build([], 1 if d["size"] == 64 else 0, [199], 0, d, False) + le(v, 4)
+        asmFail("unsupported mov: " + st["text"])
+
+    func encMovImm(self, d, s):
+        n = d["num"]
+        if d["size"] == 64:
+            if self.isNumber(s):
+                p = parseNumber(s["text"])
+                if self.wide(p):
+                    out = [72 + n // 8, 184 + n % 8]
+                    out.extend(le(p[0], 4))
+                    out.extend(le(p[1], 4))
+                    return out
+            return self.build([], 1, [199], 0, d, False) + le(self.immValue(s), 4)
+        if d["size"] == 32:
+            out = []
+            if n >= 8:
+                out.append(65)
+            out.append(184 + n % 8)
+            out.extend(le(self.immValue(s), 4))
+            return out
+        out = []
+        if n >= 8:
+            out.append(65)
+        elif d["rex8"]:
+            out.append(64)
+        out.append(176 + n % 8)
+        out.extend(le(self.immValue(s), 1))
+        return out
+
+    func opWidth(self, a, b):
+        if a["kind"] == "reg":
+            return a["size"]
+        if b["kind"] == "reg":
+            return b["size"]
+        return a["size"]
+
+    func encAlu(self, m, ops):
+        ext = ALU[m]
+        d = ops[0]
+        s = ops[1]
+        width = self.opWidth(d, s)
+        w = 1 if width == 64 else 0
+        if s["kind"] == "imm":
+            v = self.immValue(s)
+            if width == 8:
+                return self.build([], 0, [128], ext, d, d["kind"] == "reg" and d["rex8"]) + le(v, 1)
+            if fitsInt8(v):
+                return self.build([], w, [131], ext, d, False) + le(v, 1)
+            return self.build([], w, [129], ext, d, False) + le(v, 4)
+        if s["kind"] == "reg":
+            opc = ext * 8 + (0 if width == 8 else 1)
+            return self.build([], w, [opc], s["num"], d, s["rex8"] if width == 8 else False)
+        opc = ext * 8 + (2 if width == 8 else 3)
+        return self.build([], w, [opc], d["num"], s, d["rex8"] if width == 8 else False)
+
+    func encTest(self, ops):
+        d = ops[0]
+        s = ops[1]
+        width = self.opWidth(d, s)
+        w = 1 if width == 64 else 0
+        if s["kind"] == "imm":
+            v = self.immValue(s)
+            if width == 8:
+                return self.build([], 0, [246], 0, d, d["kind"] == "reg" and d["rex8"]) + le(v, 1)
+            return self.build([], w, [247], 0, d, False) + le(v, 4)
+        return self.build([], w, [132 if width == 8 else 133], s["num"], d, s["rex8"] if width == 8 else False)
+
+    func encUnary(self, byteOpc, opc, ext, d):
+        width = d["size"]
+        if width == 8:
+            return self.build([], 0, [byteOpc], ext, d, d["kind"] == "reg" and d["rex8"])
+        return self.build([], 1 if width == 64 else 0, [opc], ext, d, False)
+
+    func encImul(self, ops):
+        d = ops[0]
+        w = 1 if d["size"] == 64 else 0
+        if len(ops) == 2:
+            return self.build([], w, [15, 175], d["num"], ops[1], False)
+        v = self.immValue(ops[2])
+        if fitsInt8(v):
+            return self.build([], w, [107], d["num"], ops[1], False) + le(v, 1)
+        return self.build([], w, [105], d["num"], ops[1], False) + le(v, 4)
+
+    func encShift(self, m, ops):
+        d = ops[0]
+        ext = SHIFT[m]
+        w = 1 if d["size"] == 64 else 0
+        if ops[1]["kind"] == "reg":
+            return self.build([], w, [211], ext, d, False)
+        count = self.immValue(ops[1])
+        if count == 1:
+            return self.build([], w, [209], ext, d, False)
+        return self.build([], w, [193], ext, d, False) + le(count, 1)
+
+    func encMovzx(self, ops):
+        d = ops[0]
+        s = ops[1]
+        w = 1 if d["size"] == 64 else 0
+        opc = 183 if s["size"] == 16 else 182
+        return self.build([], w, [15, opc], d["num"], s, s["kind"] == "reg" and s["rex8"])
+
+    func rel32(self, st, size, label):
+        if self.sizing:
+            return [0, 0, 0, 0]
+        pc = self.asm.textBase + st["off"] + size
+        return le(self.asm.addr(label) - pc, 4)
+
+    func encCallJmp(self, m, ops, st):
+        o = ops[0]
+        if o["kind"] == "imm":
+            op = 232 if m == "call" else 233
+            return [op] + self.rel32(st, 5, o["text"])
+        ext = 2 if m == "call" else 4
+        return self.build([], 0, [255], ext, o, False)
+
+    func encJcc(self, cc, ops, st):
+        return [15, 128 + CC[cc]] + self.rel32(st, 6, ops[0]["text"])
+
+    func encSse(self, m, ops):
+        d = ops[0]
+        if m == "movsd":
+            if d["kind"] == "mem":
+                return self.build([242], 0, [15, 17], ops[1]["num"], d, False)
+            return self.build([242], 0, [15, 16], d["num"], ops[1], False)
+        if m == "movq":
+            if d["size"] == 128:
+                return self.build([102], 1, [15, 110], d["num"], ops[1], False)
+            return self.build([102], 1, [15, 126], ops[1]["num"], d, False)
+        if m == "cvtsi2sd":
+            return self.build([242], 1, [15, 42], d["num"], ops[1], False)
+        if m == "cvttsd2si":
+            return self.build([242], 1, [15, 44], d["num"], ops[1], False)
+        if m in SSE:
+            return self.build([242], 0, [15, SSE[m]], d["num"], ops[1], False)
+        if m == "ucomisd":
+            return self.build([102], 0, [15, 46], d["num"], ops[1], False)
+        if m == "xorpd":
+            return self.build([102], 0, [15, 87], d["num"], ops[1], False)
+        if m == "roundsd":
+            return self.build([102], 0, [15, 58, 11], d["num"], ops[1], False) + le(self.immValue(ops[2]), 1)
+        asmFail("unsupported instruction: " + m)

@@ -1,7 +1,0 @@
-s = "halo nusantara"
-print(len(s), s[0], s[0:4], s[5:])
-print("a" + "b" + "c")
-print("nusa" in s, "xyz" in s)
-print(s == "halo nusantara", "a" == "b", "abc" < "abd")
-print(str(123), int("456"))
-print("x" * 3)

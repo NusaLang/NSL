@@ -1,0 +1,18 @@
+# Arrays and maps.
+scores = [72, 95, 58, 81]
+push(scores, 64)
+
+total = 0
+best = scores[0]
+for s in scores:
+    total = total + s
+    if s > best:
+        best = s
+print("count", len(scores), "total", total, "best", best)
+
+ages = {"ana": 31, "budi": 27}
+ages["citra"] = 35
+for name in ages:
+    print(name, ages[name])
+print(ages.keys(), ages.values())
+print("budi" in ages, "dewi" in ages)

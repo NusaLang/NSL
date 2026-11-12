@@ -1,0 +1,5 @@
+# impor() loads another .ns file, relative to this script.
+mathUtil = impor("mathUtil.ns")
+
+print(mathUtil.square(12))
+print(mathUtil.average([4, 8, 15, 16, 23, 42]))

@@ -1,0 +1,164 @@
+func loadAsm(name):
+    candidates = [
+        "compiler/assembler/" + name,
+        "assembler/" + name,
+        "../compiler/assembler/" + name,
+        "../assembler/" + name,
+        "experiment/compiler/assembler/" + name,
+        name
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor("compiler/assembler/" + name)
+text = loadAsm("text.ns")
+asmFail = text.asmFail
+parseNumber = text.parseNumber
+splitOperands = text.splitOperands
+isNumberStart = text.isNumberStart
+signedValue = text.signedValue
+operands = loadAsm("arm64Operands.ns")
+CONDS = operands.CONDS
+regNum = operands.regNum
+isReg = operands.isReg
+is64 = operands.is64
+bitmaskImm = operands.bitmaskImm
+
+class Arm64DataEncoder:
+    func __init__(self, asm):
+        self.asm = asm
+
+    func encode(self, st):
+        m = st["mnem"]
+        ops = st["ops"]
+        if m == "mov":
+            return self.encMov(ops)
+        if m == "add" or m == "sub" or m == "adds" or m == "subs":
+            return self.encAddSub(m, ops)
+        if m == "cmp":
+            zr = "xzr" if is64(ops[0]) else "wzr"
+            return self.encAddSub("subs", [zr] + ops)
+        if m == "neg":
+            zr = "xzr" if is64(ops[0]) else "wzr"
+            return self.encAddSub("sub", [ops[0], zr, ops[1]])
+        if m == "and" or m == "orr" or m == "eor":
+            return self.encLogic(m, ops)
+        if m == "mvn":
+            return 0xAA2003E0 + regNum(ops[1]) * 65536 + regNum(ops[0])
+        if m == "mul":
+            return 0x9B007C00 + regNum(ops[2]) * 65536 + regNum(ops[1]) * 32 + regNum(ops[0])
+        if m == "smulh":
+            return 0x9B407C00 + regNum(ops[2]) * 65536 + regNum(ops[1]) * 32 + regNum(ops[0])
+        if m == "sdiv":
+            return 0x9AC00C00 + regNum(ops[2]) * 65536 + regNum(ops[1]) * 32 + regNum(ops[0])
+        if m == "udiv":
+            return 0x9AC00800 + regNum(ops[2]) * 65536 + regNum(ops[1]) * 32 + regNum(ops[0])
+        if m == "msub":
+            return 0x9B008000 + regNum(ops[2]) * 65536 + regNum(ops[3]) * 1024 + regNum(ops[1]) * 32 + regNum(ops[0])
+        if m == "lsl" or m == "lsr" or m == "asr":
+            return self.encShift(m, ops)
+        if m == "ubfx":
+            lsb = int(ops[2])
+            width = int(ops[3])
+            return 0xD3400000 + lsb * 65536 + (lsb + width - 1) * 1024 + regNum(ops[1]) * 32 + regNum(ops[0])
+        if m == "cset":
+            return 0x9A9F07E0 + (CONDS[ops[1]] ^ 1) * 4096 + regNum(ops[0])
+        if m == "csel":
+            return 0x9A800000 + regNum(ops[2]) * 65536 + CONDS[ops[3]] * 4096 + regNum(ops[1]) * 32 + regNum(ops[0])
+        if m == "cneg":
+            r = regNum(ops[1])
+            return 0xDA800400 + r * 65536 + (CONDS[ops[2]] ^ 1) * 4096 + r * 32 + regNum(ops[0])
+        asmFail("unsupported instruction: " + st["text"])
+
+    func encMov(self, ops):
+        d = ops[0]
+        s = ops[1]
+        if isReg(s):
+            if d == "sp" or s == "sp":
+                return 0x91000000 + regNum(s) * 32 + regNum(d)
+            if is64(d):
+                return 0xAA0003E0 + regNum(s) * 65536 + regNum(d)
+            return 0x2A0003E0 + regNum(s) * 65536 + regNum(d)
+        v = self.asm.value(s)
+        rd = regNum(d)
+        zbase = 0xD2800000 if is64(d) else 0x52800000
+        nbase = 0x92800000 if is64(d) else 0x12800000
+        if v >= 0 and v <= 65535:
+            return zbase + v * 32 + rd
+        if v < 0 and v >= -65536:
+            return nbase + ((0 - v - 1) % 65536) * 32 + rd
+        asmFail("mov immediate out of range: " + s)
+
+    func encAddSub(self, m, ops):
+        imm = {"add": 0x91000000, "sub": 0xD1000000, "adds": 0xB1000000, "subs": 0xF1000000}
+        reg = {"add": 0x8B000000, "sub": 0xCB000000, "adds": 0xAB000000, "subs": 0xEB000000}
+        rd = regNum(ops[0])
+        rn = regNum(ops[1])
+        wide = is64(ops[0])
+        third = ops[2]
+        if isReg(third):
+            shiftType = 0
+            amount = 0
+            if len(ops) > 3:
+                parts = ops[3].split(" ")
+                amount = int(parts[1].replace("#", ""))
+                if parts[0] == "lsr":
+                    shiftType = 1
+                elif parts[0] == "asr":
+                    shiftType = 2
+            rm = regNum(third)
+            if ops[0] == "sp" or ops[1] == "sp":
+                return reg[m] + 0x200000 + rm * 65536 + 0x6000 + amount * 1024 + rn * 32 + rd
+            w = reg[m] + shiftType * 0x400000 + rm * 65536 + amount * 1024 + rn * 32 + rd
+            if not wide:
+                w = w - 0x80000000
+            return w
+        v = self.asm.value(third.replace("#", ""))
+        sh = 0
+        if v > 4095:
+            if v % 4096 != 0 or v > 16773120:
+                asmFail("add/sub immediate out of range: " + str(v))
+            v = v // 4096
+            sh = 0x400000
+        if v < 0:
+            asmFail("negative add/sub immediate")
+        w = imm[m] + sh + v * 1024 + rn * 32 + rd
+        if not wide:
+            w = w - 0x80000000
+        return w
+
+    func encLogic(self, m, ops):
+        reg = {"and": 0x8A000000, "orr": 0xAA000000, "eor": 0xCA000000}
+        imm = {"and": 0x92000000, "orr": 0xB2000000, "eor": 0xD2000000}
+        wide = is64(ops[0])
+        rd = regNum(ops[0])
+        rn = regNum(ops[1])
+        third = ops[2]
+        if isReg(third):
+            w = reg[m] + regNum(third) * 65536 + rn * 32 + rd
+            if not wide:
+                w = w - 0x80000000
+            return w
+        bm = bitmaskImm(parseNumber(third.replace("#", "")), wide)
+        if bm == None:
+            asmFail("unencodable logical immediate " + third)
+        w = imm[m] + bm[0] * 0x400000 + bm[1] * 65536 + bm[2] * 1024 + rn * 32 + rd
+        if not wide:
+            w = w - 0x80000000
+        return w
+
+    func encShift(self, m, ops):
+        rd = regNum(ops[0])
+        rn = regNum(ops[1])
+        if isReg(ops[2]):
+            base = {"lsl": 0x9AC02000, "lsr": 0x9AC02400, "asr": 0x9AC02800}
+            return base[m] + regNum(ops[2]) * 65536 + rn * 32 + rd
+        n = int(ops[2].replace("#", ""))
+        if m == "lsl":
+            return 0xD3400000 + ((64 - n) % 64) * 65536 + (63 - n) * 1024 + rn * 32 + rd
+        if m == "lsr":
+            return 0xD3400000 + n * 65536 + 63 * 1024 + rn * 32 + rd
+        return 0x93400000 + n * 65536 + 63 * 1024 + rn * 32 + rd
+

@@ -1,0 +1,102 @@
+func loadAsm(name):
+    candidates = [
+        "compiler/assembler/" + name,
+        "assembler/" + name,
+        "../compiler/assembler/" + name,
+        "../assembler/" + name,
+        "experiment/compiler/assembler/" + name,
+        name
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor("compiler/assembler/" + name)
+
+text = loadAsm("text.ns")
+asmFail = text.asmFail
+
+BASE = 4194304
+HEADER = 176
+B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+func le(v, n):
+    out = []
+    i = 0
+    while i < n:
+        out.append(v % 256)
+        v = v // 256
+        i += 1
+    return out
+
+func elfHeader(machine, entry):
+    h = [127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    h.extend(le(2, 2))
+    h.extend(le(machine, 2))
+    h.extend(le(1, 4))
+    h.extend(le(entry, 8))
+    h.extend(le(64, 8))
+    h.extend(le(0, 8))
+    h.extend(le(0, 4))
+    h.extend(le(64, 2))
+    h.extend(le(56, 2))
+    h.extend(le(2, 2))
+    h.extend(le(64, 2))
+    h.extend(le(0, 2))
+    h.extend(le(0, 2))
+    return h
+
+func progHeader(flags, off, vaddr, filesz, memsz):
+    h = []
+    h.extend(le(1, 4))
+    h.extend(le(flags, 4))
+    h.extend(le(off, 8))
+    h.extend(le(vaddr, 8))
+    h.extend(le(vaddr, 8))
+    h.extend(le(filesz, 8))
+    h.extend(le(memsz, 8))
+    h.extend(le(4096, 8))
+    return h
+
+func dataFileOffset(textSize):
+    return (HEADER + textSize + 4095) // 4096 * 4096
+
+func buildElf(machine, entry, code, data, dataSize, bssSize):
+    fileText = HEADER + len(code)
+    dataOff = dataFileOffset(len(code))
+    out = []
+    out.extend(elfHeader(machine, entry))
+    out.extend(progHeader(5, 0, BASE, fileText, fileText))
+    out.extend(progHeader(6, dataOff, BASE + dataOff, len(data), (dataSize + 7) // 8 * 8 + bssSize))
+    while len(out) < HEADER:
+        out.append(0)
+    out.extend(code)
+    while len(out) < dataOff:
+        out.append(0)
+    out.extend(data)
+    return out
+
+func base64Bytes(bs):
+    parts = []
+    i = 0
+    n = len(bs)
+    while i + 2 < n:
+        v = bs[i] * 65536 + bs[i + 1] * 256 + bs[i + 2]
+        parts.append(B64[v // 262144] + B64[(v // 4096) % 64] + B64[(v // 64) % 64] + B64[v % 64])
+        i += 3
+    rem = n - i
+    if rem == 1:
+        v = bs[i] * 65536
+        parts.append(B64[v // 262144] + B64[(v // 4096) % 64] + "==")
+    elif rem == 2:
+        v = bs[i] * 65536 + bs[i + 1] * 256
+        parts.append(B64[v // 262144] + B64[(v // 4096) % 64] + B64[(v // 64) % 64] + "=")
+    return gabung(parts, "")
+
+func writeExecutable(path, bs):
+    encoded = path + ".b64"
+    tulis_file(encoded, base64Bytes(bs))
+    res = jalankan_perintah("sh", ["-c", "base64 -d '" + encoded + "' > '" + path + "' && chmod +x '" + path + "' && rm -f '" + encoded + "'"])
+    if res.status != 0:
+        asmFail("cannot write executable: " + res.error)

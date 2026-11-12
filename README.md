@@ -4,7 +4,7 @@
 
 # Nusantara
 
-Nusantara is a programming language that compiles and runs itself — the lexer, parser, interpreter, bytecode VM, and native x86-64 compiler are all written in Nusantara, bootstrapped once by a small C++ host. You can write keywords in English (`func`, `if`, `return`) or Indonesian (`fungsi`, `jika`, `hasil`) and mix them freely in the same file; blocks can use colons or braces.
+Nusantara is a programming language that compiles and runs itself — the lexer, parser, interpreter, bytecode VM, and native x86-64 and ARM64 compiler are all written in Nusantara, bootstrapped once by a small C++ host. You can write keywords in English (`func`, `if`, `return`) or Indonesian (`fungsi`, `jika`, `hasil`) and mix them freely in the same file; blocks can use colons or braces.
 
 ```python
 func fib(n):
@@ -16,16 +16,15 @@ for i in range(10):
     print(fib(i))
 ```
 
-## Three ways to run a program
+## Running a program
 
 ```bash
-./nusa run main.ns                    # tree-walking interpreter (reference implementation)
-./nusa --vm main.ns                   # stack-based bytecode VM
-./nusa build --native main.ns -o app  # compile straight to a native ELF binary
-./app                                 # no runtime, no dependencies
+./nusa main.ns              # compile to a cached native binary and run it
+./nusa build main.ns -o app # compile straight to a native ELF binary
+./app                       # no runtime, no dependencies
 ```
 
-The native AOT compiler is the one that matters for speed. It turns `.ns` source into x86-64 assembly by hand — tagged 63-bit integers, fixed-offset structs for classes, inline caches for field and method lookups — and hands the result to the system `as` and `ld`. The interpreter and VM are slower, simpler references that exist mainly to check the language behaves the same way everywhere.
+`nusa main.ns` works like `go run`: the first run compiles, later runs start from the cache until the source or one of its imports changes. The compiler turns `.ns` source into x86-64 or ARM64 machine code — tagged integers, fixed-offset structs for classes, inline caches for field and method lookups — with its own assembler and ELF writer, so no `as`, `ld`, or C compiler is needed, on Linux or in Termux on Android. Programs that use something the compiler does not support yet run in the interpreter instead; `NUSA_INTERP=1` or `--vm` selects the interpreter or bytecode VM explicitly.
 
 ## Benchmarks
 
@@ -33,13 +32,24 @@ Five workloads — `fib(20)`, a 20k-element array build, a 10k-entry map insert+
 
 ![benchmark results](docs/benchmark.png)
 
-Native AOT lands within ~2x of Go on `fib20`, `array`, and `oop`, and ahead of every other language here except LuaJIT on `oop`. `map` and `string` are the current weak points.
+| Language | fib20 | array | map | string | oop |
+|---|---:|---:|---:|---:|---:|
+| Go 1.27 | 0.04 | 0.09 | 2.56 | 0.34 | <0.01 |
+| **nusa** | **0.12** | **0.19** | **4.84** | **0.93** | **0.20** |
+| LuaJIT 2.1 | 0.37 | 0.37 | 2.78 | 0.62 | 0.08 |
+| Node.js 24 | 0.70 | 2.75 | 13.29 | 1.51 | 1.12 |
+| Lua 5.5 | 0.60 | 1.41 | 10.13 | 1.69 | 5.44 |
+| Ruby 3.4 | 0.72 | 1.56 | 25.49 | 3.24 | 5.96 |
+| Python 3.14 | 1.30 | 1.68 | 7.44 | 1.20 | 3.73 |
+| Perl 5.42 | 3.72 | 2.37 | 5.94 | 0.55 | 5.86 |
+
+Measured on an Intel Core i5-7300U, Linux x86-64, runs interleaved. nusa is 2–3x off Go on `fib20`, `array`, `map`, and `string`, and faster than Node.js, Lua, Ruby, and Python on all five. LuaJIT is ahead on `map`, `string`, and `oop`, and Perl on `string`.
 
 ## Install
 
 ```bash
 make build    # bootstrap core/main.ns into ./nusa
-make test     # run the interpreter, VM, and native AOT test suites
+make test     # run every program in examples/, natively and in the interpreter
 make install  # copy the binary to ~/.local/bin
 ```
 
@@ -82,14 +92,13 @@ Dog("Rex").speak()  # Rex makes a bark
 
 ```
 core/        lexer, parser, AST, interpreter, bytecode VM, CLI entry point
-compiler/    native x86-64 AOT compiler and its hand-written runtime
+compiler/    native x86-64 and ARM64 compiler, runtime, and built-in assembler
 std/         standard library (process, filesystem, i18n, ...)
 net/         HTTP and socket modules
 crypto/      hashing and crypto modules
 media/       audio/image processing modules
 lib/         additional pure-.ns utility modules
-bench/       cross-language benchmark suite and native micro-benchmark
-tests/       interpreter/VM/native test suites
+examples/    small programs showing the language, one feature each
 ```
 
 ## License

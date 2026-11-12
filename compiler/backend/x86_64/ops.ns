@@ -1,16 +1,19 @@
 OPS_RUNTIME = """rtLen:
     cmp rdi, 4
-    jbe rtLenZero
+    jbe rtLenBad
     test dil, 1
-    jnz rtLenZero
+    jnz rtLenBad
+    mov rax, [rdi]
+    cmp rax, 2
+    jb rtLenBad
+    cmp rax, 4
+    ja rtLenBad
     mov rax, [rdi+8]
-    cmp qword ptr [rdi], 6
-    je rtLenZero
     lea rax, [rax*2+1]
     ret
-rtLenZero:
-    mov eax, 1
-    ret
+rtLenBad:
+    lea rdi, [strBadLen]
+    jmp rtFail
 rtIndex:
     cmp rdi, 4
     jbe rtIdxFail

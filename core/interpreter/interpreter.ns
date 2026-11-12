@@ -24,10 +24,7 @@ resolverModule = loadModule("resolver")
 resolveModulePath = resolverModule.resolveModulePath
 
 func runtimeImpor(name):
-    resolved = resolveModulePath(name, file_ada)
-    if resolved != None:
-        return impor(resolved)
-    return impor(name)
+    return resolverModule.importModule(name)
 
 
 class ReturnSignal:
@@ -123,6 +120,22 @@ func nusaList(arg = None):
 
 func intDivBuiltin(a, b):
     return a // b
+
+HOSTNOARG = {"noArg": True}
+
+func makeHostCallback(interp, fn):
+    func callback(a = HOSTNOARG, b = HOSTNOARG, c = HOSTNOARG, d = HOSTNOARG):
+        items = []
+        if a != HOSTNOARG:
+            items.append(a)
+        if b != HOSTNOARG:
+            items.append(b)
+        if c != HOSTNOARG:
+            items.append(c)
+        if d != HOSTNOARG:
+            items.append(d)
+        return interp.callUserFunction(fn, items)
+    return callback
 
 func makeStrFind(text):
     func finder(sub, start = 0):
@@ -471,27 +484,7 @@ class Interpreter:
                 args.append(self.evaluate(a, env))
 
             if hasattr(fnTarget, "isFunction"):
-                fnScope = Scope(fnTarget.closure)
-                nParams = panjang(fnTarget.params)
-                nArgs = panjang(args)
-                i = 0
-                while i < nParams:
-                    pName = fnTarget.params[i]
-                    if i < nArgs:
-                        fnScope.define(pName, args[i])
-                    elif pName in fnTarget.defaults:
-                        fnScope.define(pName, self.evaluate(fnTarget.defaults[pName], fnScope))
-                    else:
-                        fnScope.define(pName, None)
-                    i = i + 1
-
-                try:
-                    self.execute(fnTarget.body, fnScope)
-                except sig:
-                    if hasattr(sig, "isReturn"):
-                        return sig.val
-                    raise sig
-                return None
+                return self.callUserFunction(fnTarget, args)
 
             if tipe(fnTarget) == "peta" and "isClass" in fnTarget:
                 instance = {"isInstance": True, "class": fnTarget, "fields": {}}
@@ -555,6 +548,7 @@ class Interpreter:
 
             if hasattr(fnTarget, "__call__"):
                 callFn = getattr(fnTarget, "__call__")
+                args = self.wrapHostArgs(args)
                 nA = panjang(args)
                 if nA == 0:
                     return callFn()
@@ -575,6 +569,7 @@ class Interpreter:
                 tVal = getattr(fnTarget, "tipe")
                 isCallableObj = (tVal == "fungsi" or tVal == "func" or tVal == "function")
             if isCallableObj:
+                args = self.wrapHostArgs(args)
                 nA = panjang(args)
                 if nA == 0:
                     return fnTarget()
@@ -770,6 +765,38 @@ class Interpreter:
                 return leftVal in rightVal
             return False
         return None
+
+    func callUserFunction(self, fnTarget, args):
+        fnScope = Scope(fnTarget.closure)
+        nParams = panjang(fnTarget.params)
+        nArgs = panjang(args)
+        i = 0
+        while i < nParams:
+            pName = fnTarget.params[i]
+            if i < nArgs:
+                fnScope.define(pName, args[i])
+            elif pName in fnTarget.defaults:
+                fnScope.define(pName, self.evaluate(fnTarget.defaults[pName], fnScope))
+            else:
+                fnScope.define(pName, None)
+            i = i + 1
+
+        try:
+            self.execute(fnTarget.body, fnScope)
+        except sig:
+            if hasattr(sig, "isReturn"):
+                return sig.val
+            raise sig
+        return None
+
+    func wrapHostArgs(self, args):
+        wrapped = []
+        for a in args:
+            if hasattr(a, "isFunction"):
+                wrapped.append(makeHostCallback(self, a))
+            else:
+                wrapped.append(a)
+        return wrapped
 
     func isTruthy(self, val):
         if val == None or val == False or val == 0 or val == "":

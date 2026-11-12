@@ -1,0 +1,3 @@
+# The smallest program: run it with `nusa examples/hello.ns`.
+name = "Nusantara"
+print("Halo,", name)

@@ -1,0 +1,114 @@
+func loadAsm(name):
+    candidates = [
+        "compiler/assembler/" + name,
+        "assembler/" + name,
+        "../compiler/assembler/" + name,
+        "../assembler/" + name,
+        "experiment/compiler/assembler/" + name,
+        name
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor("compiler/assembler/" + name)
+text = loadAsm("text.ns")
+asmFail = text.asmFail
+parseNumber = text.parseNumber
+splitOperands = text.splitOperands
+isNumberStart = text.isNumberStart
+signedValue = text.signedValue
+operands = loadAsm("arm64Operands.ns")
+CONDS = operands.CONDS
+regNum = operands.regNum
+isReg = operands.isReg
+is64 = operands.is64
+bitmaskImm = operands.bitmaskImm
+
+class Arm64MemoryEncoder:
+    func __init__(self, asm):
+        self.asm = asm
+
+    func parseMem(self, text):
+        t = text
+        pre = False
+        if t.endswith("!"):
+            pre = True
+            t = t[:len(t) - 1]
+        close = t.find("]")
+        parts = splitOperands(t[1:close])
+        return {"base": parts[0], "rest": parts[1:], "pre": pre}
+
+    func encode(self, st):
+        m = st["mnem"]
+        ops = st["ops"]
+        rt = regNum(ops[0])
+        isD = ops[0][0] == "d"
+        if m == "ldr" and ops[1].startswith("="):
+            return 0x58000000 + ((st["poolOff"] - st["off"]) // 4) * 32 + rt
+        mem = self.parseMem(ops[1])
+        rn = regNum(mem["base"])
+        isLoad = m == "ldr" or m == "ldur" or m == "ldrb" or m == "ldrsw"
+        wide = is64(ops[0])
+        kind = "x"
+        if isD:
+            kind = "d"
+        elif m == "ldrb" or m == "strb":
+            kind = "b"
+        elif m == "ldrsw":
+            kind = "s"
+        elif not wide:
+            kind = "w"
+        scale = {"x": 8, "d": 8, "b": 1, "s": 4, "w": 4}[kind]
+        uns = {"x": 0xF9000000, "d": 0xFD000000, "b": 0x39000000, "s": 0xB9800000, "w": 0xB9000000}[kind]
+        unscaled = {"x": 0xF8000000, "d": 0xFC000000, "b": 0x38000000, "s": 0xB8800000, "w": 0xB8000000}[kind]
+        regOff = {"x": 0xF8200800, "d": 0, "b": 0x38200800, "s": 0, "w": 0xB8200800}[kind]
+        loadBit = 0x400000
+        if kind == "s":
+            loadBit = 0
+        if isLoad and kind != "s":
+            uns = uns + loadBit
+            unscaled = unscaled + loadBit
+            regOff = regOff + 0x400000
+        if len(ops) > 2:
+            v = self.asm.value(ops[2].replace("#", ""))
+            return unscaled + (v % 512) * 4096 + 0x400 + rn * 32 + rt
+        if mem["pre"]:
+            v = self.asm.value(mem["rest"][0].replace("#", ""))
+            return unscaled + (v % 512) * 4096 + 0xC00 + rn * 32 + rt
+        if len(mem["rest"]) == 0:
+            return uns + rn * 32 + rt
+        first = mem["rest"][0]
+        if isReg(first):
+            sbit = 0
+            if len(mem["rest"]) > 1:
+                sbit = 0x1000
+            if regOff == 0:
+                asmFail("register offset unsupported here")
+            return regOff + regNum(first) * 65536 + 0x6000 + sbit + rn * 32 + rt
+        v = self.asm.value(first.replace("#", ""))
+        if m == "ldur" or m == "stur":
+            return unscaled + (v % 512) * 4096 + rn * 32 + rt
+        if v >= 0 and v % scale == 0 and v // scale < 4096:
+            return uns + (v // scale) * 1024 + rn * 32 + rt
+        if v >= -256 and v < 256:
+            return unscaled + (v % 512) * 4096 + rn * 32 + rt
+        asmFail("memory offset out of range: " + str(v))
+
+    func encodePair(self, m, ops):
+        rt1 = regNum(ops[0])
+        rt2 = regNum(ops[1])
+        mem = self.parseMem(ops[2])
+        rn = regNum(mem["base"])
+        isLoad = m == "ldp"
+        load = 0x400000 if isLoad else 0
+        if len(ops) > 3:
+            v = self.asm.value(ops[3].replace("#", ""))
+            return 0xA8800000 + load + ((v // 8) % 128) * 0x8000 + rt2 * 1024 + rn * 32 + rt1
+        v = 0
+        if len(mem["rest"]) > 0:
+            v = self.asm.value(mem["rest"][0].replace("#", ""))
+        base = 0xA9800000 if mem["pre"] else 0xA9000000
+        return base + load + ((v // 8) % 128) * 0x8000 + rt2 * 1024 + rn * 32 + rt1
+
