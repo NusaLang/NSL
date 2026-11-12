@@ -113,6 +113,8 @@ func guarded(fn):
         return fn()
     except e:
         e = normalizeError(e)
+        if tipe(e) == "peta" and "isInstance" in e and "pesan" in e["fields"]:
+            fail("error: " + str(e["fields"]["pesan"]))
         if tipe(e) == "peta" and "pesan" in e:
             fail("error: " + str(e["pesan"]))
         fail("error: " + str(e))

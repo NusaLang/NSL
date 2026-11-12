@@ -101,7 +101,9 @@ class X86Encoder:
         return op["kind"] == "imm" and isNumberStart(op["text"])
 
     func wide(self, p):
-        return p[1] != 0 and not (p[1] == 4294967295 and p[0] >= 2147483648)
+        if p[1] == 0:
+            return p[0] >= 2147483648
+        return not (p[1] == 4294967295 and p[0] >= 2147483648)
 
     func memBytes(self, low, m):
         disp = m["disp"]

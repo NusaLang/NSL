@@ -457,35 +457,50 @@ class Parser:
             return TryStmt(tryBlock, "__fe", rethrow, finallyBlock)
         if not self.check(TokenType.CATCH):
             self.fail("'tangkap' diharapkan setelah blok 'coba'")
-        self.advance()
-        catchVar = ""
-        if self.match(TokenType.LPAREN) != None:
-            tok = self.peek(0)
-            if tok.type == TokenType.IDENT and not self.isClassLike(tok) and self.peek(1).type == TokenType.RPAREN:
-                catchVar = self.advance().text
-                self.advance()
-            else:
-                self.fail("'except' bertipe belum didukung kompiler")
-        elif self.check(TokenType.IDENT):
-            tok = self.peek(0)
-            if self.isClassLike(tok) or self.peek(1).type == TokenType.DOT:
-                self.fail("'except' bertipe belum didukung kompiler")
-            catchVar = self.advance().text
-        if self.isWord(self.peek(0), "as", "sbg"):
-            self.fail("'except' bertipe belum didukung kompiler")
-        self.hidden += 1
-        hiddenVar = "__ex" + str(self.hidden)
-        self.catchVars.append(hiddenVar if catchVar == "" else catchVar)
-        if catchVar == "":
-            catchVar = hiddenVar
-        catchBlock = self.parseBlock()
-        self.catchVars.pop()
-        if self.check(TokenType.CATCH) or self.check(TokenType.ELSE):
-            self.fail("bentuk 'coba' ini belum didukung kompiler")
+        clauses = []
+        while self.check(TokenType.CATCH):
+            self.advance()
+            clauses.append(self.parseCatchClause())
+        elseBlock = None
+        if self.match(TokenType.ELSE) != None:
+            elseBlock = self.parseBlock()
         finallyBlock = None
         if self.match(TokenType.FINALLY) != None:
             finallyBlock = self.parseBlock()
-        return TryStmt(tryBlock, catchVar, catchBlock, finallyBlock)
+        if len(clauses) == 1 and clauses[0]["filter"] == None and elseBlock == None:
+            return TryStmt(tryBlock, clauses[0]["var"], clauses[0]["body"], finallyBlock)
+        return TryStmt(tryBlock, "", None, finallyBlock, clauses, elseBlock)
+
+    func parseCatchClause(self):
+        filter = None
+        var = ""
+        if self.match(TokenType.LPAREN) != None:
+            tok = self.peek(0)
+            if tok.type == TokenType.IDENT and not self.isClassLike(tok) and self.peek(1).type == TokenType.RPAREN:
+                var = self.advance().text
+                self.advance()
+            else:
+                items = []
+                while True:
+                    items.append(self.parsePostfix())
+                    if self.match(TokenType.COMMA) == None:
+                        break
+                self.expect(TokenType.RPAREN, "')' diharapkan")
+                filter = items[0] if len(items) == 1 else self.at(ListExpr(items), tok)
+        elif self.check(TokenType.IDENT):
+            tok = self.peek(0)
+            if self.isClassLike(tok) or self.peek(1).type == TokenType.DOT:
+                filter = self.parsePostfix()
+            else:
+                var = self.advance().text
+        if self.isWord(self.peek(0), "as", "sbg"):
+            self.advance()
+            var = self.expect(TokenType.IDENT, "Nama variabel diharapkan setelah 'as'").text
+        self.hidden += 1
+        self.catchVars.append(var if var != "" else "__ex" + str(self.hidden))
+        body = self.parseBlock()
+        self.catchVars.pop()
+        return {"filter": filter, "var": var, "body": body}
 
     func parseThrow(self):
         if self.check(TokenType.SEMICOLON) or self.check(TokenType.RBRACE):

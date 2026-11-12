@@ -70,6 +70,8 @@ INTLIMIT = 4503599627370496 * 1024
 REGS = ["rbx", "r12", "r13", "r14", "r15"]
 JUMPS = {"<": "jge", "<=": "jg", ">": "jle", ">=": "jl", "==": "jne", "!=": "je"}
 ARITH = {"+": "rtAdd", "-": "rtSub", "*": "rtMul", "/": "rtDiv", "//": "rtFloorDiv", "%": "rtMod"}
+BITWISEX = {"&": "rtBitAnd", "|": "rtBitOr", "^": "rtBitXor", "<<": "rtShlX", ">>": "rtShr"}
+ARITHX = {"+": "rtAddX", "-": "rtSubX", "*": "rtMulX", "/": "rtDiv", "//": "rtFloorDiv", "%": "rtMod"}
 BITWISE = {"&": "rtBitAnd", "|": "rtBitOr", "^": "rtBitXor", "<<": "rtShl", ">>": "rtShr"}
 STRMETHODS = {"find": "rtStrFind", "startswith": "rtStrStartsWith", "endswith": "rtStrEndsWith", "join": "rtStrJoin", "strip": "rtStrStrip", "lower": "rtStrLower", "upper": "rtStrUpper", "split": "rtStrSplit", "isdigit": "rtStrIsDigit", "isalpha": "rtStrIsAlpha", "isalnum": "rtStrIsAlnum"}
 
@@ -508,6 +510,7 @@ class X86_64Compiler:
         self.regOf = {}
         self.loops = []
         self.tryDepth = 0
+        self.exactInts = False
         self.forceLocal = False
         self.moduleAssigned = {}
         self.externalFields = {}
@@ -880,6 +883,7 @@ class X86_64Compiler:
         return "\n".join(lines) + "\n"
 
     func genFunc(self, f, label, plainName):
+        self.exactInts = plainName.startswith("nsRt")
         self.inFn = True
         self.fnName = label
         self.params = {}
@@ -926,6 +930,7 @@ class X86_64Compiler:
         tail.append("    pop rbp")
         tail.append("    ret")
         self.inFn = False
+        self.exactInts = False
         return "\n".join(head + loads + bodyLines + tail + self.cold)
 
     func addr(self, name, create):
@@ -1407,6 +1412,17 @@ class X86_64Compiler:
             self.emit("mov rdx, " + str(2 * off + 1))
             self.emit("call rtMapSet")
 
+    # Whole numbers stay exact only below 2^53, as in the interpreter: past that
+    # the slow path redoes the operation on doubles.
+    func emitRangeCheck(self, reg, coldLabel):
+        if self.exactInts:
+            return None
+        self.emit("mov r8, " + reg)
+        self.emit("sar r8, 54")
+        self.emit("add r8, 1")
+        self.emit("cmp r8, 1")
+        self.emit("ja " + coldLabel)
+
     func genArith(self, op, e):
         simpleLeft = self.isSimple(e.left)
         simpleRight = self.isSimple(e.right)
@@ -1433,6 +1449,7 @@ class X86_64Compiler:
                 else:
                     self.emit("sub rdx, " + c2)
                 self.emit("jo " + cold)
+                self.emitRangeCheck("rdx", cold)
                 self.emit("mov rax, rdx")
             else:
                 self.emit("mov rdx, rax")
@@ -1449,17 +1466,18 @@ class X86_64Compiler:
                     self.emit("jo " + cold)
                     self.emit("add rdx, 1")
                     self.emit("jo " + cold)
+                self.emitRangeCheck("rdx", cold)
                 self.emit("mov rax, rdx")
             self.label(back)
             self.cold.append(cold + ":")
             self.cold.append("    mov rdi, rax")
             self.cold.append("    mov rsi, rcx")
-            self.cold.append("    call " + ARITH[op])
+            self.cold.append("    call " + (ARITHX[op] if self.exactInts else ARITH[op]))
             self.cold.append("    jmp " + back)
         else:
             self.emit("mov rdi, rax")
             self.emit("mov rsi, rcx")
-            self.emit("call " + ARITH[op])
+            self.emit("call " + (ARITHX[op] if self.exactInts else ARITH[op]))
 
     func genBitwise(self, op, e):
         simpleLeft = self.isSimple(e.left)
@@ -1486,11 +1504,28 @@ class X86_64Compiler:
         elif op == "^":
             self.emit("xor rax, rcx")
             self.emit("or rax, 1")
-        elif op == "<<":
+        elif op == "<<" and self.exactInts:
             self.emit("sar rax, 1")
             self.emit("sar rcx, 1")
             self.emit("shl rax, cl")
             self.emit("lea rax, [rax*2+1]")
+        elif op == "<<":
+            self.emit("cmp rcx, 125")
+            self.emit("ja " + cold)
+            self.emit("cmp rcx, 1")
+            self.emit("jl " + cold)
+            self.emit("mov rdx, rax")
+            self.emit("sar rdx, 1")
+            self.emit("mov r9, rcx")
+            self.emit("sar rcx, 1")
+            self.emit("shl rdx, cl")
+            self.emit("mov rcx, r9")
+            self.emit("mov r8, rdx")
+            self.emit("sar r8, 53")
+            self.emit("add r8, 1")
+            self.emit("cmp r8, 1")
+            self.emit("ja " + cold)
+            self.emit("lea rax, [rdx*2+1]")
         else:
             self.emit("sar rax, 1")
             self.emit("sar rcx, 1")
@@ -1500,7 +1535,7 @@ class X86_64Compiler:
         self.cold.append(cold + ":")
         self.cold.append("    mov rdi, rax")
         self.cold.append("    mov rsi, rcx")
-        self.cold.append("    call " + BITWISE[op])
+        self.cold.append("    call " + (BITWISEX[op] if self.exactInts else BITWISE[op]))
         self.cold.append("    jmp " + back)
 
     func genCompareValue(self, e):

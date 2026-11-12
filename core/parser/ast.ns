@@ -228,8 +228,10 @@ class ContinueStmt:
         self.jenis = "LANJUT"
 
 class TryStmt:
-    func __init__(self, tryBlock, catchVar, catchBlock, finallyBlock):
+    func __init__(self, tryBlock, catchVar, catchBlock, finallyBlock, clauses = None, elseBlock = None):
         self.type = "TRY"
+        self.clauses = clauses
+        self.elseBlock = elseBlock
         self.tryBlock = tryBlock
         self.catchVar = catchVar
         self.catchBlock = catchBlock

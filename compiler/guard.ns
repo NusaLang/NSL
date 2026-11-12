@@ -563,6 +563,8 @@ class Prep:
         return BlockStmt(stmts)
 
     func lowerTry(self, s):
+        if s.clauses != None or s.elseBlock != None:
+            unsupported("coba/tangkap dengan jenis kesalahan")
         s.tryBlock = self.lowerStmt(s.tryBlock)
         s.catchBlock = self.lowerStmt(s.catchBlock)
         s.finallyBlock = self.lowerStmt(s.finallyBlock)

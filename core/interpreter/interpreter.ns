@@ -73,6 +73,8 @@ func loadModule(name):
     return impor(name)
 
 Scope = loadModule("env").Scope
+Lexer = loadModule("parser/lexer").Lexer
+Parser = loadModule("parser/parser").Parser
 resolverModule = loadModule("resolver")
 resolveModulePath = resolverModule.resolveModulePath
 
@@ -137,6 +139,63 @@ func normalizeError(e):
         if cleaned != e:
             return {"pesan": cleaned}
     return e
+
+# Errors raised by the runtime are plain maps; this says which builtin
+# exception class names they count as for `catch Name`.
+func runtimeErrorMatches(text, name):
+    if name == "Exception" or name == "BaseException" or name == "RuntimeError":
+        return True
+    if name == "ValueError":
+        return text == "invalid number"
+    if name == "ZeroDivisionError" or name == "ArithmeticError":
+        return text == "division by zero"
+    if name == "IndexError" or name == "LookupError":
+        return text == "index out of range"
+    if name == "NameError":
+        return text.startswith("undefined variable")
+    if name == "TypeError":
+        return text.startswith("value is not callable") or text.startswith("Tipe ")
+    return False
+
+EXCEPTIONSOURCE = """class BaseException:
+    func __init__(self, pesan = "", detail = None):
+        self.pesan = pesan
+        self.detail = detail
+    func __str__(self):
+        return str(self.pesan)
+class Exception(BaseException):
+    pass
+class RuntimeError(Exception):
+    pass
+class ValueError(Exception):
+    pass
+class TypeError(Exception):
+    pass
+class NameError(Exception):
+    pass
+class AttributeError(Exception):
+    pass
+class LookupError(Exception):
+    pass
+class IndexError(LookupError):
+    pass
+class KeyError(LookupError):
+    pass
+class ArithmeticError(Exception):
+    pass
+class ZeroDivisionError(ArithmeticError):
+    pass
+class NotImplementedError(RuntimeError):
+    pass
+class AssertionError(Exception):
+    pass
+class OSError(Exception):
+    pass
+class IOError(OSError):
+    pass
+class StopIteration(Exception):
+    pass
+"""
 
 func isSignal(e):
     return hasattr(e, "isReturn") or hasattr(e, "isBreak") or hasattr(e, "isContinue")
@@ -487,6 +546,8 @@ class Interpreter:
     func __init__(self):
         self.globalScope = Scope(None)
         self.registerBuiltins()
+        for stmt in Parser(Lexer(EXCEPTIONSOURCE).tokenize()).parse():
+            self.execute(stmt, self.globalScope)
 
     func registerBuiltins(self):
         g = self.globalScope
@@ -1018,16 +1079,18 @@ class Interpreter:
     func executeTry(self, stmt, env):
         finallyBlock = stmt.finallyBlock
         try:
+            caught = False
             try:
                 self.execInline(stmt.tryBlock, Scope(env))
             except e:
                 if isSignal(e):
                     raise e
-                if stmt.catchBlock == None:
+                err = normalizeError(e)
+                if not self.runHandlers(stmt, err, env):
                     raise e
-                catchScope = Scope(env)
-                catchScope.define(stmt.catchVar, normalizeError(e))
-                self.execInline(stmt.catchBlock, catchScope)
+                caught = True
+            if not caught and stmt.elseBlock != None:
+                self.execInline(stmt.elseBlock, Scope(env))
         except outer:
             if finallyBlock != None:
                 self.execInline(finallyBlock, Scope(env))
@@ -1035,6 +1098,37 @@ class Interpreter:
         if finallyBlock != None:
             self.execInline(finallyBlock, Scope(env))
         return None
+
+    func runHandlers(self, stmt, err, env):
+        if stmt.clauses == None:
+            if stmt.catchBlock == None:
+                return False
+            catchScope = Scope(env)
+            catchScope.define(stmt.catchVar, err)
+            self.execInline(stmt.catchBlock, catchScope)
+            return True
+        for clause in stmt.clauses:
+            if clause["filter"] == None or self.errorMatches(err, self.evaluate(clause["filter"], env)):
+                catchScope = Scope(env)
+                if clause["var"] != "":
+                    catchScope.define(clause["var"], err)
+                self.execInline(clause["body"], catchScope)
+                return True
+        return False
+
+    func errorMatches(self, err, kinds):
+        if tipe(kinds) != "larik":
+            kinds = [kinds]
+        for kind in kinds:
+            if not isClass(kind):
+                continue
+            if isInstance(err):
+                if self.instanceOf(err, kind):
+                    return True
+            elif tipe(err) == "peta" and "pesan" in err:
+                if runtimeErrorMatches(err["pesan"], kind["name"]):
+                    return True
+        return False
 
     func defineClass(self, stmt, env):
         clsObj = {"isClass": True, "name": stmt.name, "parent": stmt.baseClass, "methods": {}, "attrs": {}}

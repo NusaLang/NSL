@@ -189,7 +189,7 @@ func nsRtFloatFormat(sign, m, e, special):
     if sign == 1:
         prefix = "-"
     if m == 0:
-        return prefix + "0"
+        return "0"
     if e >= 0 and e <= 8:
         return prefix + str(m * (1 << e))
     if e < 0 and e >= -52:
@@ -253,6 +253,60 @@ func nsRtListRepeat(a, n):
             push(res, x)
         i += 1
     return res
+
+# Exact remainder of two doubles with the sign of the divisor, like fmod plus
+# the usual sign fix. Long division on the mantissas, so it stays exact for any
+# magnitude.
+func nsRtFmod(x, y):
+    px = floatParts(x)
+    py = floatParts(y)
+    if px[3] != 0 or py[3] != 0:
+        return x
+    mx = px[1]
+    ex = px[2]
+    my = py[1]
+    ey = py[2]
+    if my == 0:
+        lempar {"pesan": "division by zero"}
+    if mx == 0:
+        return x
+    while mx < 4503599627370496:
+        mx = mx * 2
+        ex = ex - 1
+    while my < 4503599627370496:
+        my = my * 2
+        ey = ey - 1
+    neg = px[0] == 1
+    if ex < ey or (ex == ey and mx < my):
+        r = float(mx)
+    else:
+        while ex > ey:
+            d = mx - my
+            if d >= 0:
+                mx = d
+            mx = mx * 2
+            ex = ex - 1
+        if mx >= my:
+            mx = mx - my
+        r = float(mx)
+    step = 1073741824.0
+    while ex <= -30:
+        r = r / step
+        ex = ex + 30
+    while ex < 0:
+        r = r / 2.0
+        ex = ex + 1
+    while ex >= 30:
+        r = r * step
+        ex = ex - 30
+    while ex > 0:
+        r = r * 2.0
+        ex = ex - 1
+    if neg:
+        r = 0.0 - r
+    if r != 0 and ((y < 0) != (r < 0)):
+        r = r + y
+    return r
 
 func nsRtFloatStr(x):
     p = floatParts(x)
