@@ -122,14 +122,15 @@ func makeMethodCaller(target, name):
 # call trace. Cut the trace so they look like the runtime's own errors.
 func cleanErrorText(text):
     cut = text.find("\n  di dalam")
-    traced = cut >= 0
-    if traced:
+    fromHost = cut >= 0 or text.startswith("nusantara: error: ")
+    if cut >= 0:
         text = text[:cut]
+    if not fromHost:
+        return text
     pos = text.rfind(" (line ")
     if pos >= 0 and text.endswith(")"):
         text = text[:pos]
-        traced = True
-    if traced and text.startswith("nusantara: error: "):
+    if text.startswith("nusantara: error: "):
         text = text[18:]
     return text
 

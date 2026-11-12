@@ -72,7 +72,13 @@ func parseChecked(src, tokens = False, ast = False):
     return tree
 
 func exec(src, tokens, ast, runtime = None, file = ""):
-    tree = parseChecked(src, tokens, ast)
+    try:
+        tree = parseChecked(src, tokens, ast)
+    except failure:
+        err = normalizeError(failure)
+        if tipe(err) == "peta" and ("isLexError" in err or "isParseError" in err):
+            fail("error: " + (file + ": " if file != "" else "") + str(err["pesan"]))
+        raise failure
     if runtime == None:
         runtime = Interpreter()
     runtime.setMainFile(file)
