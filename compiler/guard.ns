@@ -22,6 +22,7 @@ StringExpr = astModule.StringExpr
 IdentExpr = astModule.IdentExpr
 IndexExpr = astModule.IndexExpr
 AssignExpr = astModule.AssignExpr
+astNames = None
 CallExpr = astModule.CallExpr
 BlockStmt = astModule.BlockStmt
 VarStmt = astModule.VarStmt
@@ -192,7 +193,7 @@ class Prep:
                     if not (m.name in self.methodSigs):
                         self.methodSigs[m.name] = []
                     self.methodSigs[m.name].append([m.params, m.defaults])
-                self.classes[s.name] = {"base": s.baseClass, "methods": methods}
+                self.classes[s.name] = {"base": s.baseClass, "methods": methods, "node": s}
         for s in stmts:
             self.scanFields(s)
 
@@ -468,7 +469,433 @@ class Prep:
             if call != None and call.type == "CALL" and call.callee.type == "IDENT" and (call.callee.name == "impor" or call.callee.name == "import") and len(call.args) == 1 and call.args[0].type == "STRING":
                 call.topImport = True
             out.append(self.lowerStmt(s))
+        self.optimizeList(out, BlockStmt(out))
         return out
+
+
+    # ---------- objects that never leave their block ----------
+    # `p = Cls(a, b)` where every use of `p` is a field read or write or a call
+    # of a small method becomes plain local variables. No object is built.
+
+    func eachChild(self, node, fn):
+        t = node.type
+        if t == "BINARY":
+            node.left = fn(node.left)
+            node.right = fn(node.right)
+        elif t == "UNARY":
+            node.operand = fn(node.operand)
+        elif t == "CALL":
+            node.callee = fn(node.callee)
+            k = 0
+            for a in node.args:
+                node.args[k] = fn(a)
+                k += 1
+        elif t == "INDEX":
+            node.target = fn(node.target)
+            node.index = fn(node.index)
+        elif t == "SLICE":
+            node.target = fn(node.target)
+            if node.start != None:
+                node.start = fn(node.start)
+            if node.stop != None:
+                node.stop = fn(node.stop)
+        elif t == "LIST":
+            k = 0
+            for el in node.elements:
+                node.elements[k] = fn(el)
+                k += 1
+        elif t == "MAP":
+            k = 0
+            for v in node.values:
+                node.values[k] = fn(v)
+                k += 1
+        elif t == "ASSIGN":
+            node.target = fn(node.target)
+            node.value = fn(node.value)
+        elif t == "MEMBER":
+            node.target = fn(node.target)
+        elif t == "TERNARY":
+            node.condition = fn(node.condition)
+            node.thenVal = fn(node.thenVal)
+            node.elseVal = fn(node.elseVal)
+        elif t == "LAMBDA":
+            node.body = fn(node.body)
+        elif t == "BLOCK":
+            k = 0
+            for st in node.stmts:
+                node.stmts[k] = fn(st)
+                k += 1
+        elif t == "VAR" or t == "RETURN" or t == "THROW":
+            if node.value != None:
+                node.value = fn(node.value)
+        elif t == "EXPR":
+            node.expr = fn(node.expr)
+        elif t == "FUNC":
+            node.body = fn(node.body)
+        elif t == "CLASS":
+            k = 0
+            for m in node.methods:
+                node.methods[k] = fn(m)
+                k += 1
+        elif t == "IF":
+            node.condition = fn(node.condition)
+            node.thenBranch = fn(node.thenBranch)
+            if node.elseBranch != None:
+                node.elseBranch = fn(node.elseBranch)
+        elif t == "WHILE":
+            node.condition = fn(node.condition)
+            node.body = fn(node.body)
+        elif t == "FOR":
+            if node.init != None:
+                node.init = fn(node.init)
+            node.condition = fn(node.condition)
+            if node.post != None:
+                node.post = fn(node.post)
+            node.body = fn(node.body)
+        elif t == "FOR_IN":
+            node.iterable = fn(node.iterable)
+            node.body = fn(node.body)
+        elif t == "TRY":
+            node.tryBlock = fn(node.tryBlock)
+            if node.catchBlock != None:
+                node.catchBlock = fn(node.catchBlock)
+            if node.finallyBlock != None:
+                node.finallyBlock = fn(node.finallyBlock)
+
+    func countIdent(self, node, name):
+        total = [0]
+        func visit(n):
+            if n.type == "IDENT" and n.name == name:
+                total[0] += 1
+            self.eachChild(n, visit)
+            return n
+        visit(node)
+        return total[0]
+
+    func isPureExpr(self, e, allowed):
+        t = e.type
+        if t == "NUMBER" or t == "STRING" or t == "BOOL" or t == "NULL":
+            return True
+        if t == "IDENT":
+            return e.name in allowed
+        if t == "BINARY":
+            return self.isPureExpr(e.left, allowed) and self.isPureExpr(e.right, allowed)
+        if t == "UNARY":
+            return self.isPureExpr(e.operand, allowed)
+        if t == "TERNARY":
+            return self.isPureExpr(e.condition, allowed) and self.isPureExpr(e.thenVal, allowed) and self.isPureExpr(e.elseVal, allowed)
+        if t == "MEMBER":
+            return e.target.type == "IDENT" and e.target.name == "self" and ("self" in allowed)
+        return False
+
+    # What an object of this class looks like, or None when it is not simple enough.
+    func classShape(self, name):
+        if not (name in self.classes):
+            return None
+        node = self.classes[name]["node"]
+        if node.baseClass != None or len(node.attrs) > 0:
+            return None
+        init = None
+        for m in node.methods:
+            if m.name == "__init__" or m.name == "constructor" or m.name == "init":
+                init = m
+            if m.restName != None or m.kwName != None:
+                return None
+            if hasattr(m, "kind") and m.kind != "":
+                return None
+        if init == None:
+            return None
+        allowed = {"self": True}
+        for prm in init.params:
+            allowed[prm] = True
+        fields = []
+        values = {}
+        for st in init.body.stmts:
+            if st.type != "EXPR" or st.expr.type != "ASSIGN" or st.expr.op != "=":
+                return None
+            tg = st.expr.target
+            if tg.type != "MEMBER" or tg.target.type != "IDENT" or tg.target.name != "self":
+                return None
+            if tg.name in values:
+                return None
+            if not self.isPureExpr(st.expr.value, allowed):
+                return None
+            fields.append(tg.name)
+            values[tg.name] = st.expr.value
+        if len(fields) == 0:
+            return None
+        for d in init.defaults:
+            if init.defaults[d].type != "NUMBER" and init.defaults[d].type != "STRING" and init.defaults[d].type != "BOOL" and init.defaults[d].type != "NULL":
+                return None
+        methods = {}
+        for m in node.methods:
+            if m == init:
+                continue
+            kind = self.methodShape(m, fields)
+            if kind != None:
+                methods[m.name] = kind
+        return {"fields": fields, "values": values, "init": init, "methods": methods}
+
+    # ["expr", e] for `return e`; ["stmts", list] for `self.f = e` / `self.f op= e` lines.
+    func methodShape(self, m, fields):
+        allowed = {"self": True}
+        for prm in m.params:
+            allowed[prm] = True
+        stmts = m.body.stmts
+        if len(stmts) == 1 and stmts[0].type == "RETURN" and stmts[0].value != None:
+            if self.isPureExpr(stmts[0].value, allowed) and self.fieldsKnown(stmts[0].value, fields):
+                return ["expr", stmts[0].value, m]
+            return None
+        for st in stmts:
+            if st.type != "EXPR" or st.expr.type != "ASSIGN":
+                return None
+            tg = st.expr.target
+            if tg.type != "MEMBER" or tg.target.type != "IDENT" or tg.target.name != "self" or not (tg.name in fields):
+                return None
+            if not self.isPureExpr(st.expr.value, allowed) or not self.fieldsKnown(st.expr.value, fields):
+                return None
+        if len(stmts) == 0:
+            return None
+        return ["stmts", stmts, m]
+
+    func fieldsKnown(self, e, fields):
+        ok = [True]
+        func visit(n):
+            if n.type == "MEMBER" and not (n.name in fields):
+                ok[0] = False
+            self.eachChild(n, visit)
+            return n
+        visit(e)
+        return ok[0]
+
+    func copyWith(self, e, subst):
+        t = e.type
+        if t == "IDENT":
+            if e.name in subst:
+                return self.copyWith(subst[e.name], {})
+            return IdentExpr(e.name)
+        if t == "NUMBER":
+            return NumberExpr(e.value, e.isFloat)
+        if t == "STRING":
+            return StringExpr(e.value)
+        if t == "BOOL":
+            return astModule.BoolExpr(e.value)
+        if t == "NULL":
+            return astModule.NullExpr()
+        if t == "BINARY":
+            return astModule.BinaryExpr(e.op, self.copyWith(e.left, subst), self.copyWith(e.right, subst))
+        if t == "UNARY":
+            return astModule.UnaryExpr(e.op, self.copyWith(e.operand, subst))
+        if t == "TERNARY":
+            return astModule.TernaryExpr(self.copyWith(e.condition, subst), self.copyWith(e.thenVal, subst), self.copyWith(e.elseVal, subst))
+        if t == "MEMBER":
+            if "self." + e.name in subst:
+                return self.copyWith(subst["self." + e.name], {})
+            return astModule.MemberExpr(self.copyWith(e.target, subst), e.name)
+        return e
+
+    # Every use of `name` inside `node` is one this pass can turn into locals.
+    func usesOk(self, node, name, shape):
+        t = node.type
+        if t == "IDENT":
+            return node.name != name
+        if t == "FUNC" or t == "LAMBDA" or t == "CLASS":
+            return self.countIdent(node, name) == 0
+        if t == "MEMBER" and node.target.type == "IDENT" and node.target.name == name:
+            return node.name in shape["fields"]
+        if t == "CALL" and node.callee.type == "MEMBER" and node.callee.target.type == "IDENT" and node.callee.target.name == name:
+            m = node.callee.name
+            if not (m in shape["methods"]) or len(node.kwNames) > 0:
+                return False
+            kind = shape["methods"][m]
+            if len(node.args) > len(kind[2].params):
+                return False
+            if kind[0] == "stmts":
+                return False
+            allowed = {}
+            for a in node.args:
+                if not self.pureArg(a, name, shape):
+                    return False
+            return True
+        ok = [True]
+        func visit(n):
+            if ok[0] and not self.usesOk(n, name, shape):
+                ok[0] = False
+            return n
+        if t == "EXPR" and node.expr.type == "CALL" and node.expr.callee.type == "MEMBER" and node.expr.callee.target.type == "IDENT" and node.expr.callee.target.name == name:
+            m = node.expr.callee.name
+            if m in shape["methods"] and len(node.expr.kwNames) == 0 and len(node.expr.args) <= len(shape["methods"][m][2].params):
+                for a in node.expr.args:
+                    if not self.pureArg(a, name, shape):
+                        return False
+                return True
+            return False
+        self.eachChild(node, visit)
+        return ok[0]
+
+    func pureArg(self, a, name, shape):
+        t = a.type
+        if t == "NUMBER" or t == "STRING" or t == "BOOL" or t == "NULL":
+            return True
+        if t == "IDENT":
+            return a.name != name
+        if t == "BINARY":
+            return self.pureArg(a.left, name, shape) and self.pureArg(a.right, name, shape)
+        if t == "UNARY":
+            return self.pureArg(a.operand, name, shape)
+        if t == "MEMBER":
+            return a.target.type == "IDENT" and a.target.name == name and (a.name in shape["fields"])
+        return False
+
+    func fieldName(self, name, f):
+        return name + "_" + f
+
+    # Rewrites uses of `name` in place.
+    func rewriteUses(self, node, name, shape):
+        t = node.type
+        if t == "MEMBER" and node.target.type == "IDENT" and node.target.name == name:
+            return IdentExpr(self.fieldName(name, node.name))
+        if t == "CALL" and node.callee.type == "MEMBER" and node.callee.target.type == "IDENT" and node.callee.target.name == name:
+            return self.inlineCall(node.callee.name, node.args, name, shape)
+        if t == "EXPR" and node.expr.type == "CALL" and node.expr.callee.type == "MEMBER" and node.expr.callee.target.type == "IDENT" and node.expr.callee.target.name == name:
+            call = node.expr
+            kind = shape["methods"][call.callee.name]
+            args = []
+            for a in call.args:
+                args.append(self.rewriteUses(a, name, shape))
+            if kind[0] == "expr":
+                return ExprStmt(self.inlineCall(call.callee.name, call.args, name, shape))
+            return self.inlineStatements(call.callee.name, args, name, shape)
+        func visit(n):
+            return self.rewriteUses(n, name, shape)
+        self.eachChild(node, visit)
+        return node
+
+    func inlineCall(self, m, args, name, shape):
+        kind = shape["methods"][m]
+        meth = kind[2]
+        subst = {}
+        k = 0
+        for prm in meth.params:
+            if k < len(args):
+                subst[prm] = self.rewriteUses(args[k], name, shape)
+            elif prm in meth.defaults:
+                subst[prm] = meth.defaults[prm]
+            else:
+                subst[prm] = astModule.NullExpr()
+            k += 1
+        for f in shape["fields"]:
+            subst["self." + f] = IdentExpr(self.fieldName(name, f))
+        return self.copyWith(kind[1], subst)
+
+    # A method made of `self.f = e` lines, written out where it is called.
+    func inlineStatements(self, m, args, name, shape):
+        kind = shape["methods"][m]
+        meth = kind[2]
+        out = []
+        subst = {}
+        k = 0
+        for prm in meth.params:
+            tmp = self.fresh("ma")
+            if k < len(args):
+                out.append(ExprStmt(AssignExpr(IdentExpr(tmp), "=", args[k])))
+            elif prm in meth.defaults:
+                out.append(ExprStmt(AssignExpr(IdentExpr(tmp), "=", self.copyWith(meth.defaults[prm], {}))))
+            else:
+                out.append(ExprStmt(AssignExpr(IdentExpr(tmp), "=", astModule.NullExpr())))
+            subst[prm] = IdentExpr(tmp)
+            k += 1
+        for f in shape["fields"]:
+            subst["self." + f] = IdentExpr(self.fieldName(name, f))
+        for st in kind[1]:
+            tg = st.expr.target
+            out.append(ExprStmt(AssignExpr(IdentExpr(self.fieldName(name, tg.name)), st.expr.op, self.copyWith(st.expr.value, subst))))
+        return BlockStmt(out)
+
+    # The statements that stand for `name = Cls(args)`.
+    func constructStmts(self, name, call, shape):
+        init = shape["init"]
+        out = []
+        subst = {}
+        k = 0
+        for prm in init.params:
+            tmp = self.fresh("ca")
+            if k < len(call.args):
+                out.append(ExprStmt(AssignExpr(IdentExpr(tmp), "=", call.args[k])))
+            elif prm in init.defaults:
+                out.append(ExprStmt(AssignExpr(IdentExpr(tmp), "=", self.copyWith(init.defaults[prm], {}))))
+            else:
+                return None
+            subst[prm] = IdentExpr(tmp)
+            k += 1
+        for f in shape["fields"]:
+            subst["self." + f] = IdentExpr(self.fieldName(name, f))
+        done = {}
+        for f in shape["fields"]:
+            value = self.copyWith(shape["values"][f], subst)
+            out.append(ExprStmt(AssignExpr(IdentExpr(self.fieldName(name, f)), "=", value)))
+            subst["self." + f] = IdentExpr(self.fieldName(name, f))
+        return out
+
+    func candidate(self, st):
+        call = None
+        name = None
+        if st.type == "EXPR" and st.expr.type == "ASSIGN" and st.expr.op == "=" and st.expr.target.type == "IDENT":
+            call = st.expr.value
+            name = st.expr.target.name
+        elif st.type == "VAR":
+            call = st.value
+            name = st.name
+        if call == None or call.type != "CALL" or call.callee.type != "IDENT" or len(call.kwNames) > 0:
+            return None
+        return [name, call]
+
+    func optimizeList(self, stmts, root):
+        i = 0
+        while i < len(stmts):
+            st = stmts[i]
+            cand = self.candidate(st)
+            if cand != None and (cand[1].callee.name in self.classes):
+                name = cand[0]
+                shape = self.classShape(cand[1].callee.name)
+                if shape != None and not (name in cand[1].callee.name):
+                    after = BlockStmt(stmts[i + 1:])
+                    inside = self.countIdent(after, name)
+                    total = self.countIdent(root, name)
+                    argsUse = 0
+                    for a in cand[1].args:
+                        argsUse += self.countIdent(a, name)
+                    if total == inside + 1 + argsUse and argsUse == 0 and self.usesOk(after, name, shape):
+                        built = self.constructStmts(name, cand[1], shape)
+                        if built != None:
+                            self.rewriteUses(after, name, shape)
+                            rest = after.stmts
+                            while len(stmts) > i:
+                                stmts.pop()
+                            for b in built:
+                                stmts.append(b)
+                            for r in rest:
+                                stmts.append(r)
+                            i += len(built)
+                            continue
+            i += 1
+        for st in stmts:
+            self.optimizeInside(st, root)
+
+    func optimizeInside(self, st, root):
+        t = st.type
+        if t == "BLOCK":
+            self.optimizeList(st.stmts, root)
+        elif t == "IF":
+            self.optimizeInside(st.thenBranch, root)
+            if st.elseBranch != None:
+                self.optimizeInside(st.elseBranch, root)
+        elif t == "WHILE" or t == "FOR" or t == "FOR_IN":
+            self.optimizeInside(st.body, root)
+        elif t == "TRY":
+            self.optimizeInside(st.tryBlock, root)
+            if st.catchBlock != None:
+                self.optimizeInside(st.catchBlock, root)
 
     func lowerBlock(self, stmts):
         out = []
@@ -491,6 +918,8 @@ class Prep:
         self.outerLocals = found
         f.body = self.lowerStmt(f.body)
         self.outerLocals = saved
+        if not isMethod:
+            self.optimizeList(f.body.stmts, f.body)
         return f
 
     func lowerStmt(self, s):

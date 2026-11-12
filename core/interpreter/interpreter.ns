@@ -848,7 +848,7 @@ class Interpreter:
                     found = self.findMethod(v["class"], "__repr__" if top else "__str__")
                 if found[0] != None:
                     return str(self.callMethod(v, found, [], {}))
-                return "<objek " + v["class"]["name"] + ">"
+                return "<objek>"
             if "isClass" in v:
                 return v["name"]
             if "isRange" in v:
