@@ -1,0 +1,18 @@
+# Indonesian and English keywords mean the same thing and can be mixed.
+fungsi luas(panjang, lebar):
+    hasil panjang * lebar
+
+func describe(n):
+    jika n > 20:
+        return "besar"
+    lain:
+        return "kecil"
+
+angka = [3, 8, 12]
+untuk a dalam angka:
+    print(a, luas(a, 2), describe(luas(a, 2)))
+
+i = 0
+selama i < 3:
+    i += 1
+print("selesai", i)

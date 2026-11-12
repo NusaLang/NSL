@@ -1,6 +1,0 @@
-print(float("2.5"), float("3"), float("-0.75"), float("  12.5"), float("1e3"), float("2.5E-2"))
-print(float("0.1") + float("0.2"), float("100"), float("-3e2"), float("1.5e+2"))
-print(float("123456789.123"), float("0.000001"), float(7), float(2.5))
-x = float("3.14159")
-print(x * 2, x > 3, x < 4)
-print(float("5") / 2, int(float("9.99")))

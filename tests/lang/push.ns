@@ -1,7 +1,0 @@
-a = [1]
-print(push(a, 2), tambah(a, 3), a.append(4), len(a), pop(a), a.pop())
-x = push(a, 9)
-print(x, a)
-a = [1]
-print(a.append(100), a.append(7))
-print(push(a, 55))

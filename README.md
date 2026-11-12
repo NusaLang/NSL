@@ -49,7 +49,7 @@ Measured on an Intel Core i5-7300U, Linux x86-64, runs interleaved. nusa is 2–
 
 ```bash
 make build    # bootstrap core/main.ns into ./nusa
-make test     # run the interpreter, VM, and native AOT test suites
+make test     # run every program in examples/, natively and in the interpreter
 make install  # copy the binary to ~/.local/bin
 ```
 
@@ -98,8 +98,7 @@ net/         HTTP and socket modules
 crypto/      hashing and crypto modules
 media/       audio/image processing modules
 lib/         additional pure-.ns utility modules
-bench/       cross-language benchmark suite and native micro-benchmark
-tests/       interpreter/VM/native test suites
+examples/    small programs showing the language, one feature each
 ```
 
 ## License

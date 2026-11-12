@@ -1,0 +1,19 @@
+# Classes, default parameters, and inheritance.
+class Animal:
+    func __init__(self, name, sound = "a sound"):
+        self.name = name
+        self.sound = sound
+    func speak(self):
+        return self.name + " makes " + self.sound
+
+class Dog(Animal):
+    func __init__(self, name):
+        self.name = name
+        self.sound = "a bark"
+    func fetch(self):
+        return self.name + " fetches"
+
+pets = [Animal("Generic"), Animal("Cat", "a meow"), Dog("Rex")]
+for p in pets:
+    print(p.speak())
+print(pets[2].fetch())

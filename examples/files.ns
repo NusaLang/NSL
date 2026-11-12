@@ -1,0 +1,8 @@
+# Reading and writing files, and running a command without a shell.
+path = "/tmp/nusaExample.txt"
+writeFile(path, "baris satu\nbaris dua\n")
+print(fileExists(path))
+print(readFile(path))
+
+result = runCommand("echo", ["halo", "dari", "proses"])
+print(result.keluaran)

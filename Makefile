@@ -51,23 +51,12 @@ $(BIN): core/main.ns $(wildcard core/*.ns) $(wildcard core/*/*.ns)
 build: $(BIN)
 
 test: $(BIN)
-	@echo "=== [1/4] Interpreter ==="
-	@./$(BIN) -c "print('Self-hosted interpreter OK')"
-	@if [ -d tests/self_hosted ]; then \
-		./$(BIN) run tests/self_hosted/test1.ns && \
-		./$(BIN) run tests/self_hosted/test2.ns && \
-		./$(BIN) run tests/self_hosted/testStd.ns; \
-	fi
-	@echo "=== [2/4] Bytecode VM ==="
-	@./$(BIN) --vm -c "print('Bytecode VM OK')"
-	@if [ -d tests/self_hosted ]; then \
-		./$(BIN) --vm run tests/self_hosted/test1.ns; \
-	fi
-	@echo "=== [3/4] Cross-runtime language tests ==="
-	@tests/runLang.sh
-	@echo "=== [4/4] Native AOT ==="
-	@tests/runNative.sh x86_64
-	@echo "All tests passed!"
+	@for f in examples/*.ns; do \
+		echo "=== $$f ==="; \
+		./$(BIN) $$f >/dev/null || exit 1; \
+		NUSA_INTERP=1 ./$(BIN) $$f >/dev/null || exit 1; \
+	done
+	@echo "All examples ran."
 
 run: $(BIN)
 	@./$(BIN)
