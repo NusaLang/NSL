@@ -1,6 +1,6 @@
 BIN := nusa
 ENGINE := nusa-engine
-BOOTSTRAP_URL := https://github.com/NusaLang/NSL/releases/download/v0.0.1-build
+BOOTSTRAP_URL := https://github.com/NusaLang/NSL/releases/latest/download
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
 
@@ -14,6 +14,7 @@ ifeq ($(UNAME_S),Linux)
 		BOOTSTRAP_ASSET := nusa-linux-arm64
 	endif
 else ifeq ($(UNAME_S),Darwin)
+	BOOTSTRAP_URL := https://github.com/NusaLang/NSL/releases/download/v0.0.1-build
 	ifeq ($(UNAME_M),arm64)
 		BOOTSTRAP_ASSET := nusa-darwin-arm64
 	else
