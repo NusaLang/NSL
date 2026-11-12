@@ -8,14 +8,10 @@ func loadMod(name):
     candidates = [
         name,
         "core/" + name,
-        "core/virtual/" + name,
         "core/interpreter/" + name,
         "core/parser/" + name,
-        "core/types/" + name,
-        "virtual/" + name,
         "interpreter/" + name,
-        "parser/" + name,
-        "types/" + name
+        "parser/" + name
     ]
     for c in candidates:
         try:
@@ -27,8 +23,6 @@ func loadMod(name):
 Lexer = loadMod("parser/lexer").Lexer
 Parser = loadMod("parser/parser").Parser
 Interpreter = loadMod("interpreter/interpreter").Interpreter
-VmCompiler = loadMod("virtual/vm").VmCompiler
-VmRunner = loadMod("virtual/vm").VmRunner
 resolverModule = loadMod("resolver")
 resolveModulePath = resolverModule.resolveModulePath
 JalankanPerintah = jalankan_perintah
@@ -44,7 +38,6 @@ USAGE = """usage: nusa [options] [-c code | -m module | file | -] [args]
   -q           no REPL banner
   -x           skip the first line of the source
   -k, --check  parse only
-  --vm         run on the bytecode VM
   --tokens     dump tokens before running
   --ast        dump the AST before running
   -V, --version
@@ -76,11 +69,8 @@ func parseChecked(src, tokens = False, ast = False):
         fail("syntax errors: " + str(parseState["errors"]))
     return tree
 
-func exec(src, vm, tokens, ast, runtime = None):
+func exec(src, tokens, ast, runtime = None):
     tree = parseChecked(src, tokens, ast)
-    if vm:
-        VmRunner().run(VmCompiler().compile(tree))
-        return None
     if runtime == None:
         runtime = Interpreter()
     runtime.run(tree)
@@ -241,7 +231,7 @@ func start(args):
     entry = scripts["start"] if "start" in scripts else (manifest["main"] if "main" in manifest else None)
     if entry == None:
         fail("nusa.json tidak punya scripts.start atau main")
-    guarded(lambda: exec(readSource(entry, False), False, False, False))
+    guarded(lambda: exec(readSource(entry, False), False, False))
 
 func doBuild(entry, out, isNative):
     src = BacaFile(entry)
@@ -358,7 +348,6 @@ func main():
     inspect = False
     quiet = False
     skipFirst = False
-    vm = False
     tokens = False
     ast = False
     mode = ""
@@ -402,8 +391,6 @@ func main():
         elif a == "-":
             mode = "stdin"
             rest = args[i:]
-        elif a == "--vm":
-            vm = True
         elif a == "--tokens":
             tokens = True
         elif a == "--ast":
@@ -428,13 +415,13 @@ func main():
     runtime = None
     if mode == "file":
         setScriptDirFor(arg)
-        runtime = guarded(lambda: exec(readSource(arg, skipFirst), vm, tokens, ast))
+        runtime = guarded(lambda: exec(readSource(arg, skipFirst), tokens, ast))
     elif mode == "eval":
-        runtime = guarded(lambda: exec(arg, vm, tokens, ast))
+        runtime = guarded(lambda: exec(arg, tokens, ast))
     elif mode == "module":
-        runtime = guarded(lambda: exec(readSource(findModule(arg), skipFirst), vm, tokens, ast))
+        runtime = guarded(lambda: exec(readSource(findModule(arg), skipFirst), tokens, ast))
     elif mode == "stdin":
-        runtime = guarded(lambda: exec(readStdin(), vm, tokens, ast))
+        runtime = guarded(lambda: exec(readStdin(), tokens, ast))
     elif mode == "check":
         guarded(lambda: parseChecked(readSource(arg, False)))
         sys.exit(0)

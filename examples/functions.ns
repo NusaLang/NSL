@@ -1,0 +1,36 @@
+# Default and keyword arguments, *args and **kwargs, lambdas, closures.
+func greet(name, greeting = "Halo", punct = "!"):
+    return greeting + ", " + name + punct
+
+print(greet("Ana"))
+print(greet("Budi", punct = "?"))
+print(greet(greeting = "Hi", name = "Citra"))
+
+func total(*numbers):
+    t = 0
+    for n in numbers:
+        t += n
+    return t
+
+func describe(**options):
+    keys = options.keys()
+    return len(keys)
+
+print(total(1, 2, 3, 4), total())
+print(describe(a = 1, b = 2, c = 3))
+values = [10, 20, 30]
+print(total(*values))
+
+square = lambda x: x * x
+print(square(9))
+
+func makeCounter(start):
+    count = start
+    func step():
+        count += 1
+        return count
+    return step
+
+counter = makeCounter(10)
+counter()
+print(counter())

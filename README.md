@@ -4,7 +4,7 @@
 
 # Nusantara
 
-Nusantara is a programming language that compiles and runs itself — the lexer, parser, interpreter, bytecode VM, and native x86-64 and ARM64 compiler are all written in Nusantara, bootstrapped once by a small C++ host. You can write keywords in English (`func`, `if`, `return`) or Indonesian (`fungsi`, `jika`, `hasil`) and mix them freely in the same file; blocks can use colons or braces.
+Nusantara is a programming language that compiles and runs itself — the lexer, parser, interpreter, and native x86-64 and ARM64 compiler are all written in Nusantara, bootstrapped once by a small C++ host. You can write keywords in English (`func`, `if`, `return`) or Indonesian (`fungsi`, `jika`, `hasil`) and mix them freely in the same file; blocks can use colons or braces.
 
 ```python
 func fib(n):
@@ -24,7 +24,7 @@ for i in range(10):
 ./app                       # no runtime, no dependencies
 ```
 
-`nusa main.ns` works like `go run`: the first run compiles, later runs start from the cache until the source or one of its imports changes. The compiler turns `.ns` source into x86-64 or ARM64 machine code — tagged integers, fixed-offset structs for classes, inline caches for field and method lookups — with its own assembler and ELF writer, so no `as`, `ld`, or C compiler is needed, on Linux or in Termux on Android. Programs that use something the compiler does not support yet run in the interpreter instead; `NUSA_INTERP=1` or `--vm` selects the interpreter or bytecode VM explicitly.
+`nusa main.ns` works like `go run`: the first run compiles, later runs start from the cache until the source or one of its imports changes. The compiler turns `.ns` source into x86-64 or ARM64 machine code — tagged integers, fixed-offset structs for classes, inline caches for field and method lookups — with its own assembler and ELF writer, so no `as`, `ld`, or C compiler is needed, on Linux or in Termux on Android. Programs that use something the compiler does not support yet (closures, comprehensions, `*args`, sockets, and a few more) run in the interpreter instead, with identical results; `NUSA_INTERP=1` forces the interpreter.
 
 ## Benchmarks
 
@@ -49,7 +49,7 @@ Measured on an Intel Core i5-7300U, Linux x86-64, runs interleaved. nusa is 2–
 
 ```bash
 make build    # bootstrap core/main.ns into ./nusa
-make test     # run every program in examples/, natively and in the interpreter
+make test     # run every program in examples/ natively and in the interpreter, and require identical output
 make install  # copy the binary to ~/.local/bin
 ```
 
@@ -84,6 +84,32 @@ class Dog(Animal):
 Dog("Rex").speak()  # Rex makes a bark
 ```
 
+### Functions
+
+```python
+func greet(name, greeting = "Halo", punct = "!"):
+    return greeting + ", " + name + punct
+
+greet("Ana")                       # defaults
+greet("Budi", punct = "?")         # keyword arguments
+func total(*numbers):              # variadic, and **options for keywords
+    ...
+total(*[1, 2, 3])                  # spread
+```
+
+Functions are values. `lambda x: x * x` and nested functions capture the variables around them.
+
+### Variables and scope
+
+An assignment updates the variable of that name when one is already visible: a parameter, a variable of an enclosing function, or a module variable. Otherwise it creates a new local. `buat` always declares a new variable in the current block, and `global name` is accepted for readers coming from Python. See `examples/scopes.ns`.
+
+### Text, collections, errors
+
+- `f"{value:.2f}"`, `"{x}"`-free templates in backticks, slices with steps (`s[::-1]`), `in` on text, lists, and maps.
+- Comprehensions (`[n * n for n in xs if n > 1]`, `{k: v for ...}`), tuple assignment (`a, b = b, a`), `for key, value in pairs`.
+- `try`/`catch`/`finally` with `throw`. Errors raised by the runtime are maps with a `pesan` field. A missing map key reads as `kosong`.
+- Numbers are doubles; integer literals above 2^53 are rejected.
+
 ## Standard library highlights
 
 `runCommand(cmd, args)` spawns a process straight through `fork`/`execve`/`pipe`/`waitpid` in the native backend, with no shell in between — argument lists can't be reinterpreted as shell syntax. File access is `readFile`, `writeFile`, and `fileExists`. `impor()` pulls in another `.ns` file, and the native compiler resolves and inlines it statically at compile time. `gcInfo()` and `gcForce()` let you inspect and trigger the garbage collector directly.
@@ -91,8 +117,8 @@ Dog("Rex").speak()  # Rex makes a bark
 ## Repository layout
 
 ```
-core/        lexer, parser, AST, interpreter, bytecode VM, CLI entry point
-compiler/    native x86-64 and ARM64 compiler, runtime, and built-in assembler
+core/        lexer, parser, AST, interpreter, CLI entry point
+compiler/    native x86-64 and ARM64 compiler, runtime, and built-in assembler; guard.ns lowers the AST and rejects what native code cannot do exactly
 std/         standard library (process, filesystem, i18n, ...)
 net/         HTTP and socket modules
 crypto/      hashing and crypto modules

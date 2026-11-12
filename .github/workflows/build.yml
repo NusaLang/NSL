@@ -236,7 +236,7 @@ jobs:
           cat << 'EOF' > release_notes.md
           ## NSL 0.0.2-rc4
 
-          A self-hosted programming language with Indonesian and English keywords, bytecode VM, and native x86_64 and ARM64 compiler. `nusa file.ns` now compiles to a cached native binary and runs it, and the compiler has its own assembler and ELF writer, so builds need no `as`, `ld`, or C compiler.
+          A self-hosted programming language with Indonesian and English keywords and a native x86_64 and ARM64 compiler. `nusa file.ns` now compiles to a cached native binary and runs it, and the compiler has its own assembler and ELF writer, so builds need no `as`, `ld`, or C compiler.
 
           ### Install
           ```bash
