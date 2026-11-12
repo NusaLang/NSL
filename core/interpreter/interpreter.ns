@@ -88,18 +88,18 @@ func rtError(msg):
     err = {"pesan": msg, "line": lineState["line"], "file": lineState["file"]}
     lempar err
 
+# Statements hand back None, or one of these when control leaves them.
 class ReturnSignal:
     func __init__(self, val):
-        self.isReturn = True
+        self.kind = 3
         self.val = val
 
-class BreakSignal:
-    func __init__(self):
-        self.isBreak = True
+class LoopSignal:
+    func __init__(self, kind):
+        self.kind = kind
 
-class ContinueSignal:
-    func __init__(self):
-        self.isContinue = True
+BREAKSIGNAL = LoopSignal(1)
+CONTINUESIGNAL = LoopSignal(2)
 
 class UserFunction:
     func __init__(self, name, params, body, closure, defaults = None, restName = None, kwName = None):
@@ -938,17 +938,18 @@ class Interpreter:
                 rtError("fungsi '" + label + "' tidak punya parameter '" + name + "'")
 
     func runBody(self, fnObj, scope):
-        try:
-            body = fnObj.body
-            if body.type == "BLOCK":
-                for st in body.stmts:
-                    self.execute(st, scope)
-            else:
-                self.execute(body, scope)
-        except sig:
-            if hasattr(sig, "isReturn"):
-                return sig.val
-            raise sig
+        body = fnObj.body
+        if body.type == "BLOCK":
+            for st in body.stmts:
+                r = self.execute(st, scope)
+                if r != None:
+                    if r.kind == 3:
+                        return r.val
+                    return None
+            return None
+        r = self.execute(body, scope)
+        if r != None and r.kind == 3:
+            return r.val
         return None
 
     func callUserFunction(self, fnTarget, args, kw):
@@ -1003,10 +1004,11 @@ class Interpreter:
     func execInline(self, node, env):
         if node == None:
             return None
-        t = self.nodeType(node)
-        if t == "BLOCK":
+        if node.type == "BLOCK":
             for s in node.stmts:
-                self.execute(s, env)
+                r = self.execute(s, env)
+                if r != None:
+                    return r
             return None
         return self.execute(node, env)
 
@@ -1052,17 +1054,6 @@ class Interpreter:
         else:
             rtError("field tidak bisa diisi pada nilai bertipe " + tipe(obj))
 
-    func loopBody(self, body, scope):
-        # 0 = keep going, 1 = break
-        try:
-            self.execInline(body, scope)
-        except sig:
-            if hasattr(sig, "isBreak"):
-                return 1
-            elif hasattr(sig, "isContinue"):
-                return 0
-            raise sig
-        return 0
 
     func execute(self, stmt, env):
         if stmt == None:
@@ -1072,37 +1063,52 @@ class Interpreter:
         if stmt.line != 0:
             lineState["line"] = stmt.line
 
-        if t == "BLOCK":
-            childScope = Scope(env)
-            for s in stmt.stmts:
-                self.execute(s, childScope)
+        if t == "EXPR":
+            self.evaluate(stmt.expr, env)
             return None
-        elif t == "VAR":
-            val = self.evaluate(stmt.value, env)
-            env.define(stmt.name, val)
-            return val
-        elif t == "FUNC":
-            fnObj = self.makeFunction(stmt.name, stmt.params, stmt.body, stmt.defaults, env, stmt.restName, stmt.kwName)
-            env.define(stmt.name, fnObj)
-            return fnObj
+        elif t == "RETURN":
+            if stmt.value == None:
+                return ReturnSignal(None)
+            return ReturnSignal(self.evaluate(stmt.value, env))
         elif t == "IF":
             if self.isTruthy(self.evaluate(stmt.condition, env)):
-                self.execInline(stmt.thenBranch, self.scopeFor(stmt.thenBranch, env))
+                return self.execInline(stmt.thenBranch, self.scopeFor(stmt.thenBranch, env))
             elif stmt.elseBranch != None:
-                self.execInline(stmt.elseBranch, self.scopeFor(stmt.elseBranch, env))
+                return self.execInline(stmt.elseBranch, self.scopeFor(stmt.elseBranch, env))
+            return None
+        elif t == "VAR":
+            env.define(stmt.name, self.evaluate(stmt.value, env))
+            return None
+        elif t == "BLOCK":
+            childScope = Scope(env)
+            for s in stmt.stmts:
+                r = self.execute(s, childScope)
+                if r != None:
+                    return r
+            return None
+        elif t == "FUNC":
+            env.define(stmt.name, self.makeFunction(stmt.name, stmt.params, stmt.body, stmt.defaults, env, stmt.restName, stmt.kwName))
             return None
         elif t == "WHILE":
             while self.isTruthy(self.evaluate(stmt.condition, env)):
-                if self.loopBody(stmt.body, self.scopeFor(stmt.body, env)) == 1:
-                    break
+                r = self.execInline(stmt.body, self.scopeFor(stmt.body, env))
+                if r != None:
+                    if r.kind == 1:
+                        break
+                    if r.kind == 3:
+                        return r
             return None
         elif t == "FOR":
             loopScope = Scope(env)
             if stmt.init != None:
                 self.execute(stmt.init, loopScope)
             while self.isTruthy(self.evaluate(stmt.condition, loopScope)):
-                if self.loopBody(stmt.body, self.scopeFor(stmt.body, loopScope)) == 1:
-                    break
+                r = self.execInline(stmt.body, self.scopeFor(stmt.body, loopScope))
+                if r != None:
+                    if r.kind == 1:
+                        break
+                    if r.kind == 3:
+                        return r
                 if stmt.post != None:
                     self.evaluate(stmt.post, loopScope)
             return None
@@ -1118,25 +1124,28 @@ class Interpreter:
                 while (step > 0 and cur < stop) or (step < 0 and cur > stop):
                     iterScope = Scope(env)
                     self.bindTargets(stmt, cur, iterScope, env)
-                    if self.loopBody(stmt.body, iterScope) == 1:
-                        break
+                    r = self.execInline(stmt.body, iterScope)
+                    if r != None:
+                        if r.kind == 1:
+                            break
+                        if r.kind == 3:
+                            return r
                     cur += step
                 return None
             for item in collection:
                 iterScope = Scope(env)
                 self.bindTargets(stmt, item, iterScope, env)
-                if self.loopBody(stmt.body, iterScope) == 1:
-                    break
+                r = self.execInline(stmt.body, iterScope)
+                if r != None:
+                    if r.kind == 1:
+                        break
+                    if r.kind == 3:
+                        return r
             return None
-        elif t == "RETURN":
-            val = None
-            if stmt.value != None:
-                val = self.evaluate(stmt.value, env)
-            raise ReturnSignal(val)
         elif t == "BREAK":
-            raise BreakSignal()
+            return BREAKSIGNAL
         elif t == "CONTINUE":
-            raise ContinueSignal()
+            return CONTINUESIGNAL
         elif t == "TRY":
             return self.executeTry(stmt, env)
         elif t == "THROW":
@@ -1188,14 +1197,11 @@ class Interpreter:
             return None
         elif t == "WITH":
             return self.executeWith(stmt, env, 0)
-        elif t == "EXPR":
-            return self.evaluate(stmt.expr, env)
         return None
 
     func executeWith(self, stmt, env, level):
         if level >= len(stmt.items):
-            self.execInline(stmt.body, Scope(env))
-            return None
+            return self.execInline(stmt.body, Scope(env))
         item = stmt.items[level]
         manager = self.evaluate(item[0], env)
         entered = manager
@@ -1207,17 +1213,14 @@ class Interpreter:
         if item[1] != None:
             scope.define(item[1], entered)
         try:
-            self.executeWith(stmt, scope, level + 1)
+            result = self.executeWith(stmt, scope, level + 1)
         except e:
-            if isSignal(e):
-                self.leaveWith(manager, None)
-                raise e
             suppressed = self.leaveWith(manager, normalizeError(e))
             if not suppressed:
                 raise e
             return None
         self.leaveWith(manager, None)
-        return None
+        return result
 
     func leaveWith(self, manager, err):
         if not isInstance(manager):
@@ -1249,43 +1252,44 @@ class Interpreter:
 
     func executeTry(self, stmt, env):
         finallyBlock = stmt.finallyBlock
+        result = None
         try:
             caught = False
             try:
-                self.execInline(stmt.tryBlock, Scope(env))
+                result = self.execInline(stmt.tryBlock, Scope(env))
             except e:
-                if isSignal(e):
-                    raise e
                 err = normalizeError(e)
-                if not self.runHandlers(stmt, err, env):
+                handled = self.runHandlers(stmt, err, env)
+                if not handled[0]:
                     raise e
+                result = handled[1]
                 caught = True
             if not caught and stmt.elseBlock != None:
-                self.execInline(stmt.elseBlock, Scope(env))
+                result = self.execInline(stmt.elseBlock, Scope(env))
         except outer:
             if finallyBlock != None:
                 self.execInline(finallyBlock, Scope(env))
             raise outer
         if finallyBlock != None:
-            self.execInline(finallyBlock, Scope(env))
-        return None
+            fin = self.execInline(finallyBlock, Scope(env))
+            if fin != None:
+                return fin
+        return result
 
     func runHandlers(self, stmt, err, env):
         if stmt.clauses == None:
             if stmt.catchBlock == None:
-                return False
+                return [False, None]
             catchScope = Scope(env)
             catchScope.define(stmt.catchVar, err)
-            self.execInline(stmt.catchBlock, catchScope)
-            return True
+            return [True, self.execInline(stmt.catchBlock, catchScope)]
         for clause in stmt.clauses:
             if clause["filter"] == None or self.errorMatches(err, self.evaluate(clause["filter"], env)):
                 catchScope = Scope(env)
                 if clause["var"] != "":
                     catchScope.define(clause["var"], err)
-                self.execInline(clause["body"], catchScope)
-                return True
-        return False
+                return [True, self.execInline(clause["body"], catchScope)]
+        return [False, None]
 
     func errorMatches(self, err, kinds):
         if tipe(kinds) != "larik":
