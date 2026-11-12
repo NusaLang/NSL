@@ -23,6 +23,7 @@ func loadMod(name):
 Lexer = loadMod("parser/lexer").Lexer
 Parser = loadMod("parser/parser").Parser
 Interpreter = loadMod("interpreter/interpreter").Interpreter
+normalizeError = loadMod("interpreter/interpreter").normalizeError
 resolverModule = loadMod("resolver")
 resolveModulePath = resolverModule.resolveModulePath
 JalankanPerintah = jalankan_perintah
@@ -111,12 +112,10 @@ func guarded(fn):
     try:
         return fn()
     except e:
+        e = normalizeError(e)
         if tipe(e) == "peta" and "pesan" in e:
             fail("error: " + str(e["pesan"]))
-        text = str(e)
-        if text.startswith("nusantara: error: "):
-            text = text[18:]
-        fail("error: " + text)
+        fail("error: " + str(e))
 
 func findModule(name):
     resolved = resolveModulePath(name, FileAda)
@@ -411,6 +410,13 @@ func main():
             arg = a
             rest = args[i:]
         i += 1
+
+    if mode == "repl":
+        k = i
+        while k < n:
+            if args[k] == "-q":
+                quiet = True
+            k += 1
 
     if len(rest) > 0:
         sys.argv = rest

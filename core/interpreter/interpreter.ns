@@ -1,5 +1,58 @@
 import sys
 
+# The host engine names its builtins in snake_case. Each one is bound once here
+# and used under a camelCase name below.
+hostJalankanPerintah = jalankan_perintah
+hostAmbilEnv = ambil_env
+hostKeAngka = ke_angka
+hostCallMethod = _callmeth
+hostPetaBaru = peta_baru
+hostBacaFile = baca_file
+hostTulisFile = tulis_file
+hostFileAda = file_ada
+hostGcInfo = gc_info
+hostGcPaksa = gc_paksa
+hostHapusAkhir = hapus_akhir
+hostJsonEncode = json_encode
+hostJsonDecode = json_decode
+hostJsonDecodeAman = json_decode_aman
+hostBase64Encode = base64_encode
+hostBase64Decode = base64_decode
+hostSha256Hex = sha256_hex
+hostHmacSha256Hex = hmac_sha256_hex
+hostJwtBuat = jwt_buat
+hostJwtVerifikasi = jwt_verifikasi
+hostTcpKonek = tcp_konek
+hostTcpKirim = tcp_kirim
+hostTcpTerima = tcp_terima
+hostTcpTutup = tcp_tutup
+hostHttpGet = http_get
+hostHttpPost = http_post
+hostHttpDengar = http_dengar
+hostEmailKirim = email_kirim
+hostKanalBaru = kanal_baru
+hostKanalKirim = kanal_kirim
+hostKanalTerima = kanal_terima
+hostKanalTutup = kanal_tutup
+hostKanalPanjang = kanal_panjang
+hostWgBaru = wg_baru
+hostWgTambah = wg_tambah
+hostWgSelesai = wg_selesai
+hostWgTunggu = wg_tunggu
+hostPilihKanal = pilih_kanal
+hostMuatPlugin = muat_plugin
+hostByteDi = byte_di
+hostTeksDari = teks_dari
+hostHurufBesar = huruf_besar
+hostHurufKecil = huruf_kecil
+hostProcStreamMulai = proc_stream_mulai
+hostProcStreamBaca = proc_stream_baca
+hostProcStreamTutup = proc_stream_tutup
+hostQrBaca = qr_baca
+hostPetaKunci = peta_kunci
+hostBacaInput = baca_input
+
+
 func loadModule(name):
     base = name if name.endswith(".ns") else name + ".ns"
     candidates = [
@@ -56,8 +109,34 @@ class UserFunction:
 
 func makeMethodCaller(target, name):
     func caller(*items):
-        return _callmeth(target, name, items)
+        return hostCallMethod(target, name, items)
     return caller
+
+# Errors raised inside the host engine arrive as a map whose `pesan` carries a
+# call trace. Cut the trace so they look like the runtime's own errors.
+func cleanErrorText(text):
+    cut = text.find("\n  di dalam")
+    traced = cut >= 0
+    if traced:
+        text = text[:cut]
+    pos = text.rfind(" (line ")
+    if pos >= 0 and text.endswith(")"):
+        text = text[:pos]
+        traced = True
+    if traced and text.startswith("nusantara: error: "):
+        text = text[18:]
+    return text
+
+func normalizeError(e):
+    if tipe(e) == "peta" and "pesan" in e and tipe(e["pesan"]) == "teks":
+        cleaned = cleanErrorText(e["pesan"])
+        if cleaned != e["pesan"]:
+            return {"pesan": cleaned}
+    elif tipe(e) == "teks":
+        cleaned = cleanErrorText(e)
+        if cleaned != e:
+            return {"pesan": cleaned}
+    return e
 
 func isSignal(e):
     return hasattr(e, "isReturn") or hasattr(e, "isBreak") or hasattr(e, "isContinue")
@@ -129,6 +208,18 @@ func nusaList(arg = None):
         res.append(item)
     return res
 
+func nusaInt(x):
+    try:
+        return int(x)
+    except e:
+        rtError("invalid number")
+
+func nusaFloat(x):
+    try:
+        return float(x)
+    except e:
+        rtError("invalid number")
+
 func nusaEnumerate(items, start = 0):
     res = []
     n = start
@@ -144,11 +235,11 @@ func nusaSum(items, start = 0):
     return total
 
 func nusaSleep(seconds):
-    jalankan_perintah("sleep", [str(seconds)])
+    hostJalankanPerintah("sleep", [str(seconds)])
     return None
 
 func nusaGetenv(name, fallback = None):
-    val = ambil_env(name)
+    val = hostAmbilEnv(name)
     if val == None:
         return fallback
     return val
@@ -448,9 +539,9 @@ class Interpreter:
         g.define("panjang", nusaLen)
         g.define("str", toText)
         g.define("ke_teks", toText)
-        g.define("int", int)
-        g.define("float", float)
-        g.define("ke_angka", ke_angka)
+        g.define("int", nusaInt)
+        g.define("float", nusaFloat)
+        g.define("ke_angka", nusaFloat)
         g.define("ord", ord)
         g.define("chr", chr)
         g.define("type", type)
@@ -480,81 +571,81 @@ class Interpreter:
         g.define("tidur", nusaSleep)
         g.define("getenv", nusaGetenv)
         g.define("peta", nusaPeta)
-        g.define("PetaBaru", peta_baru)
-        g.define("petaBaru", peta_baru)
-        g.define("peta_baru", peta_baru)
-        g.define("newMap", peta_baru)
-        g.define("readFile", baca_file)
-        g.define("baca_file", baca_file)
-        g.define("writeFile", tulis_file)
-        g.define("tulis_file", tulis_file)
-        g.define("fileExists", file_ada)
-        g.define("file_ada", file_ada)
+        g.define("PetaBaru", hostPetaBaru)
+        g.define("petaBaru", hostPetaBaru)
+        g.define("peta_baru", hostPetaBaru)
+        g.define("newMap", hostPetaBaru)
+        g.define("readFile", hostBacaFile)
+        g.define("baca_file", hostBacaFile)
+        g.define("writeFile", hostTulisFile)
+        g.define("tulis_file", hostTulisFile)
+        g.define("fileExists", hostFileAda)
+        g.define("file_ada", hostFileAda)
         g.define("import", runtimeImpor)
         g.define("impor", runtimeImpor)
         g.define("time", waktu)
         g.define("waktu", waktu)
-        g.define("gcInfo", gc_info)
-        g.define("gc_info", gc_info)
-        g.define("gcForce", gc_paksa)
-        g.define("gc_paksa", gc_paksa)
-        g.define("env", ambil_env)
-        g.define("ambil_env", ambil_env)
+        g.define("gcInfo", hostGcInfo)
+        g.define("gc_info", hostGcInfo)
+        g.define("gcForce", hostGcPaksa)
+        g.define("gc_paksa", hostGcPaksa)
+        g.define("env", hostAmbilEnv)
+        g.define("ambil_env", hostAmbilEnv)
         g.define("push", tambah)
         g.define("tambah", tambah)
-        g.define("pop", hapus_akhir)
-        g.define("hapus_akhir", hapus_akhir)
+        g.define("pop", hostHapusAkhir)
+        g.define("hapus_akhir", hostHapusAkhir)
         g.define("split", pisah)
         g.define("pisah", pisah)
         g.define("join", gabung)
         g.define("gabung", gabung)
         g.define("intDiv", lambda a, b: a // b)
-        g.define("runCommand", jalankan_perintah)
-        g.define("JalankanPerintah", jalankan_perintah)
-        g.define("jalankanPerintah", jalankan_perintah)
-        g.define("jalankan_perintah", jalankan_perintah)
+        g.define("runCommand", hostJalankanPerintah)
+        g.define("JalankanPerintah", hostJalankanPerintah)
+        g.define("jalankanPerintah", hostJalankanPerintah)
+        g.define("jalankan_perintah", hostJalankanPerintah)
         g.define("callable", callable)
         g.define("input", input)
         g.define("sys", sys)
-        g.define("json_encode", json_encode)
-        g.define("json_decode", json_decode)
-        g.define("json_decode_aman", json_decode_aman)
-        g.define("base64_encode", base64_encode)
-        g.define("base64_decode", base64_decode)
-        g.define("sha256_hex", sha256_hex)
-        g.define("hmac_sha256_hex", hmac_sha256_hex)
-        g.define("jwt_buat", jwt_buat)
-        g.define("jwt_verifikasi", jwt_verifikasi)
-        g.define("tcp_konek", tcp_konek)
-        g.define("tcp_kirim", tcp_kirim)
-        g.define("tcp_terima", tcp_terima)
-        g.define("tcp_tutup", tcp_tutup)
-        g.define("http_get", http_get)
-        g.define("http_post", http_post)
-        g.define("http_dengar", http_dengar)
-        g.define("email_kirim", email_kirim)
+        g.define("json_encode", hostJsonEncode)
+        g.define("json_decode", hostJsonDecode)
+        g.define("json_decode_aman", hostJsonDecodeAman)
+        g.define("base64_encode", hostBase64Encode)
+        g.define("base64_decode", hostBase64Decode)
+        g.define("sha256_hex", hostSha256Hex)
+        g.define("hmac_sha256_hex", hostHmacSha256Hex)
+        g.define("jwt_buat", hostJwtBuat)
+        g.define("jwt_verifikasi", hostJwtVerifikasi)
+        g.define("tcp_konek", hostTcpKonek)
+        g.define("tcp_kirim", hostTcpKirim)
+        g.define("tcp_terima", hostTcpTerima)
+        g.define("tcp_tutup", hostTcpTutup)
+        g.define("http_get", hostHttpGet)
+        g.define("http_post", hostHttpPost)
+        g.define("http_dengar", hostHttpDengar)
+        g.define("email_kirim", hostEmailKirim)
         g.define("jalan", jalan)
-        g.define("kanal_baru", kanal_baru)
-        g.define("kanal_kirim", kanal_kirim)
-        g.define("kanal_terima", kanal_terima)
-        g.define("kanal_tutup", kanal_tutup)
-        g.define("kanal_panjang", kanal_panjang)
-        g.define("wg_baru", wg_baru)
-        g.define("wg_tambah", wg_tambah)
-        g.define("wg_selesai", wg_selesai)
-        g.define("wg_tunggu", wg_tunggu)
-        g.define("pilih_kanal", pilih_kanal)
-        g.define("muat_plugin", muat_plugin)
-        g.define("byte_di", byte_di)
-        g.define("teks_dari", teks_dari)
+        g.define("kanal_baru", hostKanalBaru)
+        g.define("kanal_kirim", hostKanalKirim)
+        g.define("kanal_terima", hostKanalTerima)
+        g.define("kanal_tutup", hostKanalTutup)
+        g.define("kanal_panjang", hostKanalPanjang)
+        g.define("wg_baru", hostWgBaru)
+        g.define("wg_tambah", hostWgTambah)
+        g.define("wg_selesai", hostWgSelesai)
+        g.define("wg_tunggu", hostWgTunggu)
+        g.define("pilih_kanal", hostPilihKanal)
+        g.define("muat_plugin", hostMuatPlugin)
+        g.define("byte_di", hostByteDi)
+        g.define("teks_dari", hostTeksDari)
         g.define("potong", potong)
-        g.define("huruf_besar", huruf_besar)
-        g.define("huruf_kecil", huruf_kecil)
-        g.define("proc_stream_mulai", proc_stream_mulai)
-        g.define("proc_stream_baca", proc_stream_baca)
-        g.define("proc_stream_tutup", proc_stream_tutup)
-        g.define("qr_baca", qr_baca)
-        g.define("peta_kunci", peta_kunci)
+        g.define("huruf_besar", hostHurufBesar)
+        g.define("huruf_kecil", hostHurufKecil)
+        g.define("proc_stream_mulai", hostProcStreamMulai)
+        g.define("proc_stream_baca", hostProcStreamBaca)
+        g.define("proc_stream_tutup", hostProcStreamTutup)
+        g.define("qr_baca", hostQrBaca)
+        g.define("peta_kunci", hostPetaKunci)
         g.define("set", set)
         g.define("dict", dict)
         g.define("tuple", tuple)
@@ -567,7 +658,7 @@ class Interpreter:
         g.define("hash", hash)
         g.define("iter", iter)
         g.define("next", next)
-        g.define("baca_input", baca_input)
+        g.define("baca_input", hostBacaInput)
         g.define("elemen", elemen)
         g.define("teks", teks)
 
@@ -935,7 +1026,7 @@ class Interpreter:
                 if stmt.catchBlock == None:
                     raise e
                 catchScope = Scope(env)
-                catchScope.define(stmt.catchVar, e)
+                catchScope.define(stmt.catchVar, normalizeError(e))
                 self.execInline(stmt.catchBlock, catchScope)
         except outer:
             if finallyBlock != None:

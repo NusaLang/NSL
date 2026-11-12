@@ -235,10 +235,6 @@ class TryStmt:
         self.catchBlock = catchBlock
         self.finallyBlock = finallyBlock
         self.jenis = "COBA"
-        self.coba_blok = tryBlock
-        self.tangkap_var = catchVar
-        self.tangkap_blok = catchBlock
-        self.akhirnya_blok = finallyBlock
 
 class ThrowStmt:
     func __init__(self, value):
