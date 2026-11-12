@@ -568,7 +568,9 @@ class Arm64Compiler:
                 if cs.baseClass != None and (cs.baseClass in renameMap):
                     cs.baseClass = renameMap[cs.baseClass]
                 for m in cs.methods:
+                    methodName = m.name
                     renameStmt(m, renameMap)
+                    m.name = methodName
             for os in otherStmts:
                 renameStmt(os, renameMap)
 

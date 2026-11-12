@@ -127,6 +127,18 @@ strBadNum: .quad 2
  .quad 14
  .ascii "invalid number"
 .align 8
+strDunderStr: .quad 2
+ .quad 7
+ .ascii "__str__"
+.align 8
+strStackOverflow: .quad 2
+ .quad 14
+ .ascii "stack overflow"
+.align 8
+strRangeInt: .quad 2
+ .quad 36
+ .ascii "range() needs whole-number arguments"
+.align 8
 strPesanKey: .quad 2
  .quad 5
  .ascii "pesan"

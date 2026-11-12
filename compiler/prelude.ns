@@ -245,6 +245,15 @@ func nsRtMapItems(m):
         push(out, [k, m[k]])
     return out
 
+func nsRtListRepeat(a, n):
+    res = []
+    i = 0
+    while i < n:
+        for x in a:
+            push(res, x)
+        i += 1
+    return res
+
 func nsRtFloatStr(x):
     p = floatParts(x)
     return nsRtFloatFormat(p[0], p[1], p[2], p[3])

@@ -45,6 +45,7 @@ func loadSubmodule(path):
 runtimeModule = loadSubmodule("runtime.ns")
 goBridgeModule = loadModule("compiler/goBridge.ns")
 preludeModule = loadModule("compiler/prelude.ns")
+guardModule = loadModule("compiler/guard.ns")
 resolverModule = loadModule("core/resolver.ns")
 resolveModulePath = resolverModule.resolveModulePath
 
@@ -68,7 +69,7 @@ except e:
 INTLIMIT = 4503599627370496 * 1024
 REGS = ["rbx", "r12", "r13", "r14", "r15"]
 JUMPS = {"<": "jge", "<=": "jg", ">": "jle", ">=": "jl", "==": "jne", "!=": "je"}
-ARITH = {"+": "rtAdd", "-": "rtSub", "*": "rtMul", "/": "rtDiv", "//": "rtDiv", "%": "rtMod"}
+ARITH = {"+": "rtAdd", "-": "rtSub", "*": "rtMul", "/": "rtDiv", "//": "rtFloorDiv", "%": "rtMod"}
 BITWISE = {"&": "rtBitAnd", "|": "rtBitOr", "^": "rtBitXor", "<<": "rtShl", ">>": "rtShr"}
 STRMETHODS = {"find": "rtStrFind", "startswith": "rtStrStartsWith", "endswith": "rtStrEndsWith", "join": "rtStrJoin", "strip": "rtStrStrip", "lower": "rtStrLower", "upper": "rtStrUpper", "split": "rtStrSplit", "isdigit": "rtStrIsDigit", "isalpha": "rtStrIsAlpha", "isalnum": "rtStrIsAlnum"}
 
@@ -443,6 +444,40 @@ func collectSelfFieldStmt(s, found):
     elif t == "EXPR":
         collectSelfFieldExpr(s.expr, found)
 
+# Names a module's top-level code binds. Functions and classes are left out:
+# a function that assigns one of these names writes the global.
+func collectModuleNames(s, found):
+    if s == None or not hasattr(s, "type"):
+        return None
+    t = s.type
+    if t == "BLOCK":
+        for st in s.stmts:
+            collectModuleNames(st, found)
+    elif t == "VAR":
+        found[s.name] = True
+    elif t == "EXPR":
+        e = s.expr
+        while e != None and e.type == "ASSIGN":
+            if e.target.type == "IDENT":
+                found[e.target.name] = True
+            e = e.value
+    elif t == "IF":
+        collectModuleNames(s.thenBranch, found)
+        collectModuleNames(s.elseBranch, found)
+    elif t == "WHILE":
+        collectModuleNames(s.body, found)
+    elif t == "FOR":
+        collectModuleNames(s.init, found)
+        collectModuleNames(s.body, found)
+    elif t == "FOR_IN":
+        found[s.variable] = True
+        collectModuleNames(s.body, found)
+    elif t == "TRY":
+        found[s.catchVar] = True
+        collectModuleNames(s.tryBlock, found)
+        collectModuleNames(s.catchBlock, found)
+        collectModuleNames(s.finallyBlock, found)
+
 class X86_64Compiler:
     func __init__(self):
         self.out = []
@@ -472,6 +507,11 @@ class X86_64Compiler:
         self.locals = {}
         self.regOf = {}
         self.loops = []
+        self.tryDepth = 0
+        self.forceLocal = False
+        self.moduleAssigned = {}
+        self.externalFields = {}
+        self.prep = guardModule.newPrep()
 
     func emit(self, line):
         self.out.append("    " + line)
@@ -545,6 +585,8 @@ class X86_64Compiler:
             modTree = modParser.parse()
             if modParser.errorCount > 0:
                 fail("syntax errors in imported module '" + path + "'")
+            self.prep.scan(modTree)
+            modTree = self.prep.lowerBlock(modTree)
             idx = len(self.importOrder)
             self.importIndex[path] = idx
             self.importOrder.append(path)
@@ -587,7 +629,9 @@ class X86_64Compiler:
                 if cs.baseClass != None and (cs.baseClass in renameMap):
                     cs.baseClass = renameMap[cs.baseClass]
                 for m in cs.methods:
+                    methodName = m.name
                     renameStmt(m, renameMap)
+                    m.name = methodName
             for os in otherStmts:
                 renameStmt(os, renameMap)
 
@@ -636,7 +680,15 @@ class X86_64Compiler:
 
     func compile(self, tree, sourceDir = None):
         self.sourceDir = sourceDir
+        self.prep.scan(tree)
         self.processImports(tree)
+        tree = self.prep.lowerBlock(tree)
+        self.externalFields = self.prep.fieldNames
+        for s in tree:
+            collectModuleNames(s, self.moduleAssigned)
+        for path in self.importOrder:
+            for s in self.importInfo[path]["initStmts"]:
+                collectModuleNames(s, self.moduleAssigned)
         for s in tree:
             if s.type == "EXPR" and s.expr.type == "ASSIGN" and s.expr.target.type == "IDENT":
                 if s.expr.value.type == "CALL" and s.expr.value.callee.type == "IDENT" and s.expr.value.callee.name == "impor" and len(s.expr.value.args) == 1 and s.expr.value.args[0].type == "STRING":
@@ -764,6 +816,21 @@ class X86_64Compiler:
             self.emit("mov [gArgv], rdi")
             self.emit("lea rdi, [rsp+8+rax*8+8]")
             self.emit("mov [gEnvp], rdi")
+        if self.usesGoBridge:
+            self.emit("lea rax, [rsp-7340032]")
+            self.emit("mov [stackLimit], rax")
+        else:
+            self.emit("mov rax, 9")
+            self.emit("xor rdi, rdi")
+            self.emit("mov rsi, 1073741824")
+            self.emit("mov rdx, 3")
+            self.emit("mov r10, 16418")
+            self.emit("mov r8, -1")
+            self.emit("xor r9, r9")
+            self.emit("syscall")
+            self.emit("lea rdx, [rax+262144]")
+            self.emit("mov [stackLimit], rdx")
+            self.emit("lea rsp, [rax+1073741824]")
         self.emit("call rtInit")
         self.emit("call rtSysInit")
         for path in self.importOrder:
@@ -805,6 +872,7 @@ class X86_64Compiler:
         lines.append("gArgc: .zero 8")
         lines.append("gArgv: .zero 8")
         lines.append("gEnvp: .zero 8")
+        lines.append("stackLimit: .zero 8")
         lines.append("gvsys: .zero 8")
         lines.append("gvsys_argv: .zero 8")
         for g in self.globalNames:
@@ -819,6 +887,7 @@ class X86_64Compiler:
         self.locals = {}
         self.regOf = {}
         self.loops = []
+        self.tryDepth = 0
         self.cold = []
         self.noRegs = hasTry(f.body)
         loads = []
@@ -843,9 +912,13 @@ class X86_64Compiler:
         if frame % 16 != 0:
             frame = frame + 8
         head = [label + ":", "    push rbp", "    mov rbp, rsp", "    sub rsp, " + str(frame)]
+        if not self.usesGoBridge:
+            head.append("    cmp rsp, [stackLimit]")
+            head.append("    jb rtStackOverflow")
         tail = ["epi" + label + ":"]
         k = 0
-        while k < len(self.regOf):
+        nSave = len(REGS) if self.noRegs else len(self.regOf)
+        while k < nSave:
             head.append("    mov [rbp-" + str(8 * (k + 1)) + "], " + REGS[k])
             tail.append("    mov " + REGS[k] + ", [rbp-" + str(8 * (k + 1)) + "]")
             k += 1
@@ -863,6 +936,9 @@ class X86_64Compiler:
                 return "[rbp+" + str(16 + 8 * (self.paramCount - 1 - self.params[name])) + "]"
             if name in self.locals:
                 return "[rbp-" + str(8 * (len(REGS) + self.locals[name] + 1)) + "]"
+            if create and not self.forceLocal and (name in self.moduleAssigned):
+                self.globalNames[name] = True
+                return "[gv" + name + "]"
             if create and not (name in self.globalNames):
                 if len(self.regOf) < len(REGS) and not self.noRegs:
                     self.regOf[name] = REGS[len(self.regOf)]
@@ -995,7 +1071,10 @@ class X86_64Compiler:
             self.genExpr(s.expr)
         elif t == "VAR":
             self.genExpr(s.value)
-            self.emit("mov " + self.addr(s.name, True) + ", rax")
+            self.forceLocal = True
+            loc = self.addr(s.name, True)
+            self.forceLocal = False
+            self.emit("mov " + loc + ", rax")
         elif t == "IF":
             elseLabel = self.newLabel()
             endLabel = self.newLabel()
@@ -1010,7 +1089,7 @@ class X86_64Compiler:
         elif t == "WHILE":
             top = self.newLabel()
             end = self.newLabel()
-            self.loops.append([top, end])
+            self.loops.append([top, end, self.tryDepth])
             self.label(top)
             self.genCond(s.condition, end)
             self.genBlock(s.body)
@@ -1023,7 +1102,7 @@ class X86_64Compiler:
             top = self.newLabel()
             cont = self.newLabel()
             end = self.newLabel()
-            self.loops.append([cont, end])
+            self.loops.append([cont, end, self.tryDepth])
             self.label(top)
             if s.condition != None:
                 self.genCond(s.condition, end)
@@ -1047,7 +1126,9 @@ class X86_64Compiler:
             self.emit("lea rax, [" + catchLabel + "]")
             self.emit("mov [rsp+24], rax")
             self.emit("mov [excTop], rsp")
+            self.tryDepth += 1
             self.genBlock(s.tryBlock)
+            self.tryDepth -= 1
             self.emit("mov rax, [rsp]")
             self.emit("mov [excTop], rax")
             self.emit("add rsp, 32")
@@ -1056,7 +1137,10 @@ class X86_64Compiler:
             self.emit("jmp " + endLabel)
             self.label(catchLabel)
             if s.catchVar != None and s.catchVar != "":
-                self.emit("mov " + self.addr(s.catchVar, True) + ", rax")
+                self.forceLocal = True
+                catchLoc = self.addr(s.catchVar, True)
+                self.forceLocal = False
+                self.emit("mov " + catchLoc + ", rax")
             if s.catchBlock != None:
                 self.genBlock(s.catchBlock)
             if s.finallyBlock != None:
@@ -1073,10 +1157,17 @@ class X86_64Compiler:
                 self.genExpr(s.value)
             if not self.inFn:
                 fail("return outside function")
+            self.unwindTry(self.tryDepth, False)
             self.emit("jmp epi" + self.fnName)
         elif t == "BREAK":
+            if len(self.loops) == 0:
+                fail("break outside loop")
+            self.unwindTry(self.tryDepth - self.loops[-1][2], True)
             self.emit("jmp " + self.loops[-1][1])
         elif t == "CONTINUE":
+            if len(self.loops) == 0:
+                fail("continue outside loop")
+            self.unwindTry(self.tryDepth - self.loops[-1][2], True)
             self.emit("jmp " + self.loops[-1][0])
         elif t == "BLOCK":
             self.genBlock(s)
@@ -1089,6 +1180,16 @@ class X86_64Compiler:
         else:
             fail("unsupported statement " + t)
 
+    func unwindTry(self, count, dropStack):
+        k = 0
+        while k < count:
+            self.emit("mov rcx, [excTop]")
+            self.emit("mov rcx, [rcx]")
+            self.emit("mov [excTop], rcx")
+            k += 1
+        if dropStack and count > 0:
+            self.emit("add rsp, " + str(32 * count))
+
     func genForIn(self, s):
         isRange = False
         rangeArgs = []
@@ -1097,13 +1198,19 @@ class X86_64Compiler:
             calleeName = callee.name if hasattr(callee, "name") else (callee.nama if hasattr(callee, "nama") else "")
             if calleeName == "range" or calleeName == "rentang":
                 rangeArgs = s.iterable.arguments if hasattr(s.iterable, "arguments") else (s.iterable.args if hasattr(s.iterable, "args") else [])
-                if len(rangeArgs) == 1 or len(rangeArgs) == 2:
+                if len(rangeArgs) >= 1 and len(rangeArgs) <= 3:
                     isRange = True
 
+        if isRange and len(rangeArgs) == 3:
+            self.genForInStep(s, rangeArgs)
+            return None
+
+        self.forceLocal = not s.declared
         if isRange:
             curLoc = self.newTemp()
             stopLoc = self.newTemp()
             varLoc = self.addr(s.variable, True)
+            self.forceLocal = False
             top = self.newLabel()
             cont = self.newLabel()
             end = self.newLabel()
@@ -1116,7 +1223,7 @@ class X86_64Compiler:
                 self.emit("mov " + mem(curLoc) + ", rax")
                 self.genExpr(rangeArgs[1])
                 self.emit("mov " + mem(stopLoc) + ", rax")
-            self.loops.append([cont, end])
+            self.loops.append([cont, end, self.tryDepth])
             self.label(top)
             self.emit("mov rax, " + curLoc)
             self.emit("mov rcx, " + stopLoc)
@@ -1133,7 +1240,9 @@ class X86_64Compiler:
 
         iterLoc = self.newTemp()
         idxLoc = self.newTemp()
+        self.forceLocal = not s.declared
         varLoc = self.addr(s.variable, True)
+        self.forceLocal = False
         top = self.newLabel()
         cont = self.newLabel()
         end = self.newLabel()
@@ -1142,7 +1251,7 @@ class X86_64Compiler:
         self.emit("call rtIter")
         self.emit("mov " + iterLoc + ", rax")
         self.emit("mov " + mem(idxLoc) + ", 1")
-        self.loops.append([cont, end])
+        self.loops.append([cont, end, self.tryDepth])
         self.label(top)
         self.emit("mov rax, " + iterLoc)
         self.emit("mov rax, [rax+8]")
@@ -1163,6 +1272,61 @@ class X86_64Compiler:
         self.label(end)
         self.loops.pop()
 
+    func genForInStep(self, s, rangeArgs):
+        curLoc = self.newTemp()
+        stopLoc = self.newTemp()
+        stepLoc = self.newTemp()
+        self.forceLocal = not s.declared
+        varLoc = self.addr(s.variable, True)
+        self.forceLocal = False
+        top = self.newLabel()
+        cont = self.newLabel()
+        end = self.newLabel()
+        up = self.newLabel()
+        down = self.newLabel()
+        body = self.newLabel()
+        okInts = self.newLabel()
+        self.genExpr(rangeArgs[0])
+        self.emit("mov " + mem(curLoc) + ", rax")
+        self.genExpr(rangeArgs[1])
+        self.emit("mov " + mem(stopLoc) + ", rax")
+        self.genExpr(rangeArgs[2])
+        self.emit("mov " + mem(stepLoc) + ", rax")
+        self.emit("mov rcx, " + curLoc)
+        self.emit("and rcx, " + stopLoc)
+        self.emit("and rcx, rax")
+        self.emit("test cl, 1")
+        self.emit("jnz " + okInts)
+        self.emit("lea rdi, [strRangeInt]")
+        self.emit("call rtFail")
+        self.label(okInts)
+        self.loops.append([cont, end, self.tryDepth])
+        self.label(top)
+        self.emit("mov rax, " + curLoc)
+        self.emit("mov rcx, " + stopLoc)
+        self.emit("mov rdx, " + stepLoc)
+        self.emit("cmp rdx, 1")
+        self.emit("jg " + up)
+        self.emit("jl " + down)
+        self.emit("jmp " + end)
+        self.label(up)
+        self.emit("cmp rax, rcx")
+        self.emit("jge " + end)
+        self.emit("jmp " + body)
+        self.label(down)
+        self.emit("cmp rax, rcx")
+        self.emit("jle " + end)
+        self.label(body)
+        self.emit("mov " + varLoc + ", rax")
+        self.genBlock(s.body)
+        self.label(cont)
+        self.emit("mov rax, " + stepLoc)
+        self.emit("sub rax, 1")
+        self.emit("add " + mem(curLoc) + ", rax")
+        self.emit("jmp " + top)
+        self.label(end)
+        self.loops.pop()
+
     func resolveClassFields(self, name, classStmtsByName):
         info = self.classes[name]
         if "fields" in info:
@@ -1179,6 +1343,10 @@ class X86_64Compiler:
         for m in classStmtsByName[name].methods:
             collectSelfFieldStmt(m.body, ownFound)
         for f in ownFound:
+            if not (f in fieldOffset):
+                fieldOffset[f] = 16 + 8 * len(fields)
+                fields.append(f)
+        for f in self.externalFields:
             if not (f in fieldOffset):
                 fieldOffset[f] = 16 + 8 * len(fields)
                 fields.append(f)
@@ -1771,6 +1939,9 @@ class X86_64Compiler:
                     prefixedCls = pfx + name
                     if prefixedCls in self.classes:
                         self.genInstantiateClass(prefixedCls, args)
+                        return None
+                    if name in self.importInfo[mpath]["funcNames"]:
+                        self.genCall(astModule.CallExpr(astModule.IdentExpr(pfx + name), args))
                         return None
             if name == "append" or name == "push":
                 self.genExpr(callee.target)

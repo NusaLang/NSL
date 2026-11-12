@@ -2,6 +2,10 @@ ARITH_RUNTIME = """rtTruthy:
     mov rax, [rdi]
     cmp rax, 2
     je rtTrLen
+    cmp rax, 3
+    je rtTrLen
+    cmp rax, 4
+    je rtTrLen
     cmp rax, 6
     je rtTrFloat
     mov rax, 1
@@ -330,7 +334,20 @@ rtArith:
     je rtArMul
     cmp r10, 3
     je rtArDiv
+    cmp r10, 5
+    je rtArFloorDiv
     jmp rtArMod
+rtArFloorDiv:
+    divsd xmm0, xmm1
+    roundsd xmm0, xmm0, 9
+    jmp rtBoxFloat
+rtFloorDiv:
+    mov rax, rdi
+    and rax, rsi
+    test al, 1
+    jnz rtIntDiv
+    mov edx, 5
+    jmp rtArith
 rtArAdd:
     addsd xmm0, xmm1
     jmp rtBoxFloat
@@ -366,6 +383,18 @@ rtArithMulCheck:
     jnz rtAmIntLeft
     cmp rdi, 4
     jbe rtArithBad
+    cmp qword ptr [rdi], 3
+    jne rtAmNotList
+    test r9b, 1
+    jz rtArithBad
+    push rdi
+    push r9
+    call fnnsRtListRepeat
+    add rsp, 16
+    ret
+rtAmNotList:
+    cmp rdi, 4
+    jbe rtArithBad
     cmp qword ptr [rdi], 2
     jne rtArithBad
     mov rsi, r9
@@ -378,6 +407,14 @@ rtAmIntLeft:
     jnz rtArithBad
     cmp rsi, 4
     jbe rtArithBad
+    cmp qword ptr [rsi], 3
+    jne rtAmIntStr
+    push rsi
+    push r8
+    call fnnsRtListRepeat
+    add rsp, 16
+    ret
+rtAmIntStr:
     cmp qword ptr [rsi], 2
     jne rtArithBad
     mov rdi, rsi

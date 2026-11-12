@@ -6,6 +6,7 @@
 DIR=$1
 shift
 ENGINE="$DIR/nusa-engine"
+export NUSA_HOME="$DIR"
 
 runInterp() {
     if [ -x "$ENGINE" ]; then

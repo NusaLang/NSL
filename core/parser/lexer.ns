@@ -16,76 +16,143 @@ Token = tokenModule.Token
 TokenType = tokenModule.TokenType
 
 keywords = {
-    "let": TokenType.VAR,
-    "var": TokenType.VAR,
     "buat": TokenType.VAR,
-    "fun": TokenType.FUNC,
+    "let": TokenType.VAR,
+    "fungsi": TokenType.FUNC,
     "func": TokenType.FUNC,
     "function": TokenType.FUNC,
+    "fun": TokenType.FUNC,
     "def": TokenType.FUNC,
-    "fungsi": TokenType.FUNC,
     "fung": TokenType.FUNC,
-    "if": TokenType.IF,
     "jika": TokenType.IF,
+    "if": TokenType.IF,
     "kalau": TokenType.IF,
     "jk": TokenType.IF,
-    "elif": "ELIF",
-    "else": TokenType.ELSE,
     "lain": TokenType.ELSE,
-    "while": TokenType.WHILE,
+    "else": TokenType.ELSE,
     "selama": TokenType.WHILE,
+    "while": TokenType.WHILE,
     "slm": TokenType.WHILE,
-    "for": TokenType.FOR,
     "untuk": TokenType.FOR,
-    "in": TokenType.IN,
-    "dalam": TokenType.IN,
-    "return": TokenType.RETURN,
+    "for": TokenType.FOR,
     "hasil": TokenType.RETURN,
+    "return": TokenType.RETURN,
     "kem": TokenType.RETURN,
-    "break": TokenType.BREAK,
     "berhenti": TokenType.BREAK,
+    "break": TokenType.BREAK,
     "henti": TokenType.BREAK,
-    "continue": TokenType.CONTINUE,
     "lanjut": TokenType.CONTINUE,
+    "continue": TokenType.CONTINUE,
+    "benar": TokenType.TRUE,
     "true": TokenType.TRUE,
     "True": TokenType.TRUE,
-    "benar": TokenType.TRUE,
     "Benar": TokenType.TRUE,
+    "salah": TokenType.FALSE,
     "false": TokenType.FALSE,
     "False": TokenType.FALSE,
-    "salah": TokenType.FALSE,
     "Salah": TokenType.FALSE,
+    "kosong": TokenType.NULL,
     "null": TokenType.NULL,
     "nil": TokenType.NULL,
     "None": TokenType.NULL,
-    "kosong": TokenType.NULL,
     "Kosong": TokenType.NULL,
-    "class": TokenType.CLASS,
     "kelas": TokenType.CLASS,
+    "class": TokenType.CLASS,
+    "ini": TokenType.THIS,
     "this": TokenType.THIS,
     "self": TokenType.THIS,
-    "ini": TokenType.THIS,
-    "super": TokenType.SUPER,
     "induk": TokenType.SUPER,
-    "try": TokenType.TRY,
+    "super": TokenType.SUPER,
+    "turunan": TokenType.EXTENDS,
+    "extends": TokenType.EXTENDS,
+    "bentuk": TokenType.STRUCT,
+    "struct": TokenType.STRUCT,
+    "jenis": TokenType.ENUM,
+    "enum": TokenType.ENUM,
     "coba": TokenType.TRY,
+    "try": TokenType.TRY,
+    "tangkap": TokenType.CATCH,
     "catch": TokenType.CATCH,
     "except": TokenType.CATCH,
-    "tangkap": TokenType.CATCH,
-    "finally": TokenType.FINALLY,
     "akhirnya": TokenType.FINALLY,
+    "finally": TokenType.FINALLY,
     "akhir": TokenType.FINALLY,
+    "lempar": TokenType.THROW,
     "throw": TokenType.THROW,
     "raise": TokenType.THROW,
-    "lempar": TokenType.THROW,
-    "and": TokenType.AND,
-    "dan": TokenType.AND,
-    "or": TokenType.OR,
-    "atau": TokenType.OR,
     "not": TokenType.NOT,
-    "bukan": TokenType.NOT,
-    "pass": TokenType.PASS
+    "bukan": TokenType.NOT
 }
+
+# In an indentation-style file these spellings are ordinary names.
+PLAINWORDS = []
+
+BLOCKHEADS = ["func ", "fun ", "def ", "class ", "if ", "elif ", "else", "for ", "while ", "try", "except", "finally", "with ", "fungsi ", "fung ", "jika ", "kalau ", "jk ", "lain", "untuk ", "selama ", "slm ", "kelas ", "coba", "tangkap"]
+
+BLOCKKEYWORDS = [TokenType.IF, TokenType.ELSE, TokenType.WHILE, TokenType.FOR, TokenType.FUNC, TokenType.CLASS, TokenType.TRY, TokenType.CATCH, TokenType.FINALLY, TokenType.STRUCT, TokenType.ENUM]
+
+CONTINUERS = ["+", "-", "*", "/", "%", "=", "==", "!=", "<", "<=", ">", ">=", "COMPOUND", "|", "&", "^", "<<", ">>", "**", "//", "and", "or", ",", ".", "(", "[", "not"]
+
+TWOCHAR = {"==": TokenType.EQ, "!=": TokenType.NEQ, "<=": TokenType.LTE, ">=": TokenType.GTE, "&&": TokenType.AND, "||": TokenType.OR, "**": TokenType.STARSTAR}
+
+ONECHAR = {"+": TokenType.PLUS, "-": TokenType.MINUS, "*": TokenType.STAR, "/": TokenType.SLASH, "%": TokenType.PERCENT, "=": TokenType.ASSIGN, "<": TokenType.LT, ">": TokenType.GT, "!": TokenType.NOT, "(": TokenType.LPAREN, ")": TokenType.RPAREN, "{": TokenType.LBRACE, "}": TokenType.RBRACE, ",": TokenType.COMMA, ";": TokenType.SEMICOLON, "[": TokenType.LBRACKET, "]": TokenType.RBRACKET, ".": TokenType.DOT, ":": TokenType.COLON, "&": TokenType.AMP, "|": TokenType.PIPE, "^": TokenType.CARET, "~": TokenType.TILDE, "@": TokenType.AT}
+
+MAXEXACT = 9007199254740992
+
+func lexFail(msg, line, col):
+    err = {"pesan": msg + " (line " + str(line) + ", col " + str(col) + ")", "line": line, "col": col, "isLexError": True}
+    lempar err
+
+func stripLine(line):
+    hashAt = line.find("#")
+    if hashAt >= 0:
+        line = line[:hashAt]
+    end = len(line)
+    while end > 0 and (line[end - 1] == " " or line[end - 1] == "\t" or line[end - 1] == "\r"):
+        end -= 1
+    return line[:end]
+
+func looksBraceStyle(src):
+    for raw in src.split("\n"):
+        line = stripLine(raw)
+        if len(line) > 0:
+            last = line[len(line) - 1]
+            if last == ";" or last == "{" or last == "}":
+                return True
+    return False
+
+func looksIndentStyle(src):
+    for raw in src.split("\n"):
+        b = 0
+        while b < len(raw) and (raw[b] == " " or raw[b] == "\t"):
+            b += 1
+        if b >= len(raw):
+            continue
+        line = stripLine(raw)
+        if len(line) == 0 or line[len(line) - 1] != ":":
+            continue
+        rest = line[b:]
+        for h in BLOCKHEADS:
+            if rest.startswith(h):
+                return True
+    return False
+
+func isDigitCh(ch):
+    return ch >= "0" and ch <= "9"
+
+func isAlphaCh(ch):
+    return (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z")
+
+func isIdentCh(ch):
+    return (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z") or (ch >= "0" and ch <= "9") or ch == "_"
+
+class LayoutScope:
+    func __init__(self):
+        self.names = {}
+        self.outer = {}
+        self.bodyStart = 0
+        self.bodyDepth = 0
+        self.hoisted = []
 
 class Lexer:
     func __init__(self, source):
@@ -95,6 +162,8 @@ class Lexer:
         self.col = 1
         self.length = len(source)
         self.keywords = keywords
+        self.pyStyle = looksIndentStyle(source) or not looksBraceStyle(source)
+        self.usesLayout = False
 
     func peek(self, offset = 0):
         idx = self.pos + offset
@@ -112,372 +181,779 @@ class Lexer:
             self.col += 1
         return ch
 
-    func match(self, expected):
-        if self.pos < self.length and self.source[self.pos] == expected:
-            self.advance()
-            return True
-        return False
+    func atLineStart(self):
+        i = self.pos
+        while i > 0:
+            c = self.source[i - 1]
+            if c == "\n":
+                return True
+            if c != " " and c != "\t" and c != "\r":
+                return False
+            i -= 1
+        return True
 
-    func tokenize(self):
-        raw = self.tokenizeRaw()
-        return self.applyLayout(raw)
-
-    func tokenizeRaw(self):
-        tokens = []
+    func skipBlanks(self):
         while self.pos < self.length:
             ch = self.source[self.pos]
-
-            if ch == " " or ch == "\t" or ch == "\r":
+            if ch == " " or ch == "\t" or ch == "\r" or ch == "\n":
                 self.advance()
-            elif ch == "\n":
-                self.advance()
-            elif ch == "#" or (ch == "/" and self.peek(1) == "/"):
+            elif ch == "#" or (ch == "/" and self.peek(1) == "/" and (not self.pyStyle or self.atLineStart())):
                 while self.pos < self.length and self.source[self.pos] != "\n":
                     self.advance()
-            elif ch.isdigit():
-                tokens.append(self.readNumber())
-            elif ch == "\"" or ch == "'":
-                tokens.append(self.readString(ch))
-            elif ch.isalpha() or ch == "_":
-                tok = self.readIdent()
-                prevWasDot = len(tokens) > 0 and tokens[-1].type == TokenType.DOT
-                if tok.text == "elif" and not prevWasDot:
-                    tokens.append(Token(TokenType.ELSE, "else", 0, tok.line, tok.col))
-                    tokens.append(Token(TokenType.IF, "if", 0, tok.line, tok.col))
-                else:
-                    tokens.append(tok)
             else:
-                tokens.append(self.readSymbol())
-
-        tokens.append(Token(TokenType.EOF, "", 0, self.line, self.col))
-        return tokens
-
-    func applyLayout(self, tokens):
-        out = []
-        indents = [0]
-        depth = 0
-        pendingBlock = False
-        prevLine = 0
-        lineOpen = False
-        inlineBlocks = 0
-
-        totalTokens = len(tokens)
-        i = 0
-        while i < totalTokens:
-            t = tokens[i]
-            isEof = (t.type == TokenType.EOF)
-            curLine = t.line
-
-            if depth == 0 and curLine > prevLine:
-                while inlineBlocks > 0:
-                    out.append(Token(TokenType.RBRACE, "}", 0, prevLine, 0))
-                    out.append(Token(TokenType.SEMICOLON, ";", 0, prevLine, 0))
-                    inlineBlocks -= 1
-
-                indent = t.col - 1
-                if isEof:
-                    indent = 0
-
-                if pendingBlock:
-                    if indent > indents[-1]:
-                        indents.append(indent)
-                        out.append(Token(TokenType.LBRACE, "{", 0, t.line, t.col))
-                    else:
-                        out.append(Token(TokenType.LBRACE, "{", 0, t.line, t.col))
-                        out.append(Token(TokenType.RBRACE, "}", 0, t.line, t.col))
-                    pendingBlock = False
-                else:
-                    if lineOpen and len(out) > 0:
-                        last = out[-1].type
-                        if last != TokenType.SEMICOLON and last != TokenType.LBRACE:
-                            out.append(Token(TokenType.SEMICOLON, ";", 0, t.line, t.col))
-                    while indent < indents[-1]:
-                        indents.pop()
-                        out.append(Token(TokenType.RBRACE, "}", 0, t.line, t.col))
-                        out.append(Token(TokenType.SEMICOLON, ";", 0, t.line, t.col))
-                lineOpen = False
-
-            if isEof:
-                while inlineBlocks > 0:
-                    out.append(Token(TokenType.RBRACE, "}", 0, curLine, 0))
-                    inlineBlocks -= 1
-                while len(indents) > 1:
-                    indents.pop()
-                    out.append(Token(TokenType.RBRACE, "}", 0, curLine, 0))
-                out.append(t)
                 break
 
-            if t.type == TokenType.LPAREN or t.type == TokenType.LBRACKET or t.type == TokenType.LBRACE:
+    func make(self, tokenType, text, line, col):
+        tok = Token(tokenType, text, 0, line, col)
+        tok.endLine = self.line
+        return tok
+
+    func nextTokens(self):
+        self.skipBlanks()
+        if self.pos >= self.length:
+            return [Token(TokenType.EOF, "", 0, self.line, self.col)]
+        line = self.line
+        col = self.col
+        ch = self.source[self.pos]
+        nxt = self.peek(1)
+        if isDigitCh(ch) or (ch == "." and isDigitCh(nxt)):
+            return [self.readNumber(line, col)]
+        if (ch == "r" or ch == "R" or ch == "b" or ch == "B") and (nxt == "\"" or nxt == "'"):
+            self.advance()
+            return [self.readString(line, col, ch == "r" or ch == "R")]
+        if (ch == "f" or ch == "F") and (nxt == "\"" or nxt == "'"):
+            self.advance()
+            return self.readTemplate(line, col, self.peek(0), True)
+        if isAlphaCh(ch) or ch == "_":
+            tok = self.readIdent(line, col)
+            if tok.type == TokenType.IDENT and (tok.text == "elif" or tok.text == "lj"):
+                return [self.make(TokenType.ELSE, tok.text, line, col), self.make(TokenType.IF, tok.text, line, col)]
+            return [tok]
+        if ch == "\"" or ch == "'":
+            return [self.readString(line, col, False)]
+        if ch == "`":
+            return self.readTemplate(line, col, "`", False)
+        return [self.readSymbol(line, col)]
+
+    func tokenize(self):
+        tokens = []
+        while True:
+            got = self.nextTokens()
+            for t in got:
+                tokens.append(t)
+            if got[len(got) - 1].type == TokenType.EOF:
+                break
+        for t in tokens:
+            if t.type == TokenType.IDENT and (t.text == "async" or t.text == "await"):
+                lexFail("async belum didukung kompiler", t.line, t.col)
+        self.markDictBraces(tokens)
+        return self.applyLayout(tokens)
+
+    func markDictBraces(self, toks):
+        n = len(toks)
+        i = 1
+        while i < n:
+            if toks[i].type != TokenType.LBRACE:
+                i += 1
+                continue
+            prev = toks[i - 1]
+            pt = prev.type
+            inWord = pt == TokenType.IDENT and (prev.text == "in" or prev.text == "dalam" or prev.text == "is")
+            opener = pt == TokenType.ASSIGN or pt == TokenType.LPAREN or pt == TokenType.LBRACKET or pt == TokenType.COMMA or pt == TokenType.COLON or pt == TokenType.RETURN or pt == TokenType.THROW or pt == TokenType.LDICT or pt == TokenType.ELSE or pt == TokenType.AND or pt == TokenType.OR or pt == TokenType.STARSTAR or pt == TokenType.PIPE or pt == TokenType.AMP or pt == TokenType.CARET or pt == TokenType.MINUS or (pt == TokenType.NOT and prev.text != "!")
+            if not opener and not inWord:
+                i += 1
+                continue
+            nest = 0
+            colon = False
+            close = 0
+            k = i + 1
+            while k < n:
+                t = toks[k].type
+                if t == TokenType.LPAREN or t == TokenType.LBRACKET or t == TokenType.LBRACE or t == TokenType.LDICT:
+                    nest += 1
+                elif t == TokenType.RPAREN or t == TokenType.RBRACKET:
+                    nest -= 1
+                elif t == TokenType.RBRACE or t == TokenType.RDICT:
+                    if nest == 0:
+                        close = k
+                        break
+                    nest -= 1
+                elif t == TokenType.COLON and nest == 0:
+                    colon = True
+                elif t == TokenType.EOF:
+                    break
+                k += 1
+            if close != 0 and (colon or close == i + 1 or pt != TokenType.ELSE):
+                toks[i].type = TokenType.LDICT
+                toks[close].type = TokenType.RDICT
+            i += 1
+
+    func lineIndents(self):
+        indents = [0]
+        col = 0
+        counting = True
+        for ch in self.source:
+            if ch == "\n":
+                if counting:
+                    indents[len(indents) - 1] = col
+                indents.append(0)
+                col = 0
+                counting = True
+            elif counting:
+                if ch == " ":
+                    col += 1
+                elif ch == "\t":
+                    col = (col // 8 + 1) * 8
+                else:
+                    indents[len(indents) - 1] = col
+                    counting = False
+        if counting:
+            indents[len(indents) - 1] = col
+        return indents
+
+    func detectLayout(self, toks):
+        for t in toks:
+            if t.type == TokenType.LBRACE or t.type == TokenType.RBRACE:
+                return False
+        depth = 0
+        anySemi = False
+        firstLine = -1
+        lineFirst = TokenType.EOF
+        prevEndLine = 0
+        n = len(toks)
+        i = 0
+        while i < n:
+            t = toks[i]
+            if t.type == TokenType.EOF:
+                break
+            if t.type == TokenType.SEMICOLON:
+                anySemi = True
+            if firstLine < 0:
+                firstLine = t.line
+            if t.line > prevEndLine:
+                lineFirst = t.type
+            if t.endLine > prevEndLine:
+                prevEndLine = t.endLine
+            if t.type == TokenType.LPAREN or t.type == TokenType.LBRACKET or t.type == TokenType.LDICT:
                 depth += 1
-            elif (t.type == TokenType.RPAREN or t.type == TokenType.RBRACKET or t.type == TokenType.RBRACE) and depth > 0:
+            elif t.type == TokenType.RPAREN or t.type == TokenType.RBRACKET or t.type == TokenType.RDICT:
+                depth -= 1
+            elif t.type == TokenType.COLON and depth == 0:
+                eol = i + 1 >= n or toks[i + 1].type == TokenType.EOF or toks[i + 1].line > t.endLine
+                if eol or (lineFirst in BLOCKKEYWORDS):
+                    return True
+            i += 1
+        return not anySemi and firstLine >= 0
+
+    func applyLayout(self, toks):
+        if not self.detectLayout(toks):
+            return toks
+        self.usesLayout = True
+        indentOf = self.lineIndents()
+        out = []
+        indents = [0]
+        blocks = [[False, False, False]]
+        scopes = [LayoutScope()]
+        inlineOpen = []
+        depth = 0
+        prevEndLine = 0
+        pendingBlock = False
+        pendingInfo = [False, False, False]
+        pendingParams = []
+        pendingIsFn = False
+        atStmtStart = False
+        lineFirst = TokenType.EOF
+        lineFirstOut = 0
+        lineOpen = False
+        n = len(toks)
+        i = 0
+        while i < n:
+            t = toks[i]
+            isEof = t.type == TokenType.EOF
+            sl = prevEndLine + 1 if isEof else t.line
+            el = sl if isEof else t.endLine
+            physicalStart = True if (len(out) == 0 and i == 0) else sl > prevEndLine
+
+            newLogical = False
+            if depth == 0 and physicalStart:
+                continuation = len(out) > 0 and not pendingBlock and lineOpen and self.continuesLine(out[len(out) - 1])
+                if not continuation:
+                    newLogical = True
+
+            if newLogical:
+                indent = 0 if isEof else indentOf[sl - 1]
+                if pendingBlock:
+                    if isEof or indent <= indents[len(indents) - 1]:
+                        lexFail("Blok berindentasi diharapkan setelah ':'", t.line, t.col)
+                    indents.append(indent)
+                    blocks.append(pendingInfo)
+                    if pendingIsFn:
+                        sc = LayoutScope()
+                        sc.bodyStart = len(out)
+                        sc.bodyDepth = len(indents) - 1 + len(inlineOpen)
+                        for p in pendingParams:
+                            sc.names[p] = True
+                        scopes.append(sc)
+                    pendingBlock = False
+                    pendingIsFn = False
+                    pendingParams = []
+                else:
+                    self.endLogicalLine(out, inlineOpen, scopes, lineOpen, blocks[len(blocks) - 1][1])
+                    lineOpen = False
+                    dedented = False
+                    while indent < indents[len(indents) - 1]:
+                        self.popBlock(out, indents, blocks, scopes)
+                        dedented = True
+                    if indent > indents[len(indents) - 1] and not dedented:
+                        lexFail("Indentasi tak terduga", t.line, t.col)
+                    if indent != indents[len(indents) - 1]:
+                        lexFail("Indentasi nggak konsisten", t.line, t.col)
+                if not isEof:
+                    atStmtStart = True
+                    lineFirst = t.type
+                    lineFirstOut = len(out)
+
+            if isEof:
+                while len(indents) > 1:
+                    self.popBlock(out, indents, blocks, scopes)
+                self.finishScope(out, scopes)
+                out.append(t)
+                return out
+
+            curDepth = len(indents) - 1 + len(inlineOpen)
+            inClass = blocks[len(blocks) - 1][2]
+            commaMode = blocks[len(blocks) - 1][1]
+
+            if atStmtStart and depth == 0:
+                atStmtStart = False
+                nxt = toks[i + 1] if i + 1 < n else t
+                if t.type == TokenType.IDENT and t.text != "lambda" and i + 2 < n and nxt.type == TokenType.COLON and not inClass and not commaMode:
+                    ln = t.line
+                    sameLine = toks[i + 2].type != TokenType.EOF and toks[i + 2].line == ln
+                    if sameLine:
+                        k = i + 2
+                        eq = -1
+                        d = 0
+                        while k < n and toks[k].type != TokenType.EOF and toks[k].line == ln:
+                            ty = toks[k].type
+                            if ty == TokenType.LPAREN or ty == TokenType.LBRACKET or ty == TokenType.LDICT:
+                                d += 1
+                            elif ty == TokenType.RPAREN or ty == TokenType.RBRACKET or ty == TokenType.RDICT:
+                                d -= 1
+                            elif d == 0 and ty == TokenType.ASSIGN:
+                                eq = k
+                                break
+                            k += 1
+                        if eq >= 0:
+                            toks = toks[:i + 1] + toks[eq:]
+                            n = len(toks)
+                            atStmtStart = True
+                            continue
+                        i = k
+                        if toks[i - 1].endLine > prevEndLine:
+                            prevEndLine = toks[i - 1].endLine
+                        continue
+                if t.type == TokenType.IDENT and (t.text == "global" or t.text == "nonlocal" or t.text == "umum") and nxt.type == TokenType.IDENT:
+                    k = i + 1
+                    while k < n and toks[k].type == TokenType.IDENT and toks[k].line == t.line:
+                        scopes[len(scopes) - 1].outer[toks[k].text] = True
+                        k += 1
+                        if k < n and toks[k].type == TokenType.COMMA:
+                            k += 1
+                    i = k
+                    if toks[i - 1].endLine > prevEndLine:
+                        prevEndLine = toks[i - 1].endLine
+                    continue
+                if t.type == TokenType.FOR and not inClass:
+                    k = i + 1
+                    names = []
+                    while k < n and toks[k].type == TokenType.IDENT and toks[k].text != "in" and toks[k].text != "dalam":
+                        names.append(toks[k])
+                        k += 1
+                        if k < n and toks[k].type == TokenType.COMMA:
+                            k += 1
+                        else:
+                            break
+                    if len(names) > 0 and k < n and toks[k].type == TokenType.IDENT and (toks[k].text == "in" or toks[k].text == "dalam"):
+                        self.declareNames(out, scopes, names, curDepth)
+                        t.declared = True
+                if t.type == TokenType.IDENT and nxt.type == TokenType.ASSIGN and inClass:
+                    pass
+                elif t.type == TokenType.IDENT and nxt.type == TokenType.ASSIGN:
+                    sc = scopes[len(scopes) - 1]
+                    chained = []
+                    k = i + 2
+                    while k + 1 < n and toks[k].type == TokenType.IDENT and toks[k + 1].type == TokenType.ASSIGN:
+                        chained.append(toks[k])
+                        k += 2
+                    self.declareNames(out, scopes, chained, curDepth)
+                    if not self.visible(scopes, t.text):
+                        sc.names[t.text] = True
+                        if curDepth == sc.bodyDepth:
+                            out.append(Token(TokenType.VAR, "let", 0, t.line, t.col))
+                        else:
+                            sc.hoisted.append(t)
+                elif (t.type == TokenType.IDENT and nxt.type == TokenType.COMMA) or (t.type == TokenType.STAR and i + 2 < n and nxt.type == TokenType.IDENT and toks[i + 2].type == TokenType.COMMA):
+                    names = []
+                    k = i + 1 if t.type == TokenType.STAR else i
+                    ok = True
+                    while k < n:
+                        if toks[k].type == TokenType.STAR and k + 1 < n:
+                            k += 1
+                        if toks[k].type != TokenType.IDENT:
+                            ok = False
+                            break
+                        names.append(toks[k])
+                        if k + 1 < n and toks[k + 1].type == TokenType.COMMA:
+                            k += 2
+                            continue
+                        break
+                    if ok and k + 1 < n and toks[k + 1].type == TokenType.ASSIGN:
+                        self.declareNames(out, scopes, names, curDepth)
+                elif t.type == TokenType.VAR and nxt.type == TokenType.IDENT:
+                    scopes[len(scopes) - 1].names[nxt.text] = True
+                elif (t.type == TokenType.FUNC or t.type == TokenType.CLASS) and nxt.type == TokenType.IDENT:
+                    if not (t.type == TokenType.FUNC and inClass):
+                        scopes[len(scopes) - 1].names[nxt.text] = True
+                elif t.type == TokenType.IDENT and (t.text == "import" or t.text == "impor" or t.text == "from" or t.text == "dari") and nxt.type != TokenType.LPAREN:
+                    k = i + 1
+                    while k < n and toks[k].type != TokenType.EOF and toks[k].line == t.line:
+                        if toks[k].type == TokenType.IDENT:
+                            w = toks[k].text
+                            if w != "import" and w != "impor" and w != "as" and w != "sbg":
+                                scopes[len(scopes) - 1].names[w] = True
+                        k += 1
+
+            if t.type == TokenType.LPAREN or t.type == TokenType.LBRACKET or t.type == TokenType.LDICT:
+                depth += 1
+            elif (t.type == TokenType.RPAREN or t.type == TokenType.RBRACKET or t.type == TokenType.RDICT) and depth > 0:
                 depth -= 1
 
             if t.type == TokenType.COLON and depth == 0:
-                isEol = (i + 1 >= totalTokens) or (tokens[i + 1].line > curLine) or (tokens[i + 1].type == TokenType.EOF)
-                if isEol:
-                    pendingBlock = True
-                    lineOpen = False
-                    prevLine = curLine
-                    i += 1
-                    continue
-                else:
-                    out.append(Token(TokenType.LBRACE, "{", 0, t.line, t.col))
-                    inlineBlocks += 1
-                    lineOpen = True
-                    prevLine = curLine
+                eol = i + 1 >= n or toks[i + 1].type == TokenType.EOF or toks[i + 1].line > el
+                header = (lineFirst in BLOCKKEYWORDS) and len(out) > 0
+                if eol or header:
+                    fnAt = -1
+                    k = lineFirstOut
+                    while k < len(out):
+                        if out[k].type == TokenType.FUNC:
+                            fnAt = k
+                        k += 1
+                    isFn = fnAt >= 0
+                    params = self.collectParams(out, fnAt) if isFn else []
+                    brace = Token(TokenType.LBRACE, "{", 0, t.line, t.col)
+                    out.append(brace)
+                    if eol:
+                        pendingBlock = True
+                        pendingIsFn = isFn
+                        pendingParams = params
+                        pendingInfo = [isFn, lineFirst == TokenType.STRUCT or lineFirst == TokenType.ENUM, lineFirst == TokenType.CLASS]
+                        lineOpen = False
+                    else:
+                        if isFn:
+                            sc = LayoutScope()
+                            sc.bodyStart = len(out)
+                            sc.bodyDepth = curDepth + 1
+                            for p in params:
+                                sc.names[p] = True
+                            scopes.append(sc)
+                        inlineOpen.append(isFn)
+                        atStmtStart = True
+                        lineOpen = False
+                    if el > prevEndLine:
+                        prevEndLine = el
                     i += 1
                     continue
 
             out.append(t)
             lineOpen = True
-            prevLine = curLine
+            if el > prevEndLine:
+                prevEndLine = el
+            if t.type == TokenType.SEMICOLON and depth == 0:
+                atStmtStart = True
             i += 1
-
         return out
 
-    func hexDigitVal(self, ch):
-        if ch >= "0" and ch <= "9":
-            return ord(ch) - 48
-        if ch >= "a" and ch <= "f":
-            return ord(ch) - 97 + 10
-        if ch >= "A" and ch <= "F":
-            return ord(ch) - 65 + 10
-        return -1
+    func continuesLine(self, t):
+        if t.type == TokenType.IDENT:
+            return False
+        if t.type == TokenType.NOT:
+            return True
+        return t.type in CONTINUERS
 
-    func readHex(self):
-        startLine = self.line
-        startCol = self.col
-        if self.hexDigitVal(self.peek(2)) < 0:
-            return Token(TokenType.NUMBER, self.advance(), 0, startLine, startCol)
-        text = self.advance() + self.advance()
-        val = 0
-        d = self.hexDigitVal(self.source[self.pos]) if self.pos < self.length else -1
-        while self.pos < self.length and d >= 0:
-            text += self.advance()
-            val = val * 16 + d
-            d = self.hexDigitVal(self.source[self.pos]) if self.pos < self.length else -1
-        return Token(TokenType.NUMBER, text, val, startLine, startCol)
+    func visible(self, scopes, name):
+        for sc in scopes:
+            if (name in sc.names) or (name in sc.outer):
+                return True
+        return False
 
-    func readBinary(self):
-        startLine = self.line
-        startCol = self.col
-        if self.peek(2) != "0" and self.peek(2) != "1":
-            return Token(TokenType.NUMBER, self.advance(), 0, startLine, startCol)
-        text = self.advance() + self.advance()
-        val = 0
-        while self.pos < self.length and (self.source[self.pos] == "0" or self.source[self.pos] == "1"):
-            ch = self.advance()
-            text += ch
-            val = val * 2 + (ord(ch) - 48)
-        return Token(TokenType.NUMBER, text, val, startLine, startCol)
+    func declareNames(self, out, scopes, names, curDepth):
+        sc = scopes[len(scopes) - 1]
+        for nt in names:
+            if self.visible(scopes, nt.text):
+                continue
+            sc.names[nt.text] = True
+            if curDepth == sc.bodyDepth:
+                self.emitLet(out, len(out), nt)
+            else:
+                sc.hoisted.append(nt)
 
-    func readOctal(self):
-        startLine = self.line
-        startCol = self.col
-        if self.peek(2) < "0" or self.peek(2) > "7":
-            return Token(TokenType.NUMBER, self.advance(), 0, startLine, startCol)
-        text = self.advance() + self.advance()
-        val = 0
-        while self.pos < self.length and self.source[self.pos] >= "0" and self.source[self.pos] <= "7":
-            ch = self.advance()
-            text += ch
-            val = val * 8 + (ord(ch) - 48)
-        return Token(TokenType.NUMBER, text, val, startLine, startCol)
-
-    func readNumber(self):
-        startLine = self.line
-        startCol = self.col
-
-        if self.source[self.pos] == "0" and (self.peek(1) == "x" or self.peek(1) == "X"):
-            return self.readHex()
-
-        if self.source[self.pos] == "0" and (self.peek(1) == "b" or self.peek(1) == "B"):
-            return self.readBinary()
-
-        if self.source[self.pos] == "0" and (self.peek(1) == "o" or self.peek(1) == "O"):
-            return self.readOctal()
-
-        text = ""
-        while self.pos < self.length and (self.source[self.pos].isdigit() or self.source[self.pos] == "."):
-            text += self.advance()
-
-        isFloat = "." in text
-        if self.pos < self.length and (self.source[self.pos] == "e" or self.source[self.pos] == "E"):
-            nxt = self.peek(1)
-            hasExp = nxt.isdigit() or ((nxt == "+" or nxt == "-") and self.peek(2).isdigit())
-            if hasExp:
-                text += self.advance()
-                if self.source[self.pos] == "+" or self.source[self.pos] == "-":
-                    text += self.advance()
-                while self.pos < self.length and self.source[self.pos].isdigit():
-                    text += self.advance()
-                isFloat = True
-        val = float(text) if isFloat else int(text)
-        return Token(TokenType.NUMBER, text, val, startLine, startCol)
-
-    func readString(self, quote):
-        startLine = self.line
-        startCol = self.col
-
-        isTriple = False
-        if self.peek(1) == quote and self.peek(2) == quote:
-            isTriple = True
-            self.advance()
-            self.advance()
-            self.advance()
+    func emitLet(self, out, at, nt):
+        decl = [
+            Token(TokenType.VAR, "let", 0, nt.line, nt.col),
+            Token(TokenType.IDENT, nt.text, 0, nt.line, nt.col),
+            Token(TokenType.ASSIGN, "=", 0, nt.line, nt.col),
+            Token(TokenType.NULL, "None", 0, nt.line, nt.col),
+            Token(TokenType.SEMICOLON, ";", 0, nt.line, nt.col)
+        ]
+        if at >= len(out):
+            for d in decl:
+                out.append(d)
         else:
-            self.advance()
+            k = 0
+            for d in decl:
+                out.insert(at + k, d)
+                k += 1
 
-        text = ""
-        if isTriple:
-            while self.pos < self.length:
-                if self.source[self.pos] == quote and self.peek(1) == quote and self.peek(2) == quote:
-                    self.advance()
-                    self.advance()
-                    self.advance()
+    func finishScope(self, out, scopes):
+        sc = scopes.pop()
+        at = sc.bodyStart
+        for nt in sc.hoisted:
+            self.emitLet(out, at, nt)
+            at += 5
+
+    func endLogicalLine(self, out, inlineOpen, scopes, lineOpen, commaMode):
+        while len(inlineOpen) > 0:
+            if len(out) > 0:
+                last = out[len(out) - 1]
+                if last.type != TokenType.SEMICOLON and last.type != TokenType.LBRACE and last.type != TokenType.RBRACE:
+                    out.append(Token(TokenType.SEMICOLON, ";", 0, last.endLine, last.col))
+            last = out[len(out) - 1]
+            out.append(Token(TokenType.RBRACE, "}", 0, last.endLine, last.col))
+            if inlineOpen.pop():
+                self.finishScope(out, scopes)
+        if lineOpen and len(out) > 0:
+            last = out[len(out) - 1]
+            if commaMode:
+                if last.type != TokenType.COMMA and last.type != TokenType.LBRACE:
+                    out.append(Token(TokenType.COMMA, ",", 0, last.endLine, last.col))
+            elif last.type != TokenType.SEMICOLON and last.type != TokenType.LBRACE and last.type != TokenType.RBRACE:
+                out.append(Token(TokenType.SEMICOLON, ";", 0, last.endLine, last.col))
+
+    func popBlock(self, out, indents, blocks, scopes):
+        info = blocks.pop()
+        line = 0
+        col = 0
+        if len(out) > 0:
+            line = out[len(out) - 1].endLine
+            col = out[len(out) - 1].col
+        out.append(Token(TokenType.RBRACE, "}", 0, line, col))
+        if info[0]:
+            self.finishScope(out, scopes)
+        indents.pop()
+
+    func collectParams(self, out, start):
+        names = []
+        d = 0
+        br = 0
+        afterColon = False
+        k = start
+        while k < len(out):
+            t = out[k]
+            k += 1
+            if t.type == TokenType.LPAREN:
+                d += 1
+                continue
+            if t.type == TokenType.RPAREN:
+                d -= 1
+                if d == 0:
                     break
-                ch = self.advance()
-                if ch == "\\" and self.pos < self.length:
-                    esc = self.advance()
-                    if esc == "n":
-                        text += "\n"
-                    elif esc == "t":
-                        text += "\t"
-                    elif esc == "r":
-                        text += "\r"
-                    elif esc == "\\":
-                        text += "\\"
-                    elif esc == "\"":
-                        text += "\""
-                    elif esc == "'":
-                        text += "'"
-                    else:
-                        text += "\\" + esc
-                else:
-                    text += ch
-        else:
-            while self.pos < self.length and self.source[self.pos] != quote:
-                ch = self.advance()
-                if ch == "\\" and self.pos < self.length:
-                    esc = self.advance()
-                    if esc == "n":
-                        text += "\n"
-                    elif esc == "t":
-                        text += "\t"
-                    elif esc == "r":
-                        text += "\r"
-                    elif esc == "\\":
-                        text += "\\"
-                    elif esc == "\"":
-                        text += "\""
-                    elif esc == "'":
-                        text += "'"
-                    else:
-                        text += esc
-                else:
-                    text += ch
+                continue
+            if t.type == TokenType.LBRACKET:
+                br += 1
+                continue
+            if t.type == TokenType.RBRACKET:
+                br -= 1
+                continue
+            if d != 1 or br > 0:
+                continue
+            if t.type == TokenType.COMMA:
+                afterColon = False
+            elif t.type == TokenType.COLON or t.type == TokenType.ASSIGN:
+                afterColon = True
+            elif t.type == TokenType.IDENT and not afterColon:
+                names.append(t.text)
+        return names
 
-            if self.pos < self.length:
+    func readNumber(self, line, col):
+        start = self.pos
+        first = self.source[self.pos]
+        second = self.peek(1)
+        if first == "0" and (second == "x" or second == "X" or second == "b" or second == "B" or second == "o" or second == "O"):
+            base = 16
+            if second == "b" or second == "B":
+                base = 2
+            elif second == "o" or second == "O":
+                base = 8
+            if self.digitValue(self.peek(2), base) >= 0:
                 self.advance()
+                self.advance()
+                val = 0
+                while self.pos < self.length:
+                    c = self.source[self.pos]
+                    if c == "_":
+                        self.advance()
+                        continue
+                    dv = self.digitValue(c, base)
+                    if dv < 0:
+                        break
+                    val = val * base + dv
+                    if val > MAXEXACT:
+                        lexFail("Angka kegedean", line, col)
+                    self.advance()
+                tok = self.make(TokenType.NUMBER, self.source[start:self.pos], line, col)
+                tok.number = val
+                tok.angka = val
+                tok.isFloat = False
+                return tok
+        isInteger = True
+        if self.source[self.pos] == ".":
+            isInteger = False
+            self.advance()
+            self.skipDigits()
+        else:
+            self.skipDigits()
+            if self.peek(0) == "." and isDigitCh(self.peek(1)):
+                isInteger = False
+                self.advance()
+                self.skipDigits()
+        c = self.peek(0)
+        if c == "e" or c == "E":
+            n1 = self.peek(1)
+            if isDigitCh(n1) or ((n1 == "+" or n1 == "-") and isDigitCh(self.peek(2))):
+                isInteger = False
+                self.advance()
+                if self.peek(0) == "+" or self.peek(0) == "-":
+                    self.advance()
+                while isDigitCh(self.peek(0)):
+                    self.advance()
+        text = self.source[start:self.pos].replace("_", "")
+        if isInteger and len(text) >= 16:
+            if len(text) > 16 or text > "9007199254740992":
+                lexFail("Angka integer " + text + " kegedean -- 'angka' (double) cuma presisi exact sampe 9007199254740992, pake teks buat angka segede ini", line, col)
+        tok = self.make(TokenType.NUMBER, text, line, col)
+        tok.number = int(text) if isInteger else float(text)
+        tok.angka = tok.number
+        tok.isFloat = not isInteger
+        return tok
 
-        return Token(TokenType.STRING, text, 0, startLine, startCol)
+    func skipDigits(self):
+        while self.pos < self.length:
+            c = self.source[self.pos]
+            if isDigitCh(c) or (c == "_" and isDigitCh(self.peek(1))):
+                self.advance()
+            else:
+                break
 
-    func readIdent(self):
-        startLine = self.line
-        startCol = self.col
-        text = ""
+    func digitValue(self, ch, base):
+        if ch == "":
+            return -1
+        v = -1
+        if ch >= "0" and ch <= "9":
+            v = ord(ch) - 48
+        elif ch >= "a" and ch <= "f":
+            v = ord(ch) - 87
+        elif ch >= "A" and ch <= "F":
+            v = ord(ch) - 55
+        if v >= base:
+            return -1
+        return v
 
-        while self.pos < self.length and (self.source[self.pos].isalnum() or self.source[self.pos] == "_"):
-            text += self.advance()
-
+    func readIdent(self, line, col):
+        start = self.pos
+        while self.pos < self.length and isIdentCh(self.source[self.pos]):
+            self.advance()
+        text = self.source[start:self.pos]
         tokenType = TokenType.IDENT
         if text in self.keywords:
             tokenType = self.keywords[text]
+        if tokenType == TokenType.IDENT:
+            if text == "and" or text == "dan":
+                tokenType = TokenType.AND
+            elif text == "or" or text == "atau":
+                tokenType = TokenType.OR
+        return self.make(tokenType, text, line, col)
 
-        return Token(tokenType, text, 0, startLine, startCol)
+    func readString(self, line, col, raw):
+        quote = self.advance()
+        triple = self.peek(0) == quote and self.peek(1) == quote
+        if triple:
+            self.advance()
+            self.advance()
+        parts = []
+        while True:
+            if self.pos >= self.length:
+                lexFail("Teks nggak ditutup", line, col)
+            ch = self.source[self.pos]
+            if ch == quote and (not triple or (self.peek(1) == quote and self.peek(2) == quote)):
+                break
+            self.advance()
+            if ch == "\\" and raw:
+                parts.append(ch)
+                if self.pos < self.length:
+                    parts.append(self.advance())
+            elif ch == "\\":
+                if self.pos >= self.length:
+                    lexFail("Teks nggak ditutup", line, col)
+                parts.append(self.escapeChar(self.advance(), False))
+            else:
+                parts.append(ch)
+        self.advance()
+        if triple:
+            self.advance()
+            self.advance()
+        tok = self.make(TokenType.STRING, "".join(parts), line, col)
+        return tok
 
-    func readSymbol(self):
-        startLine = self.line
-        startCol = self.col
-        ch = self.advance()
+    func escapeChar(self, esc, template):
+        if esc == "n":
+            return "\n"
+        if esc == "t":
+            return "\t"
+        if esc == "r":
+            return "\r"
+        if esc == "0":
+            lexFail("escape \\0 belum didukung kompiler", self.line, self.col)
+        return esc
 
-        if ch == "+":
-            if self.match("="):
-                return Token("+=", "+=", 0, startLine, startCol)
-            return Token(TokenType.PLUS, "+", 0, startLine, startCol)
-        elif ch == "-":
-            if self.match("="):
-                return Token("-=", "-=", 0, startLine, startCol)
-            return Token(TokenType.MINUS, "-", 0, startLine, startCol)
-        elif ch == "*":
-            if self.match("="):
-                return Token("*=", "*=", 0, startLine, startCol)
-            return Token(TokenType.STAR, "*", 0, startLine, startCol)
-        elif ch == "/":
-            if self.match("="):
-                return Token("/=", "/=", 0, startLine, startCol)
-            return Token(TokenType.SLASH, "/", 0, startLine, startCol)
-        elif ch == "%":
-            if self.match("="):
-                return Token("%=", "%=", 0, startLine, startCol)
-            return Token(TokenType.PERCENT, "%", 0, startLine, startCol)
-        elif ch == "=":
-            if self.match("="):
-                return Token(TokenType.EQ, "==", 0, startLine, startCol)
-            return Token(TokenType.ASSIGN, "=", 0, startLine, startCol)
-        elif ch == "!":
-            if self.match("="):
-                return Token(TokenType.NEQ, "!=", 0, startLine, startCol)
-            return Token("!", "!", 0, startLine, startCol)
-        elif ch == "<":
-            if self.match("<"):
-                if self.match("="):
-                    return Token("<<=", "<<=", 0, startLine, startCol)
-                return Token(TokenType.SHL, "<<", 0, startLine, startCol)
-            if self.match("="):
-                return Token(TokenType.LTE, "<=", 0, startLine, startCol)
-            return Token(TokenType.LT, "<", 0, startLine, startCol)
-        elif ch == ">":
-            if self.match(">"):
-                if self.match("="):
-                    return Token(">>=", ">>=", 0, startLine, startCol)
-                return Token(TokenType.SHR, ">>", 0, startLine, startCol)
-            if self.match("="):
-                return Token(TokenType.GTE, ">=", 0, startLine, startCol)
-            return Token(TokenType.GT, ">", 0, startLine, startCol)
-        elif ch == "&":
-            if self.match("="):
-                return Token("&=", "&=", 0, startLine, startCol)
-            return Token(TokenType.AMP, "&", 0, startLine, startCol)
-        elif ch == "|":
-            if self.match("="):
-                return Token("|=", "|=", 0, startLine, startCol)
-            return Token(TokenType.PIPE, "|", 0, startLine, startCol)
-        elif ch == "^":
-            if self.match("="):
-                return Token("^=", "^=", 0, startLine, startCol)
-            return Token(TokenType.CARET, "^", 0, startLine, startCol)
-        elif ch == "~":
-            return Token(TokenType.TILDE, "~", 0, startLine, startCol)
-        elif ch == "(":
-            return Token(TokenType.LPAREN, "(", 0, startLine, startCol)
-        elif ch == ")":
-            return Token(TokenType.RPAREN, ")", 0, startLine, startCol)
-        elif ch == "{":
-            return Token(TokenType.LBRACE, "{", 0, startLine, startCol)
-        elif ch == "}":
-            return Token(TokenType.RBRACE, "}", 0, startLine, startCol)
-        elif ch == "[":
-            return Token(TokenType.LBRACKET, "[", 0, startLine, startCol)
-        elif ch == "]":
-            return Token(TokenType.RBRACKET, "]", 0, startLine, startCol)
-        elif ch == ",":
-            return Token(TokenType.COMMA, ",", 0, startLine, startCol)
-        elif ch == ";":
-            return Token(TokenType.SEMICOLON, ";", 0, startLine, startCol)
-        elif ch == ":":
-            return Token(TokenType.COLON, ":", 0, startLine, startCol)
-        elif ch == ".":
-            return Token(TokenType.DOT, ".", 0, startLine, startCol)
+    func readTemplate(self, line, col, close, fstr):
+        self.advance()
+        parts = []
+        literal = []
+        while True:
+            if self.pos >= self.length:
+                lexFail("Template string nggak ditutup", line, col)
+            ch = self.source[self.pos]
+            if ch == close:
+                self.advance()
+                break
+            if fstr and ch == "{" and self.peek(1) == "{":
+                self.advance()
+                self.advance()
+                literal.append("{")
+                continue
+            if fstr and ch == "}" and self.peek(1) == "}":
+                self.advance()
+                self.advance()
+                literal.append("}")
+                continue
+            if (not fstr and ch == "$" and self.peek(1) == "{") or (fstr and ch == "{"):
+                parts.append([True, "".join(literal), [], ""])
+                literal = []
+                self.advance()
+                if not fstr:
+                    self.advance()
+                exprTokens = []
+                spec = ""
+                braceDepth = 1
+                nest = 0
+                skipConv = False
+                done = False
+                while not done:
+                    got = self.nextTokens()
+                    for t in got:
+                        if t.type == TokenType.EOF:
+                            lexFail("${...} nggak ditutup di dalam template string", line, col)
+                        if t.type == TokenType.LBRACE:
+                            braceDepth += 1
+                        elif t.type == TokenType.RBRACE:
+                            braceDepth -= 1
+                            if braceDepth == 0:
+                                done = True
+                                break
+                        elif t.type == TokenType.LPAREN or t.type == TokenType.LBRACKET:
+                            nest += 1
+                        elif t.type == TokenType.RPAREN or t.type == TokenType.RBRACKET:
+                            nest -= 1
+                        elif fstr and t.type == TokenType.COLON and braceDepth == 1 and nest == 0:
+                            while self.pos < self.length and self.source[self.pos] != "}":
+                                spec += self.advance()
+                            if self.pos >= self.length:
+                                lexFail("{...} nggak ditutup di f-string", line, col)
+                            self.advance()
+                            done = True
+                            break
+                        elif fstr and t.type == TokenType.NOT and t.text == "!" and braceDepth == 1 and nest == 0:
+                            skipConv = True
+                            continue
+                        if skipConv and t.type == TokenType.IDENT:
+                            skipConv = False
+                            continue
+                        exprTokens.append(t)
+                parts.append([False, "", exprTokens, spec])
+                continue
+            self.advance()
+            if ch == "\\":
+                if self.pos >= self.length:
+                    lexFail("Template string nggak ditutup", line, col)
+                literal.append(self.escapeChar(self.advance(), True))
+            else:
+                literal.append(ch)
+        parts.append([True, "".join(literal), [], ""])
+        out = [self.make(TokenType.LPAREN, "(", line, col)]
+        first = True
+        emitted = False
+        for p in parts:
+            if p[0] and p[1] == "":
+                continue
+            if not first:
+                out.append(self.make(TokenType.PLUS, "+", line, col))
+            first = False
+            emitted = True
+            if p[0]:
+                out.append(self.make(TokenType.STRING, p[1], line, col))
+            else:
+                out.append(self.make(TokenType.IDENT, "ke_teks" if p[3] == "" else "_fmt", line, col))
+                out.append(self.make(TokenType.LPAREN, "(", line, col))
+                for t in p[2]:
+                    out.append(t)
+                if p[3] != "":
+                    out.append(self.make(TokenType.COMMA, ",", line, col))
+                    out.append(self.make(TokenType.STRING, p[3], line, col))
+                out.append(self.make(TokenType.RPAREN, ")", line, col))
+        if not emitted:
+            out.append(self.make(TokenType.STRING, "", line, col))
+        out.append(self.make(TokenType.RPAREN, ")", line, col))
+        return out
 
-        return Token("UNKNOWN", ch, 0, startLine, startCol)
+    func readSymbol(self, line, col):
+        two = self.source[self.pos:self.pos + 2]
+        three = self.source[self.pos:self.pos + 3]
+        if three == "//=" or three == "**=" or three == "<<=" or three == ">>=":
+            if three != "//=" or self.pyStyle:
+                self.advance()
+                self.advance()
+                self.advance()
+                return self.make(TokenType.COMPOUND, three[:2], line, col)
+        if two == "+=" or two == "-=" or two == "*=" or two == "/=" or two == "%=" or two == "|=" or two == "&=" or two == "^=":
+            self.advance()
+            self.advance()
+            return self.make(TokenType.COMPOUND, two[:1], line, col)
+        if two == "<<" or two == ">>":
+            self.advance()
+            self.advance()
+            return self.make(TokenType.SHL if two == "<<" else TokenType.SHR, two, line, col)
+        if two == "//" and self.pyStyle:
+            self.advance()
+            self.advance()
+            return self.make(TokenType.SLASHSLASH, two, line, col)
+        if two in TWOCHAR:
+            self.advance()
+            self.advance()
+            return self.make(TWOCHAR[two], two, line, col)
+        one = self.source[self.pos]
+        if one in ONECHAR:
+            self.advance()
+            return self.make(ONECHAR[one], one, line, col)
+        self.advance()
+        return self.make(TokenType.IDENT, one, line, col)

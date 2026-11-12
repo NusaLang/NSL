@@ -1,7 +1,7 @@
 IO_RUNTIME = """rtTime:
     sub rsp, 16
     mov rax, 228
-    mov rdi, 1
+    xor edi, edi
     mov rsi, rsp
     syscall
     mov rax, [rsp]

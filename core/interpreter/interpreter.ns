@@ -26,6 +26,9 @@ resolveModulePath = resolverModule.resolveModulePath
 func runtimeImpor(name):
     return resolverModule.importModule(name)
 
+func rtError(msg):
+    err = {"pesan": msg}
+    lempar err
 
 class ReturnSignal:
     func __init__(self, val):
@@ -41,13 +44,32 @@ class ContinueSignal:
         self.isContinue = True
 
 class UserFunction:
-    func __init__(self, name, params, body, closure, defaults = None):
+    func __init__(self, name, params, body, closure, defaults = None, restName = None, kwName = None):
         self.isFunction = True
+        self.restName = restName
+        self.kwName = kwName
         self.name = name
         self.params = params
         self.body = body
         self.closure = closure
         self.defaults = defaults if defaults != None else {}
+
+func makeMethodCaller(target, name):
+    func caller(*items):
+        return _callmeth(target, name, items)
+    return caller
+
+func isSignal(e):
+    return hasattr(e, "isReturn") or hasattr(e, "isBreak") or hasattr(e, "isContinue")
+
+func isRange(x):
+    return tipe(x) == "peta" and "isRange" in x
+
+func isInstance(x):
+    return tipe(x) == "peta" and "isInstance" in x
+
+func isClass(x):
+    return tipe(x) == "peta" and "isClass" in x
 
 func makeLazyRange(a, b = None, c = None):
     start = 0
@@ -63,47 +85,36 @@ func makeLazyRange(a, b = None, c = None):
         stop = b
         step = c
     if step == 0:
-        lempar "range() arg 3 must not be zero"
+        rtError("range() arg 3 must not be zero")
     return {"isRange": True, "start": start, "stop": stop, "step": step}
 
-func nusaLen(x):
-    if (tipe(x) == "peta" or tipe(x) == "dict") and "isRange" in x:
-        start = x["start"]
-        stop = x["stop"]
-        step = x["step"]
-        if step > 0:
-            if start >= stop:
-                return 0
-            return (stop - start + step - 1) // step
-        else:
-            if start <= stop:
-                return 0
-            return (start - stop - step - 1) // (-step)
-    return panjang(x)
+func rangeCount(x):
+    start = x["start"]
+    stop = x["stop"]
+    step = x["step"]
+    if step > 0:
+        if start >= stop:
+            return 0
+        return (stop - start + step - 1) // step
+    if start <= stop:
+        return 0
+    return (start - stop - step - 1) // (-step)
 
-func nusaStr(x):
-    if (tipe(x) == "peta" or tipe(x) == "dict") and "isRange" in x:
-        if x["step"] == 1:
-            return "range(" + str(x["start"]) + ", " + str(x["stop"]) + ")"
-        return "range(" + str(x["start"]) + ", " + str(x["stop"]) + ", " + str(x["step"]) + ")"
-    return str(x)
+func nusaLen(x):
+    if isRange(x):
+        return rangeCount(x)
+    return panjang(x)
 
 func nusaList(arg = None):
     if arg == None:
         return []
-    if (tipe(arg) == "peta" or tipe(arg) == "dict") and "isRange" in arg:
-        start = arg["start"]
-        stop = arg["stop"]
-        step = arg["step"]
-        count = 0
-        if step > 0 and stop > start:
-            count = (stop - start + step - 1) // step
-        elif step < 0 and start > stop:
-            count = (start - stop - step - 1) // (-step)
-        if count > 10000000:
-            lempar "rentang(): terlalu besar untuk dialokasikan sebagai list"
+    if isRange(arg):
+        if rangeCount(arg) > 10000000:
+            rtError("rentang(): terlalu besar untuk dialokasikan sebagai list")
         res = []
-        cur = start
+        cur = arg["start"]
+        step = arg["step"]
+        stop = arg["stop"]
         if step > 0:
             while cur < stop:
                 res.append(cur)
@@ -118,8 +129,142 @@ func nusaList(arg = None):
         res.append(item)
     return res
 
-func intDivBuiltin(a, b):
-    return a // b
+func nusaEnumerate(items, start = 0):
+    res = []
+    n = start
+    for item in nusaList(items):
+        res.append([n, item])
+        n += 1
+    return res
+
+func nusaSum(items, start = 0):
+    total = start
+    for item in nusaList(items):
+        total = total + item
+    return total
+
+func nusaSleep(seconds):
+    jalankan_perintah("sleep", [str(seconds)])
+    return None
+
+func nusaGetenv(name, fallback = None):
+    val = ambil_env(name)
+    if val == None:
+        return fallback
+    return val
+
+func nusaPeta():
+    return {}
+
+func replaceText(text, old, new):
+    if old == "":
+        return text
+    return gabung(pisah(text, old), new)
+
+func countText(text, sub):
+    if sub == "":
+        return len(text) + 1
+    return len(pisah(text, sub)) - 1
+
+func padLeft(text):
+    i = 0
+    while i < len(text) and (text[i] == " " or text[i] == "\t" or text[i] == "\n" or text[i] == "\r"):
+        i += 1
+    return text[i:]
+
+func padRight(text):
+    j = len(text)
+    while j > 0 and (text[j - 1] == " " or text[j - 1] == "\t" or text[j - 1] == "\n" or text[j - 1] == "\r"):
+        j -= 1
+    return text[:j]
+
+func sortList(items, rev):
+    res = sorted(items)
+    if rev:
+        res = sorted(items, reverse=True)
+    n = len(items)
+    i = 0
+    while i < n:
+        items[i] = res[i]
+        i += 1
+    return None
+
+func listIndex(items, val):
+    i = 0
+    n = len(items)
+    while i < n:
+        if items[i] == val:
+            return i
+        i += 1
+    rtError("ValueError: nilai tidak ada di larik")
+
+func listRemove(items, val):
+    idx = listIndex(items, val)
+    k = idx
+    n = len(items)
+    while k < n - 1:
+        items[k] = items[k + 1]
+        k += 1
+    items.pop()
+    return None
+
+func listRemoveAt(items, idx):
+    n = len(items)
+    if idx < 0:
+        idx = idx + n
+    if idx < 0 or idx >= n:
+        rtError("Index larik di luar batas: " + str(idx))
+    k = idx
+    while k < n - 1:
+        items[k] = items[k + 1]
+        k += 1
+    items.pop()
+    return None
+
+func listInsert(items, idx, val):
+    n = len(items)
+    if idx < 0:
+        idx = idx + n
+        if idx < 0:
+            idx = 0
+    if idx > n:
+        idx = n
+    items.append(None)
+    k = n
+    while k > idx:
+        items[k] = items[k - 1]
+        k -= 1
+    items[idx] = val
+    return None
+
+func listReverse(items):
+    n = len(items)
+    i = 0
+    while i < n // 2:
+        tmp = items[i]
+        items[i] = items[n - 1 - i]
+        items[n - 1 - i] = tmp
+        i += 1
+    return None
+
+func listExtend(items, more):
+    for m in nusaList(more):
+        items.append(m)
+    return None
+
+func mapPop(m, key, fallback = None):
+    if key in m:
+        val = m[key]
+        remaining = {}
+        for k in m:
+            if k != key:
+                remaining[k] = m[k]
+        for k in nusaList(m.keys()):
+            del m[k]
+        for k in remaining:
+            m[k] = remaining[k]
+        return val
+    return fallback
 
 HOSTNOARG = {"noArg": True}
 
@@ -134,7 +279,7 @@ func makeHostCallback(interp, fn):
             items.append(c)
         if d != HOSTNOARG:
             items.append(d)
-        return interp.callUserFunction(fn, items)
+        return interp.callUserFunction(fn, items, {})
     return callback
 
 func makeStrFind(text):
@@ -155,17 +300,47 @@ class Interpreter:
 
     func registerBuiltins(self):
         g = self.globalScope
-        g.define("print", print)
-        g.define("cetak", cetak)
+        interp = self
+
+        func printer(*items):
+            parts = []
+            for item in items:
+                parts.append(interp.show(item, True))
+            print(gabung(parts, " "))
+            return None
+
+        func toText(x):
+            return interp.show(x, True)
+
+        func isInstanceOf(obj, cls):
+            return interp.instanceOf(obj, cls)
+
+        func delItem(obj, idx):
+            if tipe(obj) == "larik":
+                listRemoveAt(obj, idx)
+            elif tipe(obj) == "peta":
+                mapPop(obj, idx, None)
+            else:
+                rtError("Tipe '" + tipe(obj) + "' nggak bisa dihapus itemnya")
+            return None
+
+        func assertTrue(cond, message = "AssertionError"):
+            if not interp.isTruthy(cond):
+                rtError(message)
+            return None
+
+        g.define("_delitem", delItem)
+        g.define("_assert", assertTrue)
+        g.define("print", printer)
+        g.define("cetak", printer)
         g.define("len", nusaLen)
         g.define("panjang", nusaLen)
-        g.define("str", nusaStr)
-        g.define("ke_teks", nusaStr)
+        g.define("str", toText)
+        g.define("ke_teks", toText)
         g.define("int", int)
         g.define("float", float)
         g.define("ke_angka", ke_angka)
         g.define("ord", ord)
-        g.define("intDiv", intDivBuiltin)
         g.define("chr", chr)
         g.define("type", type)
         g.define("tipe", tipe)
@@ -173,8 +348,27 @@ class Interpreter:
         g.define("rentang", makeLazyRange)
         g.define("list", nusaList)
         g.define("larik", nusaList)
-        g.define("map", lambda: {})
-        g.define("peta", lambda: {})
+        g.define("enumerate", nusaEnumerate)
+        g.define("sum", nusaSum)
+        g.define("abs", abs)
+        g.define("min", min)
+        g.define("max", max)
+        g.define("round", round)
+        g.define("pow", pow)
+        g.define("divmod", divmod)
+        g.define("sorted", sorted)
+        g.define("zip", zip)
+        g.define("map", map)
+        g.define("filter", filter)
+        g.define("any", any)
+        g.define("all", all)
+        g.define("bool", bool)
+        g.define("reversed", reversed)
+        g.define("isinstance", isInstanceOf)
+        g.define("sleep", nusaSleep)
+        g.define("tidur", nusaSleep)
+        g.define("getenv", nusaGetenv)
+        g.define("peta", nusaPeta)
         g.define("PetaBaru", peta_baru)
         g.define("petaBaru", peta_baru)
         g.define("peta_baru", peta_baru)
@@ -203,6 +397,7 @@ class Interpreter:
         g.define("pisah", pisah)
         g.define("join", gabung)
         g.define("gabung", gabung)
+        g.define("intDiv", lambda a, b: a // b)
         g.define("runCommand", jalankan_perintah)
         g.define("JalankanPerintah", jalankan_perintah)
         g.define("jalankanPerintah", jalankan_perintah)
@@ -222,11 +417,55 @@ class Interpreter:
             return ""
         if hasattr(node, "type"):
             return node.type
-        if hasattr(node, "jenis"):
-            return node.jenis
         return ""
 
-    func resolveMethodChain(self, clsObj, methodName, env):
+    func instanceOf(self, obj, cls):
+        if not isInstance(obj) or not isClass(cls):
+            return False
+        cur = obj["class"]
+        while cur != None:
+            if cur["name"] == cls["name"]:
+                return True
+            parentName = cur["parent"]
+            if parentName == None:
+                return False
+            cur = self.globalScope.get(parentName)
+        return False
+
+    func show(self, v, top):
+        t = tipe(v)
+        if t == "teks":
+            if top:
+                return v
+            return "\"" + v + "\""
+        if t == "larik":
+            parts = []
+            for item in v:
+                parts.append(self.show(item, False))
+            return "[" + gabung(parts, ", ") + "]"
+        if t == "peta":
+            if "isInstance" in v:
+                found = self.findMethod(v["class"], "__str__")
+                if found[0] != None:
+                    return self.callMethod(v, found, [], {})
+                return "<objek " + v["class"]["name"] + ">"
+            if "isClass" in v:
+                return v["name"]
+            if "isRange" in v:
+                if v["step"] == 1:
+                    return "range(" + str(v["start"]) + ", " + str(v["stop"]) + ")"
+                return "range(" + str(v["start"]) + ", " + str(v["stop"]) + ", " + str(v["step"]) + ")"
+            if "isBoundMethod" in v:
+                return "<fn " + v["method"].name + ">"
+            parts = []
+            for k in v:
+                parts.append(str(k) + ": " + self.show(v[k], False))
+            return "{" + gabung(parts, ", ") + "}"
+        if hasattr(v, "isFunction"):
+            return "<fn " + v.name + ">"
+        return str(v)
+
+    func findMethod(self, clsObj, methodName):
         cur = clsObj
         while cur != None:
             if methodName in cur["methods"]:
@@ -234,18 +473,139 @@ class Interpreter:
             parentName = cur["parent"]
             if parentName == None:
                 return [None, None]
-            cur = env.get(parentName)
+            cur = self.globalScope.get(parentName)
         return [None, None]
+
+    func findAttr(self, clsObj, name):
+        cur = clsObj
+        while cur != None:
+            if name in cur["attrs"]:
+                return [True, cur["attrs"][name]]
+            parentName = cur["parent"]
+            if parentName == None:
+                return [False, None]
+            cur = self.globalScope.get(parentName)
+        return [False, None]
+
+    func bindParams(self, fnObj, scope, args, kw):
+        params = fnObj.params
+        nParams = len(params)
+        nArgs = len(args)
+        label = fnObj.name
+        if fnObj.restName != None:
+            if nArgs > nParams:
+                scope.define(fnObj.restName, args[nParams:])
+                args = args[:nParams]
+                nArgs = nParams
+            else:
+                scope.define(fnObj.restName, [])
+        if fnObj.kwName != None:
+            extra = {}
+            known = {}
+            for name in kw:
+                if name in params:
+                    known[name] = kw[name]
+                else:
+                    extra[name] = kw[name]
+            scope.define(fnObj.kwName, extra)
+            kw = known
+        if nArgs > nParams:
+            if len(fnObj.defaults) > 0:
+                rtError("fungsi '" + label + "' butuh " + str(nParams - len(fnObj.defaults)) + ".." + str(nParams) + " argumen, dapat " + str(nArgs))
+            rtError("fungsi '" + label + "' butuh " + str(nParams) + " argumen, dapat " + str(nArgs))
+        i = 0
+        while i < nParams:
+            pName = params[i]
+            if i < nArgs:
+                if pName in kw:
+                    rtError("fungsi '" + label + "' menerima argumen '" + pName + "' dua kali")
+                scope.define(pName, args[i])
+            elif pName in kw:
+                scope.define(pName, kw[pName])
+            elif pName in fnObj.defaults:
+                scope.define(pName, fnObj.defaults[pName])
+            else:
+                if len(fnObj.defaults) > 0:
+                    rtError("fungsi '" + label + "' butuh " + str(nParams - len(fnObj.defaults)) + ".." + str(nParams) + " argumen, dapat " + str(nArgs))
+                rtError("fungsi '" + label + "' butuh " + str(nParams) + " argumen, dapat " + str(nArgs))
+            i += 1
+        for name in kw:
+            if not (name in params):
+                rtError("fungsi '" + label + "' tidak punya parameter '" + name + "'")
+
+    func runBody(self, fnObj, scope):
+        try:
+            self.execute(fnObj.body, scope)
+        except sig:
+            if hasattr(sig, "isReturn"):
+                return sig.val
+            raise sig
+        return None
+
+    func callUserFunction(self, fnTarget, args, kw):
+        fnScope = Scope(fnTarget.closure)
+        self.bindParams(fnTarget, fnScope, args, kw)
+        return self.runBody(fnTarget, fnScope)
+
+    func callMethod(self, inst, found, args, kw):
+        m = found[0]
+        lk = Scope(m.closure)
+        lk.define("self", inst)
+        lk.define("ini", inst)
+        lk.define("__kelasAktif__", found[1])
+        self.bindParams(m, lk, args, kw)
+        return self.runBody(m, lk)
+
+    func makeFunction(self, name, params, body, defaults, env, restName = None, kwName = None):
+        evaluated = {}
+        for k in defaults:
+            evaluated[k] = self.evaluate(defaults[k], env)
+        return UserFunction(name, params, body, env, evaluated, restName, kwName)
 
     func execInline(self, node, env):
         if node == None:
             return None
         t = self.nodeType(node)
-        if t == "BLOCK" or t == "BLOK":
+        if t == "BLOCK":
             for s in node.stmts:
                 self.execute(s, env)
             return None
         return self.execute(node, env)
+
+    func assignTo(self, target, val, env):
+        tt = self.nodeType(target)
+        if tt == "IDENT":
+            env.set(target.name, val)
+        elif tt == "INDEX":
+            obj = self.evaluate(target.target, env)
+            idx = self.evaluate(target.index, env)
+            obj[idx] = val
+        elif tt == "MEMBER":
+            self.setMember(self.evaluate(target.target, env), target.name, val)
+        else:
+            rtError("Target assignment nggak valid")
+
+    func setMember(self, obj, name, val):
+        if isInstance(obj):
+            obj["fields"][name] = val
+        elif isClass(obj):
+            obj["attrs"][name] = val
+        elif tipe(obj) == "peta":
+            obj[name] = val
+        else:
+            rtError("field tidak bisa diisi pada nilai bertipe " + tipe(obj))
+
+    func loopBody(self, body, scope):
+        # 0 = keep going, 1 = break
+        try:
+            self.execInline(body, scope)
+        except sig:
+            if hasattr(sig, "isBreak"):
+                return 1
+            elif hasattr(sig, "isContinue"):
+                return 0
+            raise sig
+        return 0
 
     func execute(self, stmt, env):
         if stmt == None:
@@ -253,155 +613,214 @@ class Interpreter:
 
         t = self.nodeType(stmt)
 
-        if t == "BLOCK" or t == "BLOK":
+        if t == "BLOCK":
             childScope = Scope(env)
             for s in stmt.stmts:
                 self.execute(s, childScope)
             return None
-        elif t == "VAR" or t == "BUAT":
-            name = stmt.name if hasattr(stmt, "name") else stmt.nama
-            valExpr = stmt.value if hasattr(stmt, "value") else stmt.nilai
-            val = self.evaluate(valExpr, env)
-            env.define(name, val)
+        elif t == "VAR":
+            val = self.evaluate(stmt.value, env)
+            env.define(stmt.name, val)
             return val
-        elif t == "FUNC" or t == "FUNGSI":
-            name = stmt.name if hasattr(stmt, "name") else stmt.nama
-            body = stmt.body if hasattr(stmt, "body") else stmt.badan
-            fnObj = UserFunction(name, stmt.params, body, env, stmt.defaults)
-            env.define(name, fnObj)
+        elif t == "FUNC":
+            fnObj = self.makeFunction(stmt.name, stmt.params, stmt.body, stmt.defaults, env, stmt.restName, stmt.kwName)
+            env.define(stmt.name, fnObj)
             return fnObj
-        elif t == "IF" or t == "JIKA":
-            condExpr = stmt.condition if hasattr(stmt, "condition") else stmt.kondisi
-            condVal = self.evaluate(condExpr, env)
-            thenBranch = stmt.thenBranch if hasattr(stmt, "thenBranch") else stmt.maka
-            elseBranch = stmt.elseBranch if hasattr(stmt, "elseBranch") else stmt.lain
-            if self.isTruthy(condVal):
-                self.execInline(thenBranch, env)
-            elif elseBranch != None:
-                self.execInline(elseBranch, env)
+        elif t == "IF":
+            if self.isTruthy(self.evaluate(stmt.condition, env)):
+                self.execInline(stmt.thenBranch, Scope(env))
+            elif stmt.elseBranch != None:
+                self.execInline(stmt.elseBranch, Scope(env))
             return None
-        elif t == "WHILE" or t == "SELAMA":
-            condExpr = stmt.condition if hasattr(stmt, "condition") else stmt.kondisi
-            body = stmt.body if hasattr(stmt, "body") else stmt.badan
-            while self.isTruthy(self.evaluate(condExpr, env)):
-                try:
-                    self.execInline(body, env)
-                except sig:
-                    if hasattr(sig, "isBreak"):
-                        break
-                    elif hasattr(sig, "isContinue"):
-                        continue
-                    else:
-                        raise sig
+        elif t == "WHILE":
+            while self.isTruthy(self.evaluate(stmt.condition, env)):
+                if self.loopBody(stmt.body, Scope(env)) == 1:
+                    break
             return None
-        elif t == "FOR" or t == "UNTUK":
+        elif t == "FOR":
             loopScope = Scope(env)
-            initStmt = stmt.init if hasattr(stmt, "init") else stmt.inisialisasi
-            condExpr = stmt.condition if hasattr(stmt, "condition") else stmt.kondisi
-            postExpr = stmt.post if hasattr(stmt, "post") else stmt.pasca
-            body = stmt.body if hasattr(stmt, "body") else stmt.badan
-            if initStmt != None:
-                self.execute(initStmt, loopScope)
-            while self.isTruthy(self.evaluate(condExpr, loopScope)):
-                try:
-                    self.execInline(body, loopScope)
-                except sig:
-                    if hasattr(sig, "isBreak"):
-                        break
-                    elif hasattr(sig, "isContinue"):
-                        pass
-                    else:
-                        raise sig
-                if postExpr != None:
-                    self.evaluate(postExpr, loopScope)
+            if stmt.init != None:
+                self.execute(stmt.init, loopScope)
+            while self.isTruthy(self.evaluate(stmt.condition, loopScope)):
+                if self.loopBody(stmt.body, Scope(loopScope)) == 1:
+                    break
+                if stmt.post != None:
+                    self.evaluate(stmt.post, loopScope)
             return None
-        elif t == "FOR_IN" or t == "UNTUK_DALAM":
-            iterExpr = stmt.iterable if hasattr(stmt, "iterable") else stmt.iter
-            varName = stmt.variable if hasattr(stmt, "variable") else stmt.variabel
-            body = stmt.body if hasattr(stmt, "body") else stmt.badan
-            collection = self.evaluate(iterExpr, env)
-            if (tipe(collection) == "peta" or tipe(collection) == "dict") and "isRange" in collection:
+        elif t == "FOR_IN":
+            collection = self.evaluate(stmt.iterable, env)
+            if isRange(collection):
                 start = collection["start"]
                 stop = collection["stop"]
                 step = collection["step"]
                 cur = start
                 while (step > 0 and cur < stop) or (step < 0 and cur > stop):
                     iterScope = Scope(env)
-                    iterScope.define(varName, cur)
-                    try:
-                        self.execInline(body, iterScope)
-                    except sig:
-                        if hasattr(sig, "isBreak"):
-                            break
-                        elif hasattr(sig, "isContinue"):
-                            pass
-                        else:
-                            raise sig
+                    self.bindTargets(stmt, cur, iterScope, env)
+                    if self.loopBody(stmt.body, iterScope) == 1:
+                        break
                     cur += step
                 return None
             for item in collection:
                 iterScope = Scope(env)
-                iterScope.define(varName, item)
-                try:
-                    self.execInline(body, iterScope)
-                except sig:
-                    if hasattr(sig, "isBreak"):
-                        break
-                    elif hasattr(sig, "isContinue"):
-                        continue
-                    else:
-                        raise sig
+                self.bindTargets(stmt, item, iterScope, env)
+                if self.loopBody(stmt.body, iterScope) == 1:
+                    break
             return None
-        elif t == "RETURN" or t == "HASIL":
-            valExpr = stmt.value if hasattr(stmt, "value") else stmt.nilai
-            val = self.evaluate(valExpr, env)
+        elif t == "RETURN":
+            val = None
+            if stmt.value != None:
+                val = self.evaluate(stmt.value, env)
             raise ReturnSignal(val)
-        elif t == "BREAK" or t == "BERHENTI":
+        elif t == "BREAK":
             raise BreakSignal()
-        elif t == "CONTINUE" or t == "LANJUT":
+        elif t == "CONTINUE":
             raise ContinueSignal()
-        elif t == "TRY" or t == "COBA":
-            tryBlock = stmt.tryBlock if hasattr(stmt, "tryBlock") else stmt.coba_blok
-            catchVar = stmt.catchVar if hasattr(stmt, "catchVar") else stmt.tangkap_var
-            catchBlock = stmt.catchBlock if hasattr(stmt, "catchBlock") else stmt.tangkap_blok
-            finallyBlock = stmt.finallyBlock if hasattr(stmt, "finallyBlock") else stmt.akhirnya_blok
-            try:
-                self.execInline(tryBlock, env)
-            except e:
-                if hasattr(e, "isReturn") or hasattr(e, "isBreak") or hasattr(e, "isContinue"):
-                    raise e
-                if catchBlock != None:
-                    catchScope = Scope(env)
-                    catchScope.define(catchVar, e)
-                    self.execInline(catchBlock, catchScope)
-                else:
-                    if finallyBlock != None:
-                        self.execInline(finallyBlock, env)
-                    raise e
-            if finallyBlock != None:
-                self.execInline(finallyBlock, env)
-            return None
-        elif t == "THROW" or t == "LEMPAR":
-            valExpr = stmt.value if hasattr(stmt, "value") else stmt.nilai
-            val = self.evaluate(valExpr, env)
+        elif t == "TRY":
+            return self.executeTry(stmt, env)
+        elif t == "THROW":
+            val = self.evaluate(stmt.value, env)
             raise val
-        elif t == "CLASS" or t == "KELAS":
-            clsName = stmt.name if hasattr(stmt, "name") else stmt.nama
-            parentName = stmt.baseClass if hasattr(stmt, "baseClass") else stmt.induk
-            methods = stmt.methods if hasattr(stmt, "methods") else stmt.metode
-            clsObj = {"isClass": True, "name": clsName, "parent": parentName, "methods": {}}
-            for m in methods:
-                mName = m.name if hasattr(m, "name") else m.nama
-                mBody = m.body if hasattr(m, "body") else m.badan
-                fnObj = UserFunction(mName, m.params, mBody, env, m.defaults)
-                clsObj["methods"][mName] = fnObj
-                if mName == "__init__" or mName == "konstruktor" or mName == "init" or mName == "constructor":
-                    clsObj["methods"]["constructor"] = fnObj
-            env.define(clsName, clsObj)
+        elif t == "CLASS":
+            self.defineClass(stmt, env)
             return None
-        elif t == "EXPR" or t == "EKSPRESI":
+        elif t == "STRUCT":
+            env.define(stmt.name, {"isClass": True, "isStruct": True, "name": stmt.name, "parent": None, "methods": {}, "attrs": {}, "fields": stmt.fields})
+            return None
+        elif t == "ENUM":
+            members = {}
+            enumCls = {"isClass": True, "name": stmt.name, "parent": None, "methods": {}, "attrs": {}}
+            idx = 0
+            for variant in stmt.variants:
+                members[variant] = {"isInstance": True, "class": enumCls, "fields": {"name": variant, "value": idx}}
+                idx += 1
+            env.define(stmt.name, members)
+            return None
+        elif t == "TUPLE_ASSIGN":
+            val = self.evaluate(stmt.value, env)
+            if not stmt.isLiteral:
+                val = nusaList(val)
+            if len(val) != len(stmt.targets):
+                rtError("tidak bisa membongkar " + str(len(val)) + " nilai ke " + str(len(stmt.targets)) + " variabel")
+            k = 0
+            for target in stmt.targets:
+                self.assignTo(target, val[k], env)
+                k += 1
+            return None
+        elif t == "EXPR":
             return self.evaluate(stmt.expr, env)
         return None
+
+    func bindTargets(self, stmt, item, iterScope, env):
+        targets = stmt.targets
+        if len(targets) == 1:
+            if stmt.declared:
+                env.set(targets[0], item)
+            else:
+                iterScope.define(targets[0], item)
+            return None
+        values = nusaList(item)
+        if len(values) != len(targets):
+            rtError("tidak bisa membongkar " + str(len(values)) + " nilai ke " + str(len(targets)) + " variabel")
+        k = 0
+        for name in targets:
+            if stmt.declared:
+                env.set(name, values[k])
+            else:
+                iterScope.define(name, values[k])
+            k += 1
+        return None
+
+    func executeTry(self, stmt, env):
+        finallyBlock = stmt.finallyBlock
+        try:
+            try:
+                self.execInline(stmt.tryBlock, Scope(env))
+            except e:
+                if isSignal(e):
+                    raise e
+                if stmt.catchBlock == None:
+                    raise e
+                catchScope = Scope(env)
+                catchScope.define(stmt.catchVar, e)
+                self.execInline(stmt.catchBlock, catchScope)
+        except outer:
+            if finallyBlock != None:
+                self.execInline(finallyBlock, Scope(env))
+            raise outer
+        if finallyBlock != None:
+            self.execInline(finallyBlock, Scope(env))
+        return None
+
+    func defineClass(self, stmt, env):
+        clsObj = {"isClass": True, "name": stmt.name, "parent": stmt.baseClass, "methods": {}, "attrs": {}}
+        for m in stmt.methods:
+            fnObj = self.makeFunction(m.name, m.params, m.body, m.defaults, env, m.restName, m.kwName)
+            clsObj["methods"][m.name] = fnObj
+            if m.name == "__init__" or m.name == "konstruktor" or m.name == "init" or m.name == "constructor":
+                clsObj["methods"]["constructor"] = fnObj
+        env.define(stmt.name, clsObj)
+        for attr in stmt.attrs:
+            clsObj["attrs"][attr[0]] = self.evaluate(attr[1], env)
+
+    func instantiate(self, cls, args, kw):
+        if "isStruct" in cls:
+            fields = cls["fields"]
+            if len(args) != len(fields) or len(kw) > 0:
+                rtError("Bentuk '" + cls["name"] + "' butuh " + str(len(fields)) + " argumen, dapat " + str(len(args)))
+            vals = {}
+            k = 0
+            for f in fields:
+                vals[f] = args[k]
+                k += 1
+            return {"isInstance": True, "class": cls, "fields": vals}
+        instance = {"isInstance": True, "class": cls, "fields": {}}
+        found = self.findMethod(cls, "constructor")
+        if found[0] != None:
+            self.callMethod(instance, found, args, kw)
+        elif len(args) > 0 or len(kw) > 0:
+            rtError("kelas '" + cls["name"] + "' tidak punya konstruktor tapi dipanggil dengan argumen")
+        return instance
+
+    func isTruthy(self, val):
+        if val == None or val == False or val == 0 or val == "":
+            return False
+        t = tipe(val)
+        if t == "larik" or t == "peta":
+            return len(val) > 0
+        return True
+
+    func evalComp(self, expr, env):
+        res = {} if expr.isDict else []
+        self.compLoop(expr, 0, env, res)
+        return res
+
+    func compLoop(self, expr, level, env, res):
+        if level >= len(expr.clauses):
+            if expr.isDict:
+                res[self.evaluate(expr.element, env)] = self.evaluate(expr.value, env)
+            else:
+                res.append(self.evaluate(expr.element, env))
+            return None
+        clause = expr.clauses[level]
+        names = clause[0]
+        for item in nusaList(self.evaluate(clause[1], env)):
+            scope = Scope(env)
+            if len(names) == 1:
+                scope.define(names[0], item)
+            else:
+                values = nusaList(item)
+                k = 0
+                for name in names:
+                    scope.define(name, values[k])
+                    k += 1
+            ok = True
+            for cond in clause[2]:
+                if not self.isTruthy(self.evaluate(cond, scope)):
+                    ok = False
+                    break
+            if ok:
+                self.compLoop(expr, level + 1, scope, res)
 
     func evaluate(self, expr, env):
         if expr == None:
@@ -409,309 +828,365 @@ class Interpreter:
 
         t = self.nodeType(expr)
 
-        if t == "NUMBER" or t == "ANGKA" or t == "STRING" or t == "TEKS" or t == "BOOL":
-            return expr.value if hasattr(expr, "value") else expr.nilai
-        elif t == "NULL" or t == "KOSONG":
+        if t == "NUMBER" or t == "STRING" or t == "BOOL":
+            return expr.value
+        elif t == "NULL":
             return None
-        elif t == "IDENT" or t == "PENGENAL":
-            name = expr.name if hasattr(expr, "name") else expr.nama
-            return env.get(name)
-        elif t == "LIST" or t == "LARIK":
+        elif t == "IDENT":
+            if expr.name == "super":
+                return {"isSuperProxy": True, "self": env.get("self"), "fromClass": env.get("__kelasAktif__")}
+            return env.get(expr.name)
+        elif t == "LIST":
             res = []
-            elements = expr.elements if hasattr(expr, "elements") else expr.elemen
-            for el in elements:
+            for el in expr.elements:
                 res.append(self.evaluate(el, env))
             return res
-        elif t == "MAP" or t == "PETA":
+        elif t == "MAP":
             res = {}
-            keys = expr.keys if hasattr(expr, "keys") else expr.kunci
-            values = expr.values if hasattr(expr, "values") else expr.nilai
-            m = panjang(keys)
             idx = 0
-            while idx < m:
-                k = keys[idx]
-                v = self.evaluate(values[idx], env)
-                res[k] = v
-                idx = idx + 1
+            for k in expr.keys:
+                key = k
+                if tipe(k) == "objek" or hasattr(k, "type"):
+                    key = self.evaluate(k, env)
+                res[key] = self.evaluate(expr.values[idx], env)
+                idx += 1
             return res
-        elif t == "BINARY" or t == "BINER":
+        elif t == "COMP":
+            return self.evalComp(expr, env)
+        elif t == "BINARY":
             op = expr.op
-            leftExpr = expr.left if hasattr(expr, "left") else expr.kiri
-            rightExpr = expr.right if hasattr(expr, "right") else expr.kanan
-
-            if op == "atau" or op == "or":
-                k = self.evaluate(leftExpr, env)
+            if op == "or":
+                k = self.evaluate(expr.left, env)
                 if self.isTruthy(k):
                     return k
-                return self.evaluate(rightExpr, env)
-            if op == "dan" or op == "and":
-                k = self.evaluate(leftExpr, env)
+                return self.evaluate(expr.right, env)
+            if op == "and":
+                k = self.evaluate(expr.left, env)
                 if not self.isTruthy(k):
                     return k
-                return self.evaluate(rightExpr, env)
-
-            leftVal = self.evaluate(leftExpr, env)
-            rightVal = self.evaluate(rightExpr, env)
-
-            return self.binaryValue(op, leftVal, rightVal)
-        elif t == "TERNARY" or t == "TERNER":
-            condExpr = expr.condition if hasattr(expr, "condition") else expr.kondisi
-            if self.isTruthy(self.evaluate(condExpr, env)):
+                return self.evaluate(expr.right, env)
+            return self.binaryValue(op, self.evaluate(expr.left, env), self.evaluate(expr.right, env))
+        elif t == "TERNARY":
+            if self.isTruthy(self.evaluate(expr.condition, env)):
                 return self.evaluate(expr.thenVal, env)
             return self.evaluate(expr.elseVal, env)
         elif t == "LAMBDA":
-            body = expr.body if hasattr(expr, "body") else expr.badan
-            return UserFunction("lambda", expr.params, body, env)
-        elif t == "UNARY" or t == "UNER":
+            return self.makeFunction("lambda", expr.params, expr.body, expr.defaults, env, expr.restName, expr.kwName)
+        elif t == "UNARY":
             val = self.evaluate(expr.operand, env)
             if expr.op == "-":
                 return -val
-            elif expr.op == "!" or expr.op == "bukan" or expr.op == "not":
+            elif expr.op == "not":
                 return not self.isTruthy(val)
             elif expr.op == "~":
                 return ~val
             return val
-        elif t == "CALL" or t == "PANGGIL":
-            calleeType = self.nodeType(expr.callee)
-            if calleeType == "IDENT" and (expr.callee.name == "super" or expr.callee.name == "induk") and len(expr.args) == 0:
-                selfVal = env.get("self")
-                ownerClass = env.get("__kelasAktif__")
-                return {"isSuperProxy": True, "self": selfVal, "fromClass": ownerClass}
-
-            fnTarget = self.evaluate(expr.callee, env)
-            args = []
-            for a in expr.args:
-                args.append(self.evaluate(a, env))
-
-            if hasattr(fnTarget, "isFunction"):
-                return self.callUserFunction(fnTarget, args)
-
-            if tipe(fnTarget) == "peta" and "isClass" in fnTarget:
-                instance = {"isInstance": True, "class": fnTarget, "fields": {}}
-                found = self.resolveMethodChain(fnTarget, "constructor", env)
-                ctor = found[0]
-                definingClass = found[1]
-                if ctor != None:
-                    lk = Scope(ctor.closure)
-                    lk.define("self", instance)
-                    lk.define("ini", instance)
-                    lk.define("__kelasAktif__", definingClass)
-                    nP = panjang(ctor.params)
-                    nA = panjang(args)
-                    idx = 0
-                    while idx < nP:
-                        pName = ctor.params[idx]
-                        if pName != "self" and pName != "ini":
-                            argIdx = idx
-                            if "self" in ctor.params or "ini" in ctor.params:
-                                argIdx = idx - 1
-                            val = None
-                            if argIdx >= 0 and argIdx < nA:
-                                val = args[argIdx]
-                            elif pName in ctor.defaults:
-                                val = self.evaluate(ctor.defaults[pName], lk)
-                            lk.define(pName, val)
-                        idx = idx + 1
-                    self.execute(ctor.body, lk)
-                return instance
-
-            if tipe(fnTarget) == "peta" and "isBoundMethod" in fnTarget:
-                m = fnTarget["method"]
-                inst = fnTarget["instance"]
-                lk = Scope(m.closure)
-                lk.define("self", inst)
-                lk.define("ini", inst)
-                lk.define("__kelasAktif__", fnTarget["definingClass"] if "definingClass" in fnTarget else None)
-                nP = panjang(m.params)
-                nA = panjang(args)
-                idx = 0
-                while idx < nP:
-                    pName = m.params[idx]
-                    if pName != "self" and pName != "ini":
-                        argIdx = idx
-                        if "self" in m.params or "ini" in m.params:
-                            argIdx = idx - 1
-                        val = None
-                        if argIdx >= 0 and argIdx < nA:
-                            val = args[argIdx]
-                        elif pName in m.defaults:
-                            val = self.evaluate(m.defaults[pName], lk)
-                        lk.define(pName, val)
-                    idx = idx + 1
-                try:
-                    self.execute(m.body, lk)
-                except sig:
-                    if hasattr(sig, "isReturn"):
-                        return sig.val
-                    raise sig
-                return None
-
-            if hasattr(fnTarget, "__call__"):
-                callFn = getattr(fnTarget, "__call__")
-                args = self.wrapHostArgs(args)
-                nA = panjang(args)
-                if nA == 0:
-                    return callFn()
-                elif nA == 1:
-                    return callFn(args[0])
-                elif nA == 2:
-                    return callFn(args[0], args[1])
-                elif nA == 3:
-                    return callFn(args[0], args[1], args[2])
-                elif nA == 4:
-                    return callFn(args[0], args[1], args[2], args[3])
-                elif nA == 5:
-                    return callFn(args[0], args[1], args[2], args[3], args[4])
-                return callFn(*args)
-
-            isCallableObj = callable(fnTarget)
-            if not isCallableObj and hasattr(fnTarget, "tipe"):
-                tVal = getattr(fnTarget, "tipe")
-                isCallableObj = (tVal == "fungsi" or tVal == "func" or tVal == "function")
-            if isCallableObj:
-                args = self.wrapHostArgs(args)
-                nA = panjang(args)
-                if nA == 0:
-                    return fnTarget()
-                elif nA == 1:
-                    return fnTarget(args[0])
-                elif nA == 2:
-                    return fnTarget(args[0], args[1])
-                elif nA == 3:
-                    return fnTarget(args[0], args[1], args[2])
-                elif nA == 4:
-                    return fnTarget(args[0], args[1], args[2], args[3])
-                elif nA == 5:
-                    return fnTarget(args[0], args[1], args[2], args[3], args[4])
-                return fnTarget(*args)
-
-            print("RuntimeError: Object is not callable")
-            sys.exit(1)
-            return None
+        elif t == "CALL":
+            return self.evalCall(expr, env)
         elif t == "MEMBER":
-            target = self.evaluate(expr.target, env)
-            name = expr.name if hasattr(expr, "name") else expr.nama
-            if tipe(target) == "peta" and "isSuperProxy" in target:
-                ownerClass = target["fromClass"]
-                parentName = ownerClass["parent"] if ownerClass != None else None
-                parentClass = env.get(parentName) if parentName != None else None
-                if parentClass != None:
-                    found = self.resolveMethodChain(parentClass, name, env)
-                    if found[0] != None:
-                        return {"isBoundMethod": True, "instance": target["self"], "method": found[0], "definingClass": found[1]}
-                print("RuntimeError: super has no method '" + str(name) + "'")
-                sys.exit(1)
-            if tipe(target) == "peta" and "isInstance" in target:
-                if name in target["fields"]:
-                    return target["fields"][name]
-                found = self.resolveMethodChain(target["class"], name, env)
-                if found[0] != None:
-                    return {"isBoundMethod": True, "instance": target, "method": found[0], "definingClass": found[1]}
-            if tipe(target) == "peta" or tipe(target) == "dict":
-                if name in target and callable(target[name]):
-                    return target[name]
-                if name == "get" or name == "ambil":
-                    return lambda k, d = None: target[k] if k in target else d
-                elif name == "keys" or name == "kunci":
-                    return lambda: list(target.keys())
-                elif name == "values" or name == "nilai":
-                    return lambda: list(target.values())
-                elif name == "items":
-                    return lambda: list(target.items())
-                elif name in target:
-                    return target[name]
-            if tipe(target) == "teks" or tipe(target) == "string":
-                if name == "isdigit":
-                    return lambda: target.isdigit()
-                elif name == "isalpha":
-                    return lambda: target.isalpha()
-                elif name == "isalnum":
-                    return lambda: target.isalnum()
-                elif name == "startswith":
-                    return lambda p: target.startswith(p)
-                elif name == "endswith":
-                    return lambda p: target.endswith(p)
-                elif name == "find":
-                    return makeStrFind(target)
-                elif name == "join":
-                    return lambda items: gabung(items, target)
-                elif name == "strip":
-                    return lambda: target.strip()
-                elif name == "lower":
-                    return lambda: target.lower()
-                elif name == "upper":
-                    return lambda: target.upper()
-                elif name == "split":
-                    return lambda sep: target.split(sep)
-            if tipe(target) == "larik" or tipe(target) == "list":
-                if name == "append":
-                    return lambda x: target.append(x)
-                elif name == "pop":
-                    return lambda: target.pop()
-            if hasattr(target, name):
-                return getattr(target, name)
-            return None
+            return self.getMember(self.evaluate(expr.target, env), expr.name, env)
         elif t == "INDEX":
             target = self.evaluate(expr.target, env)
             idx = self.evaluate(expr.index, env)
-            if (tipe(target) == "peta" or tipe(target) == "dict") and "isRange" in target:
-                start = target["start"]
-                stop = target["stop"]
-                step = target["step"]
-                val = start + idx * step
-                if (step > 0 and (val < start or val >= stop)) or (step < 0 and (val > start or val <= stop)):
-                    lempar "index out of range"
-                return val
-            return target[idx]
-        elif t == "SLICE" or t == "IRISAN":
+            return self.indexValue(target, idx)
+        elif t == "SLICE":
             target = self.evaluate(expr.target, env)
-            s = 0
-            e = panjang(target)
-            startExpr = expr.start if hasattr(expr, "start") else expr.awal
-            stopExpr = expr.stop if hasattr(expr, "stop") else expr.sampai
-            if startExpr != None:
-                s = self.evaluate(startExpr, env)
-            if stopExpr != None:
-                e = self.evaluate(stopExpr, env)
+            s = None
+            e = None
+            step = None
+            if expr.start != None:
+                s = self.evaluate(expr.start, env)
+            if expr.stop != None:
+                e = self.evaluate(expr.stop, env)
+            if expr.step != None:
+                step = self.evaluate(expr.step, env)
+            if isRange(target):
+                target = nusaList(target)
+            return self.sliceValue(target, s, e, step)
+        elif t == "ASSIGN":
+            return self.evalAssign(expr, env)
+        return None
+
+    func sliceValue(self, target, s, e, step):
+        if step == None:
+            if s == None and e == None:
+                return target[0:len(target)]
+            if s == None:
+                return target[:e]
+            if e == None:
+                return target[s:]
             return target[s:e]
-        elif t == "ASSIGN" or t == "TUGAS":
-            valExpr = expr.value if hasattr(expr, "value") else expr.nilai
-            val = self.evaluate(valExpr, env)
-            targetType = self.nodeType(expr.target)
-            compound = expr.op != "="
-            baseOp = expr.op[:len(expr.op) - 1]
+        if step == 0:
+            rtError("slice step nggak boleh nol")
+        n = len(target)
+        if step > 0:
+            lo = 0 if s == None else s
+            hi = n if e == None else e
+            if lo < 0:
+                lo = max(lo + n, 0)
+            if hi < 0:
+                hi = max(hi + n, 0)
+            hi = min(hi, n)
+            idxs = range(lo, hi, step)
+        else:
+            lo = n - 1 if s == None else s
+            hi = -1 if e == None else e
+            if s != None and lo < 0:
+                lo = lo + n
+            if e != None and hi < 0:
+                hi = hi + n
+            lo = min(lo, n - 1)
+            idxs = range(lo, hi, step)
+        parts = []
+        for i in idxs:
+            parts.append(target[i])
+        if tipe(target) == "teks":
+            return gabung(parts, "")
+        return parts
 
-            if targetType == "IDENT" or targetType == "PENGENAL":
-                name = expr.target.name if hasattr(expr.target, "name") else expr.target.nama
-                if compound:
-                    val = self.binaryValue(baseOp, env.get(name), val)
-                env.set(name, val)
-                return val
-            elif targetType == "INDEX":
-                t = self.evaluate(expr.target.target, env)
-                idx = self.evaluate(expr.target.index, env)
-                if compound:
-                    val = self.binaryValue(baseOp, t[idx], val)
-                t[idx] = val
-                return val
-            elif targetType == "MEMBER":
-                obj = self.evaluate(expr.target.target, env)
-                mName = expr.target.name if hasattr(expr.target, "name") else expr.target.nama
-                if tipe(obj) == "peta" and "isInstance" in obj:
-                    if compound:
-                        val = self.binaryValue(baseOp, obj["fields"][mName], val)
-                    obj["fields"][mName] = val
-                    return val
-                elif tipe(obj) == "peta":
-                    if compound:
-                        val = self.binaryValue(baseOp, obj[mName], val)
-                    obj[mName] = val
-                    return val
-
-            print("RuntimeError: Invalid assignment target")
-            sys.exit(1)
+    func indexValue(self, target, idx):
+        if isRange(target):
+            val = target["start"] + idx * target["step"]
+            if idx < 0 or idx >= rangeCount(target):
+                rtError("index out of range")
+            return val
+        tt = tipe(target)
+        if tt == "peta":
+            if isInstance(target) or isClass(target):
+                return self.getMember(target, idx, self.globalScope)
+            if idx in target:
+                return target[idx]
             return None
+        if tt == "larik" or tt == "teks":
+            n = len(target)
+            if tipe(idx) != "angka":
+                rtError("index harus angka")
+            if idx < -n or idx >= n:
+                rtError("Index larik di luar batas: " + str(idx))
+            return target[idx]
+        rtError("Tipe '" + tt + "' nggak bisa di-index pakai []")
 
+    func evalAssign(self, expr, env):
+        val = self.evaluate(expr.value, env)
+        target = expr.target
+        compound = expr.op != "="
+        baseOp = expr.op[:len(expr.op) - 1]
+        tt = self.nodeType(target)
+        if tt == "IDENT":
+            if compound:
+                val = self.binaryValue(baseOp, env.get(target.name), val)
+            env.set(target.name, val)
+            return val
+        elif tt == "INDEX":
+            obj = self.evaluate(target.target, env)
+            idx = self.evaluate(target.index, env)
+            if compound:
+                val = self.binaryValue(baseOp, self.indexValue(obj, idx), val)
+            if tipe(obj) == "larik":
+                n = len(obj)
+                if idx < -n or idx >= n:
+                    rtError("Index larik di luar batas: " + str(idx))
+            elif tipe(obj) != "peta":
+                rtError("Tipe '" + tipe(obj) + "' nggak bisa diisi pakai []")
+            obj[idx] = val
+            return val
+        elif tt == "MEMBER":
+            obj = self.evaluate(target.target, env)
+            if compound:
+                val = self.binaryValue(baseOp, self.getMember(obj, target.name, env), val)
+            self.setMember(obj, target.name, val)
+            return val
+        rtError("Invalid assignment target")
+
+    func evalCall(self, expr, env):
+        fnTarget = self.evaluate(expr.callee, env)
+        args = []
+        kw = {}
+        for a in expr.args:
+            if self.nodeType(a) == "SPREAD":
+                spread = self.evaluate(a.value, env)
+                if a.isKw:
+                    for key in spread:
+                        kw[key] = spread[key]
+                else:
+                    for item in nusaList(spread):
+                        args.append(item)
+            else:
+                args.append(self.evaluate(a, env))
+        k = 0
+        for name in expr.kwNames:
+            kw[name] = self.evaluate(expr.kwValues[k], env)
+            k += 1
+        return self.callValue(fnTarget, args, kw)
+
+    func callValue(self, fnTarget, args, kw):
+        if hasattr(fnTarget, "isFunction"):
+            return self.callUserFunction(fnTarget, args, kw)
+
+        if isClass(fnTarget):
+            return self.instantiate(fnTarget, args, kw)
+
+        if tipe(fnTarget) == "peta" and "isBoundMethod" in fnTarget:
+            return self.callMethod(fnTarget["instance"], [fnTarget["method"], fnTarget["definingClass"]], args, kw)
+
+        if len(kw) > 0:
+            rtError("argumen bernama belum didukung untuk fungsi bawaan")
+
+        ft = str(tipe(fnTarget))
+        isCallableObj = callable(fnTarget) or ft == "kelas" or ft == "BoundMethod"
+        if isCallableObj:
+            args = self.wrapHostArgs(args)
+            nA = len(args)
+            if nA == 0:
+                return fnTarget()
+            elif nA == 1:
+                return fnTarget(args[0])
+            elif nA == 2:
+                return fnTarget(args[0], args[1])
+            elif nA == 3:
+                return fnTarget(args[0], args[1], args[2])
+            elif nA == 4:
+                return fnTarget(args[0], args[1], args[2], args[3])
+            elif nA == 5:
+                return fnTarget(args[0], args[1], args[2], args[3], args[4])
+            return fnTarget(*args)
+
+        rtError("value is not callable: " + self.show(fnTarget, False))
+
+    func getMember(self, target, name, env):
+        tt = tipe(target)
+        if tt == "peta":
+            if "isSuperProxy" in target:
+                ownerClass = target["fromClass"]
+                parentName = ownerClass["parent"] if ownerClass != None else None
+                parentClass = self.globalScope.get(parentName) if parentName != None else None
+                if parentClass != None:
+                    found = self.findMethod(parentClass, name)
+                    if found[0] != None:
+                        return {"isBoundMethod": True, "instance": target["self"], "method": found[0], "definingClass": found[1]}
+                rtError("super has no method '" + str(name) + "'")
+            if "isInstance" in target:
+                fields = target["fields"]
+                if name in fields:
+                    return fields[name]
+                found = self.findMethod(target["class"], name)
+                if found[0] != None:
+                    return {"isBoundMethod": True, "instance": target, "method": found[0], "definingClass": found[1]}
+                attr = self.findAttr(target["class"], name)
+                if attr[0]:
+                    return attr[1]
+                return None
+            if "isClass" in target:
+                attr = self.findAttr(target, name)
+                if attr[0]:
+                    return attr[1]
+                found = self.findMethod(target, name)
+                if found[0] != None:
+                    return found[0]
+                return None
+            return self.mapMember(target, name)
+        if tt == "teks":
+            return self.textMember(target, name)
+        if tt == "larik":
+            return self.listMember(target, name)
+        if hasattr(target, name):
+            val = getattr(target, name)
+            if str(tipe(val)) == "BoundMethod":
+                return makeMethodCaller(target, name)
+            return val
+        return None
+
+    func mapMember(self, target, name):
+        if name == "get" or name == "ambil":
+            return lambda k, d = None: target[k] if k in target else d
+        elif name == "keys" or name == "kunci":
+            return lambda: list(target.keys())
+        elif name == "values" or name == "nilai":
+            return lambda: list(target.values())
+        elif name == "items":
+            return lambda: list(target.items())
+        elif name == "pop":
+            return lambda k, d = None: mapPop(target, k, d)
+        elif name == "update":
+            return lambda other: self.mapUpdate(target, other)
+        elif name == "setdefault":
+            return lambda k, d = None: self.mapSetDefault(target, k, d)
+        elif name == "copy":
+            return lambda: self.mapCopy(target)
+        elif name in target:
+            return target[name]
+        return None
+
+    func mapUpdate(self, target, other):
+        for k in other:
+            target[k] = other[k]
+        return None
+
+    func mapSetDefault(self, target, k, d):
+        if not (k in target):
+            target[k] = d
+        return target[k]
+
+    func mapCopy(self, target):
+        res = {}
+        for k in target:
+            res[k] = target[k]
+        return res
+
+    func textMember(self, target, name):
+        if name == "isdigit":
+            return lambda: target.isdigit()
+        elif name == "isalpha":
+            return lambda: target.isalpha()
+        elif name == "isalnum":
+            return lambda: target.isalnum()
+        elif name == "startswith":
+            return lambda p: target.startswith(p)
+        elif name == "endswith":
+            return lambda p: target.endswith(p)
+        elif name == "find":
+            return makeStrFind(target)
+        elif name == "join":
+            return lambda items: gabung(items, target)
+        elif name == "strip":
+            return lambda: target.strip()
+        elif name == "lstrip":
+            return lambda: padLeft(target)
+        elif name == "rstrip":
+            return lambda: padRight(target)
+        elif name == "lower":
+            return lambda: target.lower()
+        elif name == "upper":
+            return lambda: target.upper()
+        elif name == "split":
+            return lambda sep: target.split(sep)
+        elif name == "replace":
+            return lambda old, new: replaceText(target, old, new)
+        elif name == "count":
+            return lambda sub: countText(target, sub)
+        return None
+
+    func listMember(self, target, name):
+        if name == "append" or name == "push":
+            return lambda x: target.append(x)
+        elif name == "pop":
+            return lambda: target.pop()
+        elif name == "sort":
+            return lambda reverse = False: sortList(target, reverse)
+        elif name == "insert":
+            return lambda i, x: listInsert(target, i, x)
+        elif name == "index":
+            return lambda x: listIndex(target, x)
+        elif name == "remove":
+            return lambda x: listRemove(target, x)
+        elif name == "reverse":
+            return lambda: listReverse(target)
+        elif name == "extend":
+            return lambda more: listExtend(target, more)
+        elif name == "count":
+            return lambda x: len([v for v in target if v == x])
+        elif name == "copy":
+            return lambda: target[0:len(target)]
         return None
 
     func binaryValue(self, op, leftVal, rightVal):
@@ -720,24 +1195,23 @@ class Interpreter:
         elif op == "-":
             return leftVal - rightVal
         elif op == "*":
-            if (tipe(leftVal) == "teks" or tipe(leftVal) == "string") and tipe(rightVal) == "angka":
-                r = ""
-                cnt = int(rightVal)
-                while cnt > 0:
-                    r = r + leftVal
-                    cnt = cnt - 1
-                return r
+            if (tipe(leftVal) == "teks" or tipe(leftVal) == "larik") and tipe(rightVal) == "angka":
+                return leftVal * rightVal
             return leftVal * rightVal
         elif op == "/":
             if rightVal == 0:
-                divZero = {"pesan": "division by zero"}
-                lempar divZero
+                rtError("division by zero")
             return leftVal / rightVal
+        elif op == "//":
+            if rightVal == 0:
+                rtError("division by zero")
+            return leftVal // rightVal
         elif op == "%":
             if rightVal == 0:
-                divZero = {"pesan": "division by zero"}
-                lempar divZero
+                rtError("division by zero")
             return leftVal % rightVal
+        elif op == "**":
+            return leftVal ** rightVal
         elif op == "==":
             return leftVal == rightVal
         elif op == "!=":
@@ -760,33 +1234,13 @@ class Interpreter:
             return leftVal << rightVal
         elif op == ">>":
             return leftVal >> rightVal
-        elif op == "in" or op == "dalam":
-            if tipe(rightVal) == "peta" or tipe(rightVal) == "larik" or tipe(rightVal) == "teks" or tipe(rightVal) == "string":
+        elif op == "in":
+            if isRange(rightVal):
+                rightVal = nusaList(rightVal)
+            rt = tipe(rightVal)
+            if rt == "peta" or rt == "larik" or rt == "teks":
                 return leftVal in rightVal
             return False
-        return None
-
-    func callUserFunction(self, fnTarget, args):
-        fnScope = Scope(fnTarget.closure)
-        nParams = panjang(fnTarget.params)
-        nArgs = panjang(args)
-        i = 0
-        while i < nParams:
-            pName = fnTarget.params[i]
-            if i < nArgs:
-                fnScope.define(pName, args[i])
-            elif pName in fnTarget.defaults:
-                fnScope.define(pName, self.evaluate(fnTarget.defaults[pName], fnScope))
-            else:
-                fnScope.define(pName, None)
-            i = i + 1
-
-        try:
-            self.execute(fnTarget.body, fnScope)
-        except sig:
-            if hasattr(sig, "isReturn"):
-                return sig.val
-            raise sig
         return None
 
     func wrapHostArgs(self, args):
@@ -794,11 +1248,23 @@ class Interpreter:
         for a in args:
             if hasattr(a, "isFunction"):
                 wrapped.append(makeHostCallback(self, a))
+            elif tipe(a) == "peta" and "isBoundMethod" in a:
+                wrapped.append(self.boundCallback(a))
             else:
                 wrapped.append(a)
         return wrapped
 
-    func isTruthy(self, val):
-        if val == None or val == False or val == 0 or val == "":
-            return False
-        return True
+    func boundCallback(self, bound):
+        interp = self
+        func callback(a = HOSTNOARG, b = HOSTNOARG, c = HOSTNOARG, d = HOSTNOARG):
+            items = []
+            if a != HOSTNOARG:
+                items.append(a)
+            if b != HOSTNOARG:
+                items.append(b)
+            if c != HOSTNOARG:
+                items.append(c)
+            if d != HOSTNOARG:
+                items.append(d)
+            return interp.callValue(bound, items, {})
+        return callback

@@ -24,6 +24,9 @@ func getModuleCandidates(name):
             candidates.append(n[3:] + ".ns")
     prefixes = [
         "std/",
+        "crypto/",
+        "net/",
+        "media/",
         "core/",
         "core/virtual/",
         "core/interpreter/",
@@ -41,6 +44,11 @@ func getModuleCandidates(name):
     for p in prefixes:
         for n in names:
             candidates.append(p + n + ".ns")
+    home = ambil_env("NUSA_HOME")
+    if home != None and home != "":
+        for p in prefixes:
+            for n in names:
+                candidates.append(home + "/" + p + n + ".ns")
     return candidates
 
 func resolveModulePath(name, fileExistsFn = None):

@@ -50,10 +50,12 @@ class UnaryExpr:
         self.jenis = "UNER"
 
 class CallExpr:
-    func __init__(self, callee, args):
+    func __init__(self, callee, args, kwNames = None, kwValues = None):
         self.type = "CALL"
         self.callee = callee
         self.args = args
+        self.kwNames = kwNames if kwNames != None else []
+        self.kwValues = kwValues if kwValues != None else []
         self.jenis = "PANGGIL"
 
 class IndexExpr:
@@ -64,11 +66,12 @@ class IndexExpr:
         self.jenis = "INDEX"
 
 class SliceExpr:
-    func __init__(self, target, start, stop):
+    func __init__(self, target, start, stop, step = None):
         self.type = "SLICE"
         self.target = target
         self.start = start
         self.stop = stop
+        self.step = step
         self.jenis = "IRISAN"
         self.awal = start
         self.sampai = stop
@@ -116,10 +119,13 @@ class TernaryExpr:
         self.kondisi = condition
 
 class LambdaExpr:
-    func __init__(self, params, body):
+    func __init__(self, params, body, defaults = None, restName = None, kwName = None):
         self.type = "LAMBDA"
+        self.restName = restName
+        self.kwName = kwName
         self.params = params
         self.body = body
+        self.defaults = defaults if defaults != None else {}
         self.jenis = "LAMBDA"
         self.badan = body
 
@@ -138,9 +144,18 @@ class VarStmt:
         self.nama = name
         self.nilai = value
 
+class SpreadExpr:
+    func __init__(self, value, isKw):
+        self.type = "SPREAD"
+        self.value = value
+        self.isKw = isKw
+        self.jenis = "SEBAR"
+
 class FuncStmt:
-    func __init__(self, name, params, body, defaults = None):
+    func __init__(self, name, params, body, defaults = None, restName = None, kwName = None):
         self.type = "FUNC"
+        self.restName = restName
+        self.kwName = kwName
         self.name = name
         self.params = params
         self.body = body
@@ -183,8 +198,10 @@ class ForStmt:
         self.badan = body
 
 class ForInStmt:
-    func __init__(self, variable, iterable, body):
+    func __init__(self, variable, iterable, body, targets = None, declared = False):
         self.type = "FOR_IN"
+        self.targets = targets if targets != None else [variable]
+        self.declared = declared
         self.variable = variable
         self.iterable = iterable
         self.body = body
@@ -236,9 +253,41 @@ class ExprStmt:
         self.expr = expr
         self.jenis = "EKSPRESI"
 
+class CompExpr:
+    func __init__(self, element, value, isDict, clauses):
+        self.type = "COMP"
+        self.element = element
+        self.value = value
+        self.isDict = isDict
+        self.clauses = clauses
+        self.jenis = "KOMPREHENSI"
+
+class TupleAssignStmt:
+    func __init__(self, targets, value, isLiteral):
+        self.type = "TUPLE_ASSIGN"
+        self.targets = targets
+        self.value = value
+        self.isLiteral = isLiteral
+        self.jenis = "TUGAS_BERUNTUN"
+
+class StructStmt:
+    func __init__(self, name, fields):
+        self.type = "STRUCT"
+        self.name = name
+        self.fields = fields
+        self.jenis = "BENTUK"
+
+class EnumStmt:
+    func __init__(self, name, variants):
+        self.type = "ENUM"
+        self.name = name
+        self.variants = variants
+        self.jenis = "JENIS"
+
 class ClassStmt:
-    func __init__(self, name, baseClass, methods):
+    func __init__(self, name, baseClass, methods, attrs = None):
         self.type = "CLASS"
+        self.attrs = attrs if attrs != None else []
         self.name = name
         self.baseClass = baseClass
         self.methods = methods

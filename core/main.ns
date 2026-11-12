@@ -121,6 +121,8 @@ func guarded(fn):
     try:
         return fn()
     except e:
+        if tipe(e) == "peta" and "pesan" in e:
+            fail("error: " + str(e["pesan"]))
         fail(str(e))
 
 func findModule(name):

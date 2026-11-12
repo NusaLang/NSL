@@ -24,6 +24,9 @@ rtFailPrint:
     mov rax, 231
     mov rdi, 1
     syscall
+rtStackOverflow:
+    lea rdi, [strStackOverflow]
+    jmp rtFail
 rtThrow:
     mov r11, [excTop]
     test r11, r11
