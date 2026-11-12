@@ -51,12 +51,13 @@ ThrowStmt = astModule.ThrowStmt
 ExprStmt = astModule.ExprStmt
 ClassStmt = astModule.ClassStmt
 TupleAssignStmt = astModule.TupleAssignStmt
+WithStmt = astModule.WithStmt
 StructStmt = astModule.StructStmt
 EnumStmt = astModule.EnumStmt
 
 # Words the full language gives a meaning this parser does not implement. A file
 # using one is refused, so it runs on the engine instead of being compiled wrong.
-UNSUPPORTEDWORDS = ["yield", "with", "dengan", "match", "case"]
+UNSUPPORTEDWORDS = ["yield", "match", "case"]
 
 class Parser:
     func __init__(self, tokens):
@@ -166,6 +167,9 @@ class Parser:
             return self.parseFromImport(tok)
         if t == TokenType.AT:
             return self.parseDecorated()
+        if t == TokenType.IDENT and (tok.text == "with" or tok.text == "dengan") and self.peek(1).type != TokenType.ASSIGN and self.peek(1).type != TokenType.DOT and self.peek(1).type != TokenType.LPAREN:
+            self.advance()
+            return self.parseWith()
         if t == TokenType.IDENT and (tok.text in UNSUPPORTEDWORDS):
             nxt = self.peek(1).type
             if nxt == TokenType.IDENT or nxt == TokenType.STRING or nxt == TokenType.NUMBER or nxt == TokenType.LBRACKET or nxt == TokenType.THIS:
@@ -280,6 +284,20 @@ class Parser:
             self.pending.append(stmts[k])
             k += 1
         return stmts[0]
+
+    func parseWith(self):
+        items = []
+        while True:
+            expr = self.parseExpr()
+            name = None
+            if self.isWord(self.peek(0), "as", "sbg"):
+                self.advance()
+                name = self.expect(TokenType.IDENT, "Nama diharapkan setelah 'as'").text
+            items.append([expr, name])
+            if self.match(TokenType.COMMA) == None:
+                break
+        body = self.parseBlock()
+        return WithStmt(items, body)
 
     func parseDecorated(self):
         decorators = []
@@ -410,11 +428,28 @@ class Parser:
                 self.advance()
                 self.match(TokenType.SEMICOLON)
                 continue
+            kind = ""
+            while tok.type == TokenType.AT:
+                self.advance()
+                dec = self.parseExpr()
+                self.expectEnd("';' diharapkan setelah dekorator")
+                if dec.type == "IDENT" and dec.name == "staticmethod":
+                    kind = "static"
+                elif dec.type == "IDENT" and dec.name == "classmethod":
+                    kind = "class"
+                elif dec.type == "IDENT" and dec.name == "property":
+                    kind = "property"
+                elif dec.type == "MEMBER" and dec.name == "setter" and dec.target.type == "IDENT":
+                    kind = "setter:" + dec.target.name
+                else:
+                    self.fail("dekorator metode kelas ini belum didukung")
+                tok = self.peek(0)
             if tok.type != TokenType.FUNC:
                 self.fail("Cuma deklarasi fungsi yang boleh di dalam kelas")
             self.advance()
             m = self.parseFunction()
             self.at(m, tok)
+            m.kind = kind
             methods.append(m)
         self.expect(TokenType.RBRACE, "'}' diharapkan setelah isi kelas")
         return ClassStmt(nameTok.text, baseName, methods, attrs)
@@ -614,21 +649,28 @@ class Parser:
                 args.append(self.parseExpr())
             self.expectEnd("';' diharapkan setelah 'assert'")
             return ExprStmt(self.at(CallExpr(self.at(IdentExpr("_assert"), tok), args), tok))
-        if tok.type == TokenType.STAR:
-            self.fail("penugasan beruntun dengan '*' belum didukung kompiler")
+        starFirst = False
+        if tok.type == TokenType.STAR and nxt.type == TokenType.IDENT:
+            self.advance()
+            starFirst = True
         expr = self.parseExpr()
         if self.check(TokenType.COMMA) and (expr.type == "IDENT" or expr.type == "INDEX" or expr.type == "MEMBER"):
-            return self.parseTupleAssign(expr, tok)
+            return self.parseTupleAssign(expr, tok, 0 if starFirst else -1)
+        if starFirst:
+            self.fail("'*' di kiri penugasan butuh daftar variabel")
         self.expectEnd("';' diharapkan setelah ekspresi")
         return ExprStmt(expr)
 
-    func parseTupleAssign(self, first, startTok):
+    func parseTupleAssign(self, first, startTok, starIndex):
         targets = [first]
         while self.match(TokenType.COMMA) != None:
             if self.check(TokenType.ASSIGN):
                 break
             if self.check(TokenType.STAR):
-                self.fail("penugasan beruntun dengan '*' belum didukung kompiler")
+                if starIndex >= 0:
+                    self.fail("hanya satu '*' boleh di kiri penugasan")
+                self.advance()
+                starIndex = len(targets)
             targets.append(self.parseOr())
         self.expect(TokenType.ASSIGN, "'=' diharapkan pada penugasan beruntun")
         rhs = [self.parseAssign()]
@@ -645,7 +687,7 @@ class Parser:
         value = rhs[0]
         if isLiteral:
             value = self.at(ListExpr(rhs), startTok)
-        return TupleAssignStmt(targets, value, isLiteral)
+        return TupleAssignStmt(targets, value, isLiteral, starIndex)
 
     func parseExpr(self):
         return self.parseAssign()

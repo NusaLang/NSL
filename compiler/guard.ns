@@ -476,12 +476,18 @@ class Prep:
             if len(s.attrs) > 0:
                 unsupported("atribut kelas")
             for m in s.methods:
+                if hasattr(m, "kind") and m.kind != "":
+                    unsupported("metode static/class/property")
+                if m.name.startswith("__") and m.name.endswith("__") and m.name != "__init__" and m.name != "__str__":
+                    unsupported("metode khusus " + m.name)
                 if self.arch == "arm64" and (m.name == "__str__" or m.name == "append" or m.name == "push" or m.name == "pop" or m.name == "get" or m.name == "ambil"):
                     unsupported("metode '" + m.name + "' belum didukung di ARM64")
                 self.lowerFunc(m, True)
             return s
         if t == "STRUCT" or t == "ENUM":
             unsupported("bentuk/jenis")
+        if t == "WITH":
+            unsupported("with")
         if t == "IF":
             s.condition = self.lowerExpr(s.condition, False)
             s.thenBranch = self.lowerStmt(s.thenBranch)
@@ -536,6 +542,8 @@ class Prep:
         return s
 
     func lowerTuple(self, s):
+        if s.starIndex >= 0:
+            unsupported("penugasan beruntun dengan '*'")
         n = len(s.targets)
         stmts = []
         if s.isLiteral:

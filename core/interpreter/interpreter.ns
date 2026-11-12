@@ -197,6 +197,12 @@ class StopIteration(Exception):
     pass
 """
 
+func newClass(name, parent):
+    return {"isClass": True, "name": name, "parent": parent, "methods": {}, "attrs": {}, "statics": {}, "classMethods": {}, "props": {}, "setters": {}}
+
+BINARYDUNDERS = {"+": "__add__", "-": "__sub__", "*": "__mul__", "/": "__truediv__", "//": "__floordiv__", "%": "__mod__", "**": "__pow__", "<": "__lt__", "<=": "__le__", ">": "__gt__", ">=": "__ge__", "&": "__and__", "|": "__or__", "^": "__xor__", "<<": "__lshift__", ">>": "__rshift__"}
+REFLECTEDDUNDERS = {"+": "__radd__", "-": "__rsub__", "*": "__rmul__", "/": "__rtruediv__", "//": "__rfloordiv__", "%": "__rmod__"}
+
 func isSignal(e):
     return hasattr(e, "isReturn") or hasattr(e, "isBreak") or hasattr(e, "isContinue")
 
@@ -596,8 +602,16 @@ class Interpreter:
         g.define("_assert", assertTrue)
         g.define("print", printer)
         g.define("cetak", printer)
-        g.define("len", nusaLen)
-        g.define("panjang", nusaLen)
+        func lengthOf(x):
+            if isInstance(x):
+                r = interp.callDunder(x, "__len__", [])
+                if r[0]:
+                    return r[1]
+                rtError("object has no length")
+            return nusaLen(x)
+
+        g.define("len", lengthOf)
+        g.define("panjang", lengthOf)
         g.define("str", toText)
         g.define("ke_teks", toText)
         g.define("int", nusaInt)
@@ -625,7 +639,10 @@ class Interpreter:
         g.define("filter", filter)
         g.define("any", any)
         g.define("all", all)
-        g.define("bool", bool)
+        func truthy(x):
+            return interp.isTruthy(x)
+
+        g.define("bool", truthy)
         g.define("reversed", reversed)
         g.define("isinstance", isInstanceOf)
         g.define("sleep", nusaSleep)
@@ -762,9 +779,11 @@ class Interpreter:
             return "[" + gabung(parts, ", ") + "]"
         if t == "peta":
             if "isInstance" in v:
-                found = self.findMethod(v["class"], "__str__")
+                found = self.findMethod(v["class"], "__str__" if top else "__repr__")
+                if found[0] == None:
+                    found = self.findMethod(v["class"], "__repr__" if top else "__str__")
                 if found[0] != None:
-                    return self.callMethod(v, found, [], {})
+                    return str(self.callMethod(v, found, [], {}))
                 return "<objek " + v["class"]["name"] + ">"
             if "isClass" in v:
                 return v["name"]
@@ -794,15 +813,19 @@ class Interpreter:
         return [None, None]
 
     func findAttr(self, clsObj, name):
+        found = self.findIn(clsObj, "attrs", name)
+        return [found[0], found[1]]
+
+    func findIn(self, clsObj, table, name):
         cur = clsObj
         while cur != None:
-            if name in cur["attrs"]:
-                return [True, cur["attrs"][name]]
+            if name in cur[table]:
+                return [True, cur[table][name], cur]
             parentName = cur["parent"]
             if parentName == None:
-                return [False, None]
+                return [False, None, None]
             cur = self.globalScope.get(parentName)
-        return [False, None]
+        return [False, None, None]
 
     func bindParams(self, fnObj, scope, args, kw):
         params = fnObj.params
@@ -924,14 +947,33 @@ class Interpreter:
         elif tt == "INDEX":
             obj = self.evaluate(target.target, env)
             idx = self.evaluate(target.index, env)
-            obj[idx] = val
+            self.storeIndex(obj, idx, val)
         elif tt == "MEMBER":
             self.setMember(self.evaluate(target.target, env), target.name, val)
         else:
             rtError("Target assignment nggak valid")
 
+    func storeIndex(self, obj, idx, val):
+        if isInstance(obj):
+            r = self.callDunder(obj, "__setitem__", [idx, val])
+            if r[0]:
+                return None
+        if tipe(obj) == "larik":
+            n = len(obj)
+            if idx < -n or idx >= n:
+                rtError("index out of range")
+        elif tipe(obj) != "peta":
+            rtError("Tipe '" + tipe(obj) + "' nggak bisa diisi pakai []")
+        obj[idx] = val
+
     func setMember(self, obj, name, val):
         if isInstance(obj):
+            setter = self.findIn(obj["class"], "setters", name)
+            if setter[0]:
+                self.callMethod(obj, [setter[1], setter[2]], [val], {})
+                return None
+            if self.findIn(obj["class"], "props", name)[0]:
+                rtError("property '" + name + "' has no setter")
             obj["fields"][name] = val
         elif isClass(obj):
             obj["attrs"][name] = val
@@ -994,6 +1036,8 @@ class Interpreter:
             return None
         elif t == "FOR_IN":
             collection = self.evaluate(stmt.iterable, env)
+            if isInstance(collection):
+                collection = self.instanceToList(collection)
             if isRange(collection):
                 start = collection["start"]
                 stop = collection["stop"]
@@ -1030,11 +1074,14 @@ class Interpreter:
             self.defineClass(stmt, env)
             return None
         elif t == "STRUCT":
-            env.define(stmt.name, {"isClass": True, "isStruct": True, "name": stmt.name, "parent": None, "methods": {}, "attrs": {}, "fields": stmt.fields})
+            structCls = newClass(stmt.name, None)
+            structCls["isStruct"] = True
+            structCls["fields"] = stmt.fields
+            env.define(stmt.name, structCls)
             return None
         elif t == "ENUM":
             members = {}
-            enumCls = {"isClass": True, "name": stmt.name, "parent": None, "methods": {}, "attrs": {}}
+            enumCls = newClass(stmt.name, None)
             idx = 0
             for variant in stmt.variants:
                 members[variant] = {"isInstance": True, "class": enumCls, "fields": {"name": variant, "value": idx}}
@@ -1044,7 +1091,22 @@ class Interpreter:
         elif t == "TUPLE_ASSIGN":
             val = self.evaluate(stmt.value, env)
             if not stmt.isLiteral:
-                val = nusaList(val)
+                val = self.toList(val)
+            if stmt.starIndex >= 0:
+                before = stmt.starIndex
+                after = len(stmt.targets) - 1 - before
+                if len(val) < before + after:
+                    rtError("tidak cukup nilai untuk dibongkar")
+                k = 0
+                for target in stmt.targets:
+                    if k < before:
+                        self.assignTo(target, val[k], env)
+                    elif k == before:
+                        self.assignTo(target, val[before:len(val) - after], env)
+                    else:
+                        self.assignTo(target, val[len(val) - (len(stmt.targets) - k)], env)
+                    k += 1
+                return None
             if len(val) != len(stmt.targets):
                 rtError("tidak bisa membongkar " + str(len(val)) + " nilai ke " + str(len(stmt.targets)) + " variabel")
             k = 0
@@ -1052,9 +1114,46 @@ class Interpreter:
                 self.assignTo(target, val[k], env)
                 k += 1
             return None
+        elif t == "WITH":
+            return self.executeWith(stmt, env, 0)
         elif t == "EXPR":
             return self.evaluate(stmt.expr, env)
         return None
+
+    func executeWith(self, stmt, env, level):
+        if level >= len(stmt.items):
+            self.execInline(stmt.body, Scope(env))
+            return None
+        item = stmt.items[level]
+        manager = self.evaluate(item[0], env)
+        entered = manager
+        if isInstance(manager):
+            r = self.callDunder(manager, "__enter__", [])
+            if r[0]:
+                entered = r[1]
+        scope = Scope(env)
+        if item[1] != None:
+            scope.define(item[1], entered)
+        try:
+            self.executeWith(stmt, scope, level + 1)
+        except e:
+            if isSignal(e):
+                self.leaveWith(manager, None)
+                raise e
+            suppressed = self.leaveWith(manager, normalizeError(e))
+            if not suppressed:
+                raise e
+            return None
+        self.leaveWith(manager, None)
+        return None
+
+    func leaveWith(self, manager, err):
+        if not isInstance(manager):
+            return False
+        r = self.callDunder(manager, "__exit__", [None, err, None])
+        if r[0]:
+            return self.isTruthy(r[1])
+        return False
 
     func bindTargets(self, stmt, item, iterScope, env):
         targets = stmt.targets
@@ -1131,12 +1230,22 @@ class Interpreter:
         return False
 
     func defineClass(self, stmt, env):
-        clsObj = {"isClass": True, "name": stmt.name, "parent": stmt.baseClass, "methods": {}, "attrs": {}}
+        clsObj = newClass(stmt.name, stmt.baseClass)
         for m in stmt.methods:
             fnObj = self.makeFunction(m.name, m.params, m.body, m.defaults, env, m.restName, m.kwName)
-            clsObj["methods"][m.name] = fnObj
-            if m.name == "__init__" or m.name == "konstruktor" or m.name == "init" or m.name == "constructor":
-                clsObj["methods"]["constructor"] = fnObj
+            kind = m.kind if hasattr(m, "kind") else ""
+            if kind == "":
+                clsObj["methods"][m.name] = fnObj
+                if m.name == "__init__" or m.name == "konstruktor" or m.name == "init" or m.name == "constructor":
+                    clsObj["methods"]["constructor"] = fnObj
+            elif kind == "static":
+                clsObj["statics"][m.name] = fnObj
+            elif kind == "class":
+                clsObj["classMethods"][m.name] = fnObj
+            elif kind == "property":
+                clsObj["props"][m.name] = fnObj
+            else:
+                clsObj["setters"][kind[7:]] = fnObj
         env.define(stmt.name, clsObj)
         for attr in stmt.attrs:
             clsObj["attrs"][attr[0]] = self.evaluate(attr[1], env)
@@ -1164,7 +1273,17 @@ class Interpreter:
         if val == None or val == False or val == 0 or val == "":
             return False
         t = tipe(val)
-        if t == "larik" or t == "peta":
+        if t == "larik":
+            return len(val) > 0
+        if t == "peta":
+            if "isInstance" in val:
+                r = self.callDunder(val, "__bool__", [])
+                if r[0]:
+                    return self.isTruthy(r[1])
+                r = self.callDunder(val, "__len__", [])
+                if r[0]:
+                    return r[1] > 0
+                return True
             return len(val) > 0
         return True
 
@@ -1182,7 +1301,7 @@ class Interpreter:
             return None
         clause = expr.clauses[level]
         names = clause[0]
-        for item in nusaList(self.evaluate(clause[1], env)):
+        for item in self.toList(self.evaluate(clause[1], env)):
             scope = Scope(env)
             if len(names) == 1:
                 scope.define(names[0], item)
@@ -1225,7 +1344,13 @@ class Interpreter:
                 if not self.isTruthy(k):
                     return k
                 return self.evaluate(expr.right, env)
-            return self.binaryValue(op, self.evaluate(expr.left, env), self.evaluate(expr.right, env))
+            leftVal = self.evaluate(expr.left, env)
+            rightVal = self.evaluate(expr.right, env)
+            if tipe(leftVal) == "peta" or tipe(rightVal) == "peta":
+                handled = self.instanceBinary(op, leftVal, rightVal)
+                if handled[0]:
+                    return handled[1]
+            return self.binaryValue(op, leftVal, rightVal)
         elif t == "CALL":
             return self.evalCall(expr, env)
         elif t == "NULL":
@@ -1331,6 +1456,10 @@ class Interpreter:
             return val
         tt = tipe(target)
         if tt == "peta":
+            if isInstance(target):
+                r = self.callDunder(target, "__getitem__", [idx])
+                if r[0]:
+                    return r[1]
             if isInstance(target) or isClass(target):
                 return self.getMember(target, idx, self.globalScope)
             if idx in target:
@@ -1361,13 +1490,7 @@ class Interpreter:
             idx = self.evaluate(target.index, env)
             if compound:
                 val = self.binaryValue(baseOp, self.indexValue(obj, idx), val)
-            if tipe(obj) == "larik":
-                n = len(obj)
-                if idx < -n or idx >= n:
-                    rtError("index out of range")
-            elif tipe(obj) != "peta":
-                rtError("Tipe '" + tipe(obj) + "' nggak bisa diisi pakai []")
-            obj[idx] = val
+            self.storeIndex(obj, idx, val)
             return val
         elif tt == "MEMBER":
             obj = self.evaluate(target.target, env)
@@ -1388,7 +1511,7 @@ class Interpreter:
                     for key in spread:
                         kw[key] = spread[key]
                 else:
-                    for item in nusaList(spread):
+                    for item in self.toList(spread):
                         args.append(item)
             else:
                 args.append(self.evaluate(a, env))
@@ -1404,6 +1527,12 @@ class Interpreter:
 
         if isClass(fnTarget):
             return self.instantiate(fnTarget, args, kw)
+
+        if isInstance(fnTarget):
+            r = self.callDunder(fnTarget, "__call__", args)
+            if r[0]:
+                return r[1]
+            rtError("object is not callable")
 
         if tipe(fnTarget) == "peta" and "isBoundMethod" in fnTarget:
             return self.callMethod(fnTarget["instance"], [fnTarget["method"], fnTarget["definingClass"]], args, kw)
@@ -1447,13 +1576,14 @@ class Interpreter:
                 fields = target["fields"]
                 if name in fields:
                     return fields[name]
-                found = self.findMethod(target["class"], name)
+                cls = target["class"]
+                prop = self.findIn(cls, "props", name)
+                if prop[0]:
+                    return self.callMethod(target, [prop[1], prop[2]], [], {})
+                found = self.findMethod(cls, name)
                 if found[0] != None:
                     return {"isBoundMethod": True, "instance": target, "method": found[0], "definingClass": found[1]}
-                attr = self.findAttr(target["class"], name)
-                if attr[0]:
-                    return attr[1]
-                return None
+                return self.classLevelMember(cls, name)
             if "isClass" in target:
                 attr = self.findAttr(target, name)
                 if attr[0]:
@@ -1461,7 +1591,7 @@ class Interpreter:
                 found = self.findMethod(target, name)
                 if found[0] != None:
                     return found[0]
-                return None
+                return self.classLevelMember(target, name)
             return self.mapMember(target, name)
         if tt == "teks":
             return self.textMember(target, name)
@@ -1473,6 +1603,24 @@ class Interpreter:
                 return makeMethodCaller(target, name)
             return val
         return None
+
+    func classLevelMember(self, cls, name):
+        attr = self.findAttr(cls, name)
+        if attr[0]:
+            return attr[1]
+        static = self.findIn(cls, "statics", name)
+        if static[0]:
+            return static[1]
+        classMethod = self.findIn(cls, "classMethods", name)
+        if classMethod[0]:
+            return self.classMethodCaller(classMethod[1], cls)
+        return None
+
+    func classMethodCaller(self, fn, cls):
+        interp = self
+        func caller(*items):
+            return interp.callUserFunction(fn, [cls] + list(items), {})
+        return caller
 
     func mapMember(self, target, name):
         if name == "get" or name == "ambil":
@@ -1567,6 +1715,81 @@ class Interpreter:
             return lambda: target[0:len(target)]
         return None
 
+    func callDunder(self, inst, name, args):
+        found = self.findMethod(inst["class"], name)
+        if found[0] == None:
+            return [False, None]
+        return [True, self.callMethod(inst, found, args, {})]
+
+    # Operators on instances go through their special methods. A result of
+    # [False, ...] means the plain operator applies.
+    func instanceBinary(self, op, leftVal, rightVal):
+        if isInstance(leftVal) and (op in BINARYDUNDERS):
+            r = self.callDunder(leftVal, BINARYDUNDERS[op], [rightVal])
+            if r[0]:
+                return r
+        if isInstance(rightVal) and (op in REFLECTEDDUNDERS):
+            r = self.callDunder(rightVal, REFLECTEDDUNDERS[op], [leftVal])
+            if r[0]:
+                return r
+        if op == "==" or op == "!=":
+            if not isInstance(leftVal) and not isInstance(rightVal):
+                return [False, None]
+            eq = None
+            if isInstance(leftVal):
+                r = self.callDunder(leftVal, "__eq__", [rightVal])
+                if r[0]:
+                    eq = self.isTruthy(r[1])
+                if op == "!=":
+                    ne = self.callDunder(leftVal, "__ne__", [rightVal])
+                    if ne[0]:
+                        return ne
+            if eq == None:
+                eq = isInstance(leftVal) and isInstance(rightVal) and id(leftVal) == id(rightVal)
+            if op == "==":
+                return [True, eq]
+            return [True, not eq]
+        if op == "in" and isInstance(rightVal):
+            r = self.callDunder(rightVal, "__contains__", [leftVal])
+            if r[0]:
+                return [True, self.isTruthy(r[1])]
+            return [True, leftVal in self.instanceToList(rightVal)]
+        if (isInstance(leftVal) or isInstance(rightVal)) and (op in BINARYDUNDERS):
+            rtError("operator " + op + " is not supported for this object")
+        return [False, None]
+
+    func instanceToList(self, inst):
+        made = self.callDunder(inst, "__iter__", [])
+        if not made[0]:
+            rtError("object is not iterable")
+        it = made[1]
+        if tipe(it) == "larik":
+            return it
+        if not isInstance(it):
+            return nusaList(it)
+        out = []
+        while True:
+            try:
+                step = self.callDunder(it, "__next__", [])
+            except e:
+                if isSignal(e):
+                    raise e
+                err = normalizeError(e)
+                if isInstance(err) and err["class"]["name"] == "StopIteration":
+                    break
+                if tipe(err) == "peta" and "pesan" in err and err["pesan"] == "StopIteration":
+                    break
+                raise e
+            if not step[0]:
+                rtError("iterator has no __next__")
+            out.append(step[1])
+        return out
+
+    func toList(self, value):
+        if isInstance(value):
+            return self.instanceToList(value)
+        return nusaList(value)
+
     func binaryValue(self, op, leftVal, rightVal):
         if op == "+":
             return leftVal + rightVal
@@ -1626,7 +1849,7 @@ class Interpreter:
         for a in args:
             if hasattr(a, "isFunction"):
                 wrapped.append(makeHostCallback(self, a))
-            elif tipe(a) == "peta" and "isBoundMethod" in a:
+            elif tipe(a) == "peta" and ("isBoundMethod" in a or ("isInstance" in a and self.findMethod(a["class"], "__call__")[0] != None)):
                 wrapped.append(self.boundCallback(a))
             else:
                 wrapped.append(a)

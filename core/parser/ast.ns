@@ -260,9 +260,17 @@ class CompExpr:
         self.clauses = clauses
         self.jenis = "KOMPREHENSI"
 
+class WithStmt:
+    func __init__(self, items, body):
+        self.type = "WITH"
+        self.items = items
+        self.body = body
+        self.jenis = "DENGAN"
+
 class TupleAssignStmt:
-    func __init__(self, targets, value, isLiteral):
+    func __init__(self, targets, value, isLiteral, starIndex = -1):
         self.type = "TUPLE_ASSIGN"
+        self.starIndex = starIndex
         self.targets = targets
         self.value = value
         self.isLiteral = isLiteral
