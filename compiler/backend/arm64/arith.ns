@@ -5,6 +5,10 @@ ARITH_RUNTIME = """rtTruthy:
     ldr x1, [x0]
     cmp x1, 2
     b.eq rtTrLen
+    cmp x1, 3
+    b.eq rtTrLen
+    cmp x1, 4
+    b.eq rtTrLen
     cmp x1, 6
     b.eq rtTrFloat
 rtTrYes:
@@ -328,7 +332,18 @@ rtArith:
     b.eq rtArMul
     cmp x21, 3
     b.eq rtArDiv
+    cmp x21, 5
+    b.eq rtArFloorDiv
     b rtArMod
+rtArFloorDiv:
+    fdiv d0, d0, d1
+    frintm d0, d0
+    b rtArDone
+rtFloorDiv:
+    and x2, x0, x1
+    tbnz x2, 0, rtIntDiv
+    mov x2, 5
+    b rtArith
 rtArAdd:
     fadd d0, d0, d1
     b rtArDone

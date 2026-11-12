@@ -489,6 +489,12 @@ class Interpreter:
 
     func bindParams(self, fnObj, scope, args, kw):
         params = fnObj.params
+        if len(kw) == 0 and fnObj.restName == None and fnObj.kwName == None and len(args) == len(params):
+            k = 0
+            for pName in params:
+                scope.define(pName, args[k])
+                k += 1
+            return None
         nParams = len(params)
         nArgs = len(args)
         label = fnObj.name
@@ -535,7 +541,12 @@ class Interpreter:
 
     func runBody(self, fnObj, scope):
         try:
-            self.execute(fnObj.body, scope)
+            body = fnObj.body
+            if body.type == "BLOCK":
+                for st in body.stmts:
+                    self.execute(st, scope)
+            else:
+                self.execute(body, scope)
         except sig:
             if hasattr(sig, "isReturn"):
                 return sig.val
@@ -562,6 +573,23 @@ class Interpreter:
             evaluated[k] = self.evaluate(defaults[k], env)
         return UserFunction(name, params, body, env, evaluated, restName, kwName)
 
+    func scopeFor(self, node, env):
+        if node == None:
+            return env
+        if not hasattr(node, "needsScope"):
+            need = False
+            if node.type == "BLOCK":
+                for st in node.stmts:
+                    if st.type == "VAR" or st.type == "FUNC" or st.type == "CLASS" or st.type == "STRUCT" or st.type == "ENUM":
+                        need = True
+                        break
+            else:
+                need = node.type == "VAR" or node.type == "FUNC" or node.type == "CLASS"
+            node.needsScope = need
+        if node.needsScope:
+            return Scope(env)
+        return env
+
     func execInline(self, node, env):
         if node == None:
             return None
@@ -573,7 +601,7 @@ class Interpreter:
         return self.execute(node, env)
 
     func assignTo(self, target, val, env):
-        tt = self.nodeType(target)
+        tt = target.type
         if tt == "IDENT":
             env.set(target.name, val)
         elif tt == "INDEX":
@@ -611,7 +639,7 @@ class Interpreter:
         if stmt == None:
             return None
 
-        t = self.nodeType(stmt)
+        t = stmt.type
 
         if t == "BLOCK":
             childScope = Scope(env)
@@ -628,13 +656,13 @@ class Interpreter:
             return fnObj
         elif t == "IF":
             if self.isTruthy(self.evaluate(stmt.condition, env)):
-                self.execInline(stmt.thenBranch, Scope(env))
+                self.execInline(stmt.thenBranch, self.scopeFor(stmt.thenBranch, env))
             elif stmt.elseBranch != None:
-                self.execInline(stmt.elseBranch, Scope(env))
+                self.execInline(stmt.elseBranch, self.scopeFor(stmt.elseBranch, env))
             return None
         elif t == "WHILE":
             while self.isTruthy(self.evaluate(stmt.condition, env)):
-                if self.loopBody(stmt.body, Scope(env)) == 1:
+                if self.loopBody(stmt.body, self.scopeFor(stmt.body, env)) == 1:
                     break
             return None
         elif t == "FOR":
@@ -642,7 +670,7 @@ class Interpreter:
             if stmt.init != None:
                 self.execute(stmt.init, loopScope)
             while self.isTruthy(self.evaluate(stmt.condition, loopScope)):
-                if self.loopBody(stmt.body, Scope(loopScope)) == 1:
+                if self.loopBody(stmt.body, self.scopeFor(stmt.body, loopScope)) == 1:
                     break
                 if stmt.post != None:
                     self.evaluate(stmt.post, loopScope)
@@ -826,16 +854,32 @@ class Interpreter:
         if expr == None:
             return None
 
-        t = self.nodeType(expr)
+        t = expr.type
 
-        if t == "NUMBER" or t == "STRING" or t == "BOOL":
+        if t == "IDENT":
+            name = expr.name
+            if name == "super":
+                return {"isSuperProxy": True, "self": env.get("self"), "fromClass": env.get("__kelasAktif__")}
+            return env.get(name)
+        elif t == "NUMBER" or t == "STRING" or t == "BOOL":
             return expr.value
+        elif t == "BINARY":
+            op = expr.op
+            if op == "or":
+                k = self.evaluate(expr.left, env)
+                if self.isTruthy(k):
+                    return k
+                return self.evaluate(expr.right, env)
+            if op == "and":
+                k = self.evaluate(expr.left, env)
+                if not self.isTruthy(k):
+                    return k
+                return self.evaluate(expr.right, env)
+            return self.binaryValue(op, self.evaluate(expr.left, env), self.evaluate(expr.right, env))
+        elif t == "CALL":
+            return self.evalCall(expr, env)
         elif t == "NULL":
             return None
-        elif t == "IDENT":
-            if expr.name == "super":
-                return {"isSuperProxy": True, "self": env.get("self"), "fromClass": env.get("__kelasAktif__")}
-            return env.get(expr.name)
         elif t == "LIST":
             res = []
             for el in expr.elements:
@@ -853,19 +897,6 @@ class Interpreter:
             return res
         elif t == "COMP":
             return self.evalComp(expr, env)
-        elif t == "BINARY":
-            op = expr.op
-            if op == "or":
-                k = self.evaluate(expr.left, env)
-                if self.isTruthy(k):
-                    return k
-                return self.evaluate(expr.right, env)
-            if op == "and":
-                k = self.evaluate(expr.left, env)
-                if not self.isTruthy(k):
-                    return k
-                return self.evaluate(expr.right, env)
-            return self.binaryValue(op, self.evaluate(expr.left, env), self.evaluate(expr.right, env))
         elif t == "TERNARY":
             if self.isTruthy(self.evaluate(expr.condition, env)):
                 return self.evaluate(expr.thenVal, env)
@@ -881,8 +912,6 @@ class Interpreter:
             elif expr.op == "~":
                 return ~val
             return val
-        elif t == "CALL":
-            return self.evalCall(expr, env)
         elif t == "MEMBER":
             return self.getMember(self.evaluate(expr.target, env), expr.name, env)
         elif t == "INDEX":
@@ -971,7 +1000,7 @@ class Interpreter:
         target = expr.target
         compound = expr.op != "="
         baseOp = expr.op[:len(expr.op) - 1]
-        tt = self.nodeType(target)
+        tt = target.type
         if tt == "IDENT":
             if compound:
                 val = self.binaryValue(baseOp, env.get(target.name), val)
@@ -1003,7 +1032,7 @@ class Interpreter:
         args = []
         kw = {}
         for a in expr.args:
-            if self.nodeType(a) == "SPREAD":
+            if a.type == "SPREAD":
                 spread = self.evaluate(a.value, env)
                 if a.isKw:
                     for key in spread:

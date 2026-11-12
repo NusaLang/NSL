@@ -511,7 +511,7 @@ class X86_64Compiler:
         self.forceLocal = False
         self.moduleAssigned = {}
         self.externalFields = {}
-        self.prep = guardModule.newPrep()
+        self.prep = guardModule.newPrep("x86_64")
 
     func emit(self, line):
         self.out.append("    " + line)
@@ -1917,6 +1917,81 @@ class X86_64Compiler:
         self.genMethodCallGeneric(callee, name, args)
         self.label(doneLbl)
 
+    func userHasMethod(self, name):
+        for clsName in self.classes:
+            if name in self.classes[clsName]["methods"]:
+                return True
+        return False
+
+    func isPlainTarget(self, t):
+        if t.type == "IDENT":
+            return True
+        if t.type == "MEMBER":
+            return self.isPlainTarget(t.target)
+        return False
+
+    func genBuiltinMember(self, callee, name, args):
+        if (name == "append" or name == "push") and len(args) != 1:
+            fail("metode " + name + " butuh satu argumen")
+        if (name == "get" or name == "ambil") and (len(args) < 1 or len(args) > 2):
+            fail("metode " + name + " butuh satu atau dua argumen")
+        if name == "append" or name == "push":
+            self.genExpr(callee.target)
+            self.emit("push rax")
+            self.genExpr(args[0])
+            self.emit("mov rsi, rax")
+            self.emit("pop rdi")
+            self.emit("call rtArrPush")
+            return None
+        if name == "pop":
+            self.genExpr(callee.target)
+            self.emit("mov rdi, rax")
+            self.emit("call rtArrPop")
+            return None
+        if name == "get" or name == "ambil":
+            lblNotFn = self.newLabel()
+            lblDone = self.newLabel()
+            extra = 8 if len(args) % 2 == 1 else 0
+            self.genExpr(callee.target)
+            self.emit("push rax")
+            self.emit("mov rdi, rax")
+            self.emit("lea rsi, [" + self.internString(name) + "]")
+            self.emit("call rtMapGet")
+            self.emit("cmp rax, 0")
+            self.emit("je " + lblNotFn)
+            self.emit("mov r11, rax")
+            self.emit("shr r11, 1")
+            self.emit("pop rax")
+            if extra > 0:
+                self.emit("sub rsp, " + str(extra))
+            self.pushArgs(args)
+            self.emit("call r11")
+            self.emit("add rsp, " + str(8 * len(args) + extra))
+            self.emit("jmp " + lblDone)
+            self.label(lblNotFn)
+            self.emit("pop rdi")
+            self.emit("push rdi")
+            self.genExpr(args[0])
+            self.emit("push rax")
+            if len(args) > 1:
+                self.genExpr(args[1])
+            else:
+                self.emit("xor eax, eax")
+            self.emit("mov rdx, rax")
+            self.emit("pop rsi")
+            self.emit("pop rdi")
+            self.emit("call rtMapGetDef")
+            self.label(lblDone)
+            return None
+        if (name == "keys" or name == "kunci" or name == "values" or name == "nilai" or name == "items") and len(args) == 0:
+            self.genMapViewCall(callee, name, args)
+            return None
+        if name in STRMETHODS:
+            self.genStringOrGenericCall(callee, name, args)
+            return None
+        self.genMethodCallGeneric(callee, name, args)
+        return None
+
     func genCall(self, e):
         callee = e.callee
         args = e.args
@@ -1943,61 +2018,41 @@ class X86_64Compiler:
                     if name in self.importInfo[mpath]["funcNames"]:
                         self.genCall(astModule.CallExpr(astModule.IdentExpr(pfx + name), args))
                         return None
-            if name == "append" or name == "push":
+            builtinFits = True
+            if (name == "append" or name == "push") and len(args) != 1:
+                builtinFits = False
+            if (name == "get" or name == "ambil") and (len(args) < 1 or len(args) > 2):
+                builtinFits = False
+            if name == "pop" and len(args) != 0:
+                builtinFits = False
+            if not builtinFits and (name == "append" or name == "push" or name == "pop" or name == "get" or name == "ambil"):
+                if not self.userHasMethod(name):
+                    fail("metode " + name + " dengan jumlah argumen ini")
+                self.genMethodCallGeneric(callee, name, args)
+                return None
+            if (name == "append" or name == "push" or name == "pop" or name == "get" or name == "ambil") and self.userHasMethod(name):
+                if not self.isPlainTarget(callee.target):
+                    holder = self.newTemp()
+                    holderName = "tmp" + str(self.tempCount)
+                    self.genExpr(callee.target)
+                    self.emit("mov " + holder + ", rax")
+                    callee = astModule.MemberExpr(astModule.IdentExpr(holderName), name)
+                builtinLbl = self.newLabel()
+                doneLbl = self.newLabel()
                 self.genExpr(callee.target)
-                self.emit("push rax")
-                self.genExpr(args[0])
-                self.emit("mov rsi, rax")
-                self.emit("pop rdi")
-                self.emit("call rtArrPush")
+                self.emit("test al, 1")
+                self.emit("jnz " + builtinLbl)
+                self.emit("cmp rax, 4")
+                self.emit("jbe " + builtinLbl)
+                self.emit("cmp qword ptr [rax], 5")
+                self.emit("jne " + builtinLbl)
+                self.genMethodCallGeneric(callee, name, args)
+                self.emit("jmp " + doneLbl)
+                self.label(builtinLbl)
+                self.genBuiltinMember(callee, name, args)
+                self.label(doneLbl)
                 return None
-            if name == "pop":
-                self.genExpr(callee.target)
-                self.emit("mov rdi, rax")
-                self.emit("call rtArrPop")
-                return None
-            if name == "get" or name == "ambil":
-                lblNotFn = self.newLabel()
-                lblDone = self.newLabel()
-                extra = 8 if len(args) % 2 == 1 else 0
-                self.genExpr(callee.target)
-                self.emit("push rax")
-                self.emit("mov rdi, rax")
-                self.emit("lea rsi, [" + self.internString(name) + "]")
-                self.emit("call rtMapGet")
-                self.emit("cmp rax, 0")
-                self.emit("je " + lblNotFn)
-                self.emit("mov r11, rax")
-                self.emit("shr r11, 1")
-                self.emit("pop rax")
-                if extra > 0:
-                    self.emit("sub rsp, " + str(extra))
-                self.pushArgs(args)
-                self.emit("call r11")
-                self.emit("add rsp, " + str(8 * len(args) + extra))
-                self.emit("jmp " + lblDone)
-                self.label(lblNotFn)
-                self.emit("pop rdi")
-                self.emit("push rdi")
-                self.genExpr(args[0])
-                self.emit("push rax")
-                if len(args) > 1:
-                    self.genExpr(args[1])
-                else:
-                    self.emit("xor eax, eax")
-                self.emit("mov rdx, rax")
-                self.emit("pop rsi")
-                self.emit("pop rdi")
-                self.emit("call rtMapGetDef")
-                self.label(lblDone)
-                return None
-            if (name == "keys" or name == "kunci" or name == "values" or name == "nilai" or name == "items") and len(args) == 0:
-                self.genMapViewCall(callee, name, args)
-                return None
-            if name in STRMETHODS:
-                self.genStringOrGenericCall(callee, name, args)
-                return None
-            self.genMethodCallGeneric(callee, name, args)
+            self.genBuiltinMember(callee, name, args)
             return None
         if callee.type != "IDENT":
             extraIndirect = 8 if len(args) % 2 == 1 else 0

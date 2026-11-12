@@ -160,7 +160,8 @@ func collectIdents(node, found):
         collectIdents(node.body, found)
 
 class Prep:
-    func __init__(self):
+    func __init__(self, arch):
+        self.arch = arch
         self.counter = 0
         self.funcSigs = {}
         self.classes = {}
@@ -349,6 +350,8 @@ class Prep:
             e.operand = self.lowerExpr(e.operand, False)
             return e
         if t == "CALL":
+            if e.callee.type == "IDENT" and (e.callee.name == "range" or e.callee.name == "rentang") and len(e.args) == 3:
+                unsupported("range dengan langkah di luar for")
             e = self.lowerCall(e)
             callee = e.callee
             if callee.type == "MEMBER":
@@ -471,6 +474,8 @@ class Prep:
             if len(s.attrs) > 0:
                 unsupported("atribut kelas")
             for m in s.methods:
+                if self.arch == "arm64" and (m.name == "__str__" or m.name == "append" or m.name == "push" or m.name == "pop" or m.name == "get" or m.name == "ambil"):
+                    unsupported("metode '" + m.name + "' belum didukung di ARM64")
                 self.lowerFunc(m, True)
             return s
         if t == "STRUCT" or t == "ENUM":
@@ -491,7 +496,16 @@ class Prep:
             s.body = self.lowerStmt(s.body)
             return s
         if t == "FOR_IN":
-            s.iterable = self.lowerExpr(s.iterable, False)
+            it = s.iterable
+            if it.type == "CALL" and it.callee.type == "IDENT" and (it.callee.name == "range" or it.callee.name == "rentang") and len(it.args) == 3 and len(it.kwNames) == 0:
+                if self.arch == "arm64":
+                    unsupported("range dengan langkah")
+                k = 0
+                for a in it.args:
+                    it.args[k] = self.lowerExpr(a, False)
+                    k += 1
+            else:
+                s.iterable = self.lowerExpr(s.iterable, False)
             s.body = self.lowerStmt(s.body)
             if len(s.targets) > 1:
                 tmp = self.fresh("fe")
@@ -563,5 +577,5 @@ class Prep:
 # "native: ..." error, which makes the launcher run the program on the
 # interpreter instead. Returns the lowered statements and the field names
 # that are assigned from outside a class.
-func newPrep():
-    return Prep()
+func newPrep(arch):
+    return Prep(arch)
