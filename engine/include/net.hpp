@@ -2,6 +2,8 @@
 
 #include <functional>
 #include <string>
+#include <utility>
+#include <vector>
 #include <unordered_map>
 
 // POSIX-socket networking primitives. No Windows support yet (would need
@@ -51,6 +53,9 @@ struct HttpResponseOut {
     int status = 200;
     std::string contentType = "text/plain";
     std::string body;
+    // Extra response headers from the handler's "header" map. Content-Type is
+    // folded into `contentType`; Content-Length and Connection stay engine-owned.
+    std::vector<std::pair<std::string, std::string>> headers;
     // True: handler already wrote its response to HttpRequestIn::fd and
     // closed it itself (e.g. tcp_kirim()/tcp_tutup()) -- httpServe() skips both.
     bool streamed = false;

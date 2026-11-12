@@ -2270,6 +2270,27 @@ Value Interpreter::callBuiltin(const std::string& name, std::vector<Value>& args
                                 out.contentType = it->second.str();
                                 hasExplicitType = true;
                             }
+                            if (auto hit = m.find("header"); hit != m.end() && hit->second.type == ValueType::Map) {
+                                for (const auto& kv : *hit->second.map()) {
+                                    if (kv.second.type == ValueType::Null) continue;
+                                    std::string name = kv.first;
+                                    std::string val = kv.second.type == ValueType::String ? kv.second.str() : kv.second.stringify();
+                                    auto clean = [](std::string& t) {
+                                        t.erase(std::remove_if(t.begin(), t.end(), [](char c) { return c == '\r' || c == '\n'; }), t.end());
+                                    };
+                                    clean(name);
+                                    clean(val);
+                                    std::string lower = name;
+                                    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                                    if (lower == "content-length" || lower == "connection" || name.empty()) continue;
+                                    if (lower == "content-type") {
+                                        out.contentType = val;
+                                        hasExplicitType = true;
+                                    } else {
+                                        out.headers.emplace_back(name, val);
+                                    }
+                                }
+                            }
                             if (tubuhIt->second.type == ValueType::String) {
                                 out.body = tubuhIt->second.str();
                                 if (!hasExplicitType) out.contentType = "text/plain";

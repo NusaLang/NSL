@@ -422,9 +422,16 @@ void httpServe(int port, const std::function<HttpResponseOut(const HttpRequestIn
     }
 
     static const std::unordered_map<int, std::string> kReasons = {
-        {200, "OK"}, {201, "Created"}, {204, "No Content"}, {400, "Bad Request"},
-        {401, "Unauthorized"}, {403, "Forbidden"}, {404, "Not Found"},
-        {405, "Method Not Allowed"}, {500, "Internal Server Error"},
+        {100, "Continue"}, {101, "Switching Protocols"}, {200, "OK"}, {201, "Created"},
+        {202, "Accepted"}, {204, "No Content"}, {206, "Partial Content"},
+        {301, "Moved Permanently"}, {302, "Found"}, {303, "See Other"}, {304, "Not Modified"},
+        {307, "Temporary Redirect"}, {308, "Permanent Redirect"},
+        {400, "Bad Request"}, {401, "Unauthorized"}, {403, "Forbidden"}, {404, "Not Found"},
+        {405, "Method Not Allowed"}, {408, "Request Timeout"}, {409, "Conflict"},
+        {410, "Gone"}, {413, "Payload Too Large"}, {415, "Unsupported Media Type"},
+        {422, "Unprocessable Entity"}, {429, "Too Many Requests"},
+        {500, "Internal Server Error"}, {501, "Not Implemented"}, {502, "Bad Gateway"},
+        {503, "Service Unavailable"}, {504, "Gateway Timeout"},
     };
 
     while (true) {
@@ -475,6 +482,7 @@ void httpServe(int port, const std::function<HttpResponseOut(const HttpRequestIn
                 out << "Referrer-Policy: strict-origin-when-cross-origin\r\n";
                 out << "X-XSS-Protection: 1; mode=block\r\n";
                 out << "X-Powered-By: Nusantara\r\n";
+                for (const auto& h : resp.headers) out << h.first << ": " << h.second << "\r\n";
                 out << "Connection: close\r\n\r\n";
                 out << resp.body;
                 tcpSend(connFd, out.str());
