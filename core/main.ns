@@ -8,14 +8,10 @@ func loadMod(name):
     candidates = [
         name,
         "core/" + name,
-        "core/virtual/" + name,
         "core/interpreter/" + name,
         "core/parser/" + name,
-        "core/types/" + name,
-        "virtual/" + name,
         "interpreter/" + name,
-        "parser/" + name,
-        "types/" + name
+        "parser/" + name
     ]
     for c in candidates:
         try:
@@ -27,8 +23,8 @@ func loadMod(name):
 Lexer = loadMod("parser/lexer").Lexer
 Parser = loadMod("parser/parser").Parser
 Interpreter = loadMod("interpreter/interpreter").Interpreter
-VmCompiler = loadMod("virtual/vm").VmCompiler
-VmRunner = loadMod("virtual/vm").VmRunner
+lineState = loadMod("interpreter/interpreter").lineState
+normalizeError = loadMod("interpreter/interpreter").normalizeError
 resolverModule = loadMod("resolver")
 resolveModulePath = resolverModule.resolveModulePath
 JalankanPerintah = jalankan_perintah
@@ -44,7 +40,6 @@ USAGE = """usage: nusa [options] [-c code | -m module | file | -] [args]
   -q           no REPL banner
   -x           skip the first line of the source
   -k, --check  parse only
-  --vm         run on the bytecode VM
   --tokens     dump tokens before running
   --ast        dump the AST before running
   -V, --version
@@ -76,13 +71,17 @@ func parseChecked(src, tokens = False, ast = False):
         fail("syntax errors: " + str(parseState["errors"]))
     return tree
 
-func exec(src, vm, tokens, ast, runtime = None):
-    tree = parseChecked(src, tokens, ast)
-    if vm:
-        VmRunner().run(VmCompiler().compile(tree))
-        return None
+func exec(src, tokens, ast, runtime = None, file = ""):
+    try:
+        tree = parseChecked(src, tokens, ast)
+    except failure:
+        err = normalizeError(failure)
+        if tipe(err) == "peta" and ("isLexError" in err or "isParseError" in err):
+            fail("error: " + (file + ": " if file != "" else "") + str(err["pesan"]))
+        raise failure
     if runtime == None:
         runtime = Interpreter()
+    runtime.setMainFile(file)
     runtime.run(tree)
     return runtime
 
@@ -121,7 +120,17 @@ func guarded(fn):
     try:
         return fn()
     except e:
-        fail(str(e))
+        e = normalizeError(e)
+        where = ""
+        if lineState["line"] > 0:
+            where = " (line " + str(lineState["line"]) + ")"
+            if lineState["file"] != "":
+                where = " (" + lineState["file"] + ", line " + str(lineState["line"]) + ")"
+        if tipe(e) == "peta" and "isInstance" in e and "pesan" in e["fields"]:
+            fail("error: " + str(e["fields"]["pesan"]) + where)
+        if tipe(e) == "peta" and "pesan" in e:
+            fail("error: " + str(e["pesan"]) + where)
+        fail("error: " + str(e) + where)
 
 func findModule(name):
     resolved = resolveModulePath(name, FileAda)
@@ -239,7 +248,7 @@ func start(args):
     entry = scripts["start"] if "start" in scripts else (manifest["main"] if "main" in manifest else None)
     if entry == None:
         fail("nusa.json tidak punya scripts.start atau main")
-    guarded(lambda: exec(readSource(entry, False), False, False, False))
+    guarded(lambda: exec(readSource(entry, False), False, False))
 
 func doBuild(entry, out, isNative):
     src = BacaFile(entry)
@@ -356,7 +365,6 @@ func main():
     inspect = False
     quiet = False
     skipFirst = False
-    vm = False
     tokens = False
     ast = False
     mode = ""
@@ -400,8 +408,6 @@ func main():
         elif a == "-":
             mode = "stdin"
             rest = args[i:]
-        elif a == "--vm":
-            vm = True
         elif a == "--tokens":
             tokens = True
         elif a == "--ast":
@@ -420,19 +426,26 @@ func main():
             rest = args[i:]
         i += 1
 
+    if mode == "repl":
+        k = i
+        while k < n:
+            if args[k] == "-q":
+                quiet = True
+            k += 1
+
     if len(rest) > 0:
         sys.argv = rest
 
     runtime = None
     if mode == "file":
         setScriptDirFor(arg)
-        runtime = guarded(lambda: exec(readSource(arg, skipFirst), vm, tokens, ast))
+        runtime = guarded(lambda: exec(readSource(arg, skipFirst), tokens, ast, None, arg))
     elif mode == "eval":
-        runtime = guarded(lambda: exec(arg, vm, tokens, ast))
+        runtime = guarded(lambda: exec(arg, tokens, ast))
     elif mode == "module":
-        runtime = guarded(lambda: exec(readSource(findModule(arg), skipFirst), vm, tokens, ast))
+        runtime = guarded(lambda: exec(readSource(findModule(arg), skipFirst), tokens, ast))
     elif mode == "stdin":
-        runtime = guarded(lambda: exec(readStdin(), vm, tokens, ast))
+        runtime = guarded(lambda: exec(readStdin(), tokens, ast))
     elif mode == "check":
         guarded(lambda: parseChecked(readSource(arg, False)))
         sys.exit(0)

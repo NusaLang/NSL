@@ -90,6 +90,33 @@ rtTsNotStr:
     je rtMapStr
     cmp rax, 6
     je rtFloatStr
+    cmp rax, 5
+    je rtInstStr
+    lea rax, [strObj]
+    ret
+rtInstStr:
+    push rdi
+    mov rcx, [rdi+8]
+rtInstScan:
+    test rcx, rcx
+    jz rtInstPlain
+    push rcx
+    mov rdi, [rcx+8]
+    lea rsi, [strDunderStr]
+    call rtMapGet
+    pop rcx
+    test rax, rax
+    jnz rtInstCall
+    mov rcx, [rcx+24]
+    jmp rtInstScan
+rtInstCall:
+    shr rax, 1
+    push qword ptr [rsp]
+    call rax
+    add rsp, 16
+    ret
+rtInstPlain:
+    add rsp, 8
     lea rax, [strObj]
     ret
 rtRepr:

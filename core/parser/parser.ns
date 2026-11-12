@@ -27,12 +27,14 @@ UnaryExpr = astModule.UnaryExpr
 CallExpr = astModule.CallExpr
 IndexExpr = astModule.IndexExpr
 SliceExpr = astModule.SliceExpr
+SpreadExpr = astModule.SpreadExpr
 ListExpr = astModule.ListExpr
 MapExpr = astModule.MapExpr
 AssignExpr = astModule.AssignExpr
 MemberExpr = astModule.MemberExpr
 TernaryExpr = astModule.TernaryExpr
 LambdaExpr = astModule.LambdaExpr
+CompExpr = astModule.CompExpr
 
 BlockStmt = astModule.BlockStmt
 VarStmt = astModule.VarStmt
@@ -48,6 +50,14 @@ TryStmt = astModule.TryStmt
 ThrowStmt = astModule.ThrowStmt
 ExprStmt = astModule.ExprStmt
 ClassStmt = astModule.ClassStmt
+TupleAssignStmt = astModule.TupleAssignStmt
+WithStmt = astModule.WithStmt
+StructStmt = astModule.StructStmt
+EnumStmt = astModule.EnumStmt
+
+# Words the full language gives a meaning this parser does not implement. A file
+# using one is refused, so it runs on the engine instead of being compiled wrong.
+UNSUPPORTEDWORDS = ["yield", "match", "case"]
 
 class Parser:
     func __init__(self, tokens):
@@ -55,86 +65,66 @@ class Parser:
         self.pos = 0
         self.length = len(tokens)
         self.errorCount = 0
+        self.pending = []
+        self.hidden = 0
+        self.catchVars = []
 
     func peek(self, offset = 0):
         idx = self.pos + offset
         if idx < self.length:
             return self.tokens[idx]
-        return self.tokens[-1]
+        return self.tokens[self.length - 1]
 
     func advance(self):
-        tok = self.peek(0)
-        if self.pos < self.length:
+        tok = self.tokens[self.pos]
+        if self.pos < self.length - 1:
             self.pos += 1
         return tok
 
     func check(self, expectedType):
+        return self.tokens[self.pos].type == expectedType
+
+    func match(self, expectedType):
+        if self.tokens[self.pos].type == expectedType:
+            return self.advance()
+        return None
+
+    func fail(self, message, tok = None):
+        if tok == None:
+            tok = self.peek(0)
+        self.errorCount += 1
+        err = {"pesan": message + " (line " + str(tok.line) + ", col " + str(tok.col) + ")", "line": tok.line, "col": tok.col, "isParseError": True}
+        lempar err
+
+    func expect(self, expectedType, message):
+        if self.tokens[self.pos].type == expectedType:
+            return self.advance()
+        self.fail(message + ", dapet '" + self.peek(0).text + "'")
+
+    func expectEnd(self, message):
         tok = self.peek(0)
-        curType = tok.type
-        if curType == expectedType:
-            return True
-        if expectedType == TokenType.NUMBER and curType == "ANGKA":
-            return True
-        if expectedType == TokenType.VAR and curType == "BUAT":
-            return True
-        if expectedType == TokenType.FUNC and curType == "FUNGSI":
-            return True
-        if expectedType == TokenType.IF and curType == "JIKA":
-            return True
-        if expectedType == TokenType.ELSE and curType == "LAIN":
-            return True
-        if expectedType == TokenType.WHILE and curType == "SELAMA":
-            return True
-        if expectedType == TokenType.FOR and curType == "UNTUK":
-            return True
-        if expectedType == TokenType.IN and curType == "DALAM":
-            return True
-        if expectedType == TokenType.RETURN and curType == "HASIL":
-            return True
-        if expectedType == TokenType.BREAK and curType == "BERHENTI":
-            return True
-        if expectedType == TokenType.CONTINUE and curType == "LANJUT":
-            return True
-        if expectedType == TokenType.TRUE and curType == "BENAR":
-            return True
-        if expectedType == TokenType.FALSE and curType == "SALAH":
-            return True
-        if expectedType == TokenType.NULL and curType == "KOSONG":
-            return True
-        if expectedType == TokenType.CLASS and curType == "KELAS":
-            return True
-        if expectedType == TokenType.THIS and curType == "INI":
-            return True
-        if expectedType == TokenType.SUPER and curType == "INDUK":
-            return True
-        if expectedType == TokenType.TRY and curType == "COBA":
-            return True
-        if expectedType == TokenType.CATCH and curType == "TANGKAP":
-            return True
-        if expectedType == TokenType.FINALLY and curType == "AKHIRNYA":
-            return True
-        if expectedType == TokenType.THROW and curType == "LEMPAR":
-            return True
-        if expectedType == TokenType.AND and curType == "dan":
-            return True
-        if expectedType == TokenType.OR and curType == "atau":
-            return True
-        if expectedType == TokenType.NOT and curType == "bukan":
+        if tok.type == TokenType.SEMICOLON:
+            self.advance()
+            return None
+        if tok.type == TokenType.RBRACE or tok.type == TokenType.EOF:
+            return None
+        if self.pos > 0 and tok.line > self.tokens[self.pos - 1].endLine:
+            return None
+        self.fail(message)
+
+    func isWord(self, tok, a, b = None):
+        return tok.type == TokenType.IDENT and (tok.text == a or (b != None and tok.text == b))
+
+    func matchWord(self, a, b = None):
+        if self.isWord(self.peek(0), a, b):
+            self.advance()
             return True
         return False
 
-    func match(self, expectedType):
-        if self.check(expectedType):
-            return self.advance()
-        return None
-
-    func expect(self, expectedType, message):
-        tok = self.peek(0)
-        if self.check(expectedType):
-            return self.advance()
-        print("Parser error line " + str(tok.line) + ", col " + str(tok.col) + ": " + message + " (got '" + tok.text + "')")
-        self.errorCount += 1
-        return None
+    func at(self, node, tok):
+        node.line = tok.line
+        node.col = tok.col
+        return node
 
     func skipSemicolons(self):
         while self.check(TokenType.SEMICOLON):
@@ -143,497 +133,968 @@ class Parser:
     func parse(self):
         program = []
         while not self.check(TokenType.EOF):
-            self.skipSemicolons()
-            if self.check(TokenType.EOF):
-                break
-            stmt = self.parseStatement()
-            if stmt != None:
-                program.append(stmt)
-            self.skipSemicolons()
+            program.append(self.parseStatement())
+            for extra in self.pending:
+                program.append(extra)
+            self.pending = []
         return program
 
     func parseStatement(self):
-        if self.check(TokenType.FUNC):
-            return self.parseFunction()
-        elif self.check(TokenType.VAR):
-            return self.parseVar()
-        elif self.check(TokenType.CLASS):
-            return self.parseClass()
-        elif self.check(TokenType.PASS):
+        start = self.peek(0)
+        stmt = self.statementBody()
+        if stmt != None and stmt.line == 0:
+            self.at(stmt, start)
+        return stmt
+
+    func statementBody(self):
+        tok = self.peek(0)
+        t = tok.type
+        if t == TokenType.SEMICOLON:
             self.advance()
-            self.match(TokenType.SEMICOLON)
             return BlockStmt([])
-        elif self.check(TokenType.IF):
-            return self.parseIf()
-        elif self.check(TokenType.WHILE):
-            return self.parseWhile()
-        elif self.check(TokenType.FOR):
-            return self.parseFor()
-        elif self.check(TokenType.RETURN):
-            return self.parseReturn()
-        elif self.check(TokenType.BREAK):
+        if self.isWord(tok, "pass") and self.peek(1).type == TokenType.SEMICOLON:
             self.advance()
-            self.match(TokenType.SEMICOLON)
-            return BreakStmt()
-        elif self.check(TokenType.CONTINUE):
             self.advance()
-            self.match(TokenType.SEMICOLON)
-            return ContinueStmt()
-        elif self.check(TokenType.TRY):
+            return BlockStmt([])
+        if self.isWord(tok, "pass") and (self.peek(1).type == TokenType.RBRACE or self.peek(1).type == TokenType.EOF):
+            self.advance()
+            return BlockStmt([])
+        if t == TokenType.IDENT and (tok.text == "import" or tok.text == "impor") and (self.peek(1).type == TokenType.IDENT or self.peek(1).type == TokenType.STRING or self.peek(1).type == TokenType.DOT):
+            self.advance()
+            return self.parseImport(tok)
+        if t == TokenType.IDENT and (tok.text == "from" or tok.text == "dari") and (self.peek(1).type == TokenType.IDENT or self.peek(1).type == TokenType.DOT):
+            self.advance()
+            return self.parseFromImport(tok)
+        if t == TokenType.AT:
+            return self.parseDecorated()
+        if t == TokenType.IDENT and (tok.text == "with" or tok.text == "dengan") and self.peek(1).type != TokenType.ASSIGN and self.peek(1).type != TokenType.DOT and self.peek(1).type != TokenType.LPAREN:
+            self.advance()
+            return self.parseWith()
+        if t == TokenType.IDENT and (tok.text in UNSUPPORTEDWORDS):
+            nxt = self.peek(1).type
+            if nxt == TokenType.IDENT or nxt == TokenType.STRING or nxt == TokenType.NUMBER or nxt == TokenType.LBRACKET or nxt == TokenType.THIS:
+                self.fail("'" + tok.text + "' belum didukung kompiler")
+        if t == TokenType.VAR:
+            self.advance()
+            return self.parseVar()
+        if t == TokenType.FUNC:
+            self.advance()
+            return self.parseFunction()
+        if t == TokenType.CLASS:
+            self.advance()
+            return self.parseClass()
+        if t == TokenType.STRUCT:
+            self.advance()
+            return self.parseStruct()
+        if t == TokenType.ENUM:
+            self.advance()
+            return self.parseEnum()
+        if t == TokenType.TRY:
+            self.advance()
             return self.parseTry()
-        elif self.check(TokenType.THROW):
+        if t == TokenType.THROW:
+            self.advance()
             return self.parseThrow()
-        elif self.check(TokenType.LBRACE):
+        if t == TokenType.IF:
+            self.advance()
+            return self.parseIf()
+        if t == TokenType.WHILE:
+            self.advance()
+            stmt = self.parseWhile()
+            if self.check(TokenType.ELSE):
+                self.fail("'else' setelah perulangan belum didukung kompiler")
+            return stmt
+        if t == TokenType.FOR:
+            forTok = self.advance()
+            stmt = self.parseFor(forTok)
+            if self.check(TokenType.ELSE):
+                self.fail("'else' setelah perulangan belum didukung kompiler")
+            return stmt
+        if t == TokenType.RETURN:
+            self.advance()
+            return self.parseReturn()
+        if t == TokenType.BREAK:
+            self.advance()
+            self.expectEnd("';' diharapkan setelah 'berhenti'")
+            return BreakStmt()
+        if t == TokenType.CONTINUE:
+            self.advance()
+            self.expectEnd("';' diharapkan setelah 'lanjut'")
+            return ContinueStmt()
+        if t == TokenType.LBRACE:
             return self.parseBlock()
-        else:
-            return self.parseExprStatement()
+        return self.parseExprStatement()
+
+    # `shop.cart` is shop/cart; leading dots are folders: `.sub` is ./sub, `..x` is ../x.
+    func modulePath(self):
+        if self.check(TokenType.STRING):
+            return self.advance().text
+        dots = 0
+        while self.check(TokenType.DOT):
+            self.advance()
+            dots += 1
+        path = self.expect(TokenType.IDENT, "Nama modul diharapkan").text
+        while self.check(TokenType.DOT):
+            self.advance()
+            path += "/" + self.expect(TokenType.IDENT, "Nama modul diharapkan").text
+        if dots == 1:
+            return "./" + path
+        if dots > 1:
+            return "../" * (dots - 1) + path
+        return path
+
+    func importCall(self, path, tok):
+        return self.at(CallExpr(self.at(IdentExpr("impor"), tok), [self.at(StringExpr(path), tok)]), tok)
+
+    func bindName(self, name, value, tok):
+        return self.at(ExprStmt(self.at(AssignExpr(self.at(IdentExpr(name), tok), "=", value), tok)), tok)
+
+    func parseImport(self, tok):
+        stmts = []
+        while True:
+            path = self.modulePath()
+            alias = path.split("/")[-1].split(".")[0]
+            if self.isWord(self.peek(0), "as", "sbg"):
+                self.advance()
+                alias = self.expect(TokenType.IDENT, "Nama alias diharapkan").text
+            stmts.append(self.bindName(alias, self.importCall(path, tok), tok))
+            if self.match(TokenType.COMMA) == None:
+                break
+        self.expectEnd("';' diharapkan setelah import")
+        k = 1
+        while k < len(stmts):
+            self.pending.append(stmts[k])
+            k += 1
+        return stmts[0]
+
+    func parseFromImport(self, tok):
+        path = self.modulePath()
+        if not self.matchWord("import", "impor"):
+            self.fail("'import' diharapkan")
+        self.hidden += 1
+        holder = "__mod" + str(self.hidden)
+        stmts = [self.bindName(holder, self.importCall(path, tok), tok)]
+        while True:
+            name = self.expect(TokenType.IDENT, "Nama diharapkan setelah import").text
+            alias = name
+            if self.isWord(self.peek(0), "as", "sbg"):
+                self.advance()
+                alias = self.expect(TokenType.IDENT, "Nama alias diharapkan").text
+            stmts.append(self.bindName(alias, self.at(MemberExpr(self.at(IdentExpr(holder), tok), name), tok), tok))
+            if self.match(TokenType.COMMA) == None:
+                break
+        self.expectEnd("';' diharapkan setelah import")
+        k = 1
+        while k < len(stmts):
+            self.pending.append(stmts[k])
+            k += 1
+        return stmts[0]
+
+    func parseWith(self):
+        items = []
+        while True:
+            expr = self.parseExpr()
+            name = None
+            if self.isWord(self.peek(0), "as", "sbg"):
+                self.advance()
+                name = self.expect(TokenType.IDENT, "Nama diharapkan setelah 'as'").text
+            items.append([expr, name])
+            if self.match(TokenType.COMMA) == None:
+                break
+        body = self.parseBlock()
+        return WithStmt(items, body)
+
+    func parseDecorated(self):
+        decorators = []
+        while self.check(TokenType.AT):
+            self.advance()
+            decorators.append(self.parseExpr())
+            self.expectEnd("';' diharapkan setelah dekorator")
+        tok = self.peek(0)
+        if tok.type != TokenType.FUNC:
+            self.fail("dekorator hanya untuk fungsi")
+        self.advance()
+        fn = self.parseFunction()
+        self.at(fn, tok)
+        k = len(decorators) - 1
+        wrapped = None
+        while k >= 0:
+            inner = self.at(IdentExpr(fn.name), tok) if wrapped == None else wrapped
+            wrapped = self.at(CallExpr(decorators[k], [inner]), tok)
+            k -= 1
+        self.pending.append(self.bindName(fn.name, wrapped, tok))
+        return fn
 
     func parseBlock(self):
-        self.match(TokenType.COLON)
-        self.expect(TokenType.LBRACE, "Expected '{'")
+        self.expect(TokenType.LBRACE, "'{' diharapkan")
         stmts = []
-
         while not self.check(TokenType.RBRACE) and not self.check(TokenType.EOF):
-            self.skipSemicolons()
-            if self.check(TokenType.RBRACE):
-                break
-            stmt = self.parseStatement()
-            if stmt != None:
-                stmts.append(stmt)
-            self.skipSemicolons()
-
-        self.expect(TokenType.RBRACE, "Expected '}'")
+            stmts.append(self.parseStatement())
+            for extra in self.pending:
+                stmts.append(extra)
+            self.pending = []
+        self.expect(TokenType.RBRACE, "'}' diharapkan")
         return BlockStmt(stmts)
 
-    func parseFunction(self):
-        self.advance()
-        nameTok = self.expect(TokenType.IDENT, "Expected function name")
-        self.expect(TokenType.LPAREN, "Expected '(' after function name")
+    func parseVar(self):
+        nameTok = self.expect(TokenType.IDENT, "Nama variabel diharapkan")
+        if self.check(TokenType.COLON):
+            self.fail("anotasi tipe belum didukung kompiler")
+        self.expect(TokenType.ASSIGN, "'=' diharapkan setelah nama variabel")
+        val = self.parseExpr()
+        self.expectEnd("';' diharapkan setelah pernyataan 'buat'")
+        return VarStmt(nameTok.text, val)
 
+    func parseParams(self):
         params = []
         defaults = {}
-        if not self.check(TokenType.RPAREN):
-            while True:
-                paramTok = None
-                if self.check(TokenType.IDENT) or self.check(TokenType.THIS):
-                    paramTok = self.advance()
+        receiver = None
+        self.expect(TokenType.LPAREN, "'(' diharapkan setelah nama fungsi")
+        if self.check(TokenType.THIS):
+            receiver = self.advance().text
+            self.match(TokenType.COMMA)
+        sawDefault = False
+        restName = None
+        kwName = None
+        while not self.check(TokenType.RPAREN):
+            if self.check(TokenType.STAR) or self.check(TokenType.STARSTAR):
+                isKw = self.advance().type == TokenType.STARSTAR
+                collector = self.expect(TokenType.IDENT, "Nama parameter diharapkan").text
+                if isKw:
+                    kwName = collector
                 else:
-                    paramTok = self.expect(TokenType.IDENT, "Expected parameter name")
-                paramName = paramTok.text if paramTok != None else ""
-                params.append(paramName)
-                if self.match(TokenType.ASSIGN) != None:
-                    defaults[paramName] = self.parseExpr()
+                    restName = collector
                 if self.match(TokenType.COMMA) == None:
                     break
+                continue
+            nameTok = self.expect(TokenType.IDENT, "Nama parameter diharapkan")
+            if self.check(TokenType.COLON):
+                self.fail("anotasi tipe belum didukung kompiler")
+            params.append(nameTok.text)
+            if self.match(TokenType.ASSIGN) != None:
+                defaults[nameTok.text] = self.parseExpr()
+                sawDefault = True
+            elif sawDefault:
+                self.fail("Parameter tanpa nilai default nggak boleh setelah yang punya default")
+            if self.match(TokenType.COMMA) == None:
+                break
+        self.expect(TokenType.RPAREN, "')' diharapkan setelah parameter")
+        if self.check(TokenType.MINUS) and self.peek(1).type == TokenType.GT:
+            self.fail("anotasi tipe belum didukung kompiler")
+        if self.check(TokenType.COLON):
+            self.fail("anotasi tipe belum didukung kompiler")
+        return [params, defaults, receiver, restName, kwName]
 
-        self.expect(TokenType.RPAREN, "Expected ')' after parameter list")
-        self.match(TokenType.COLON)
+    func parseFunction(self):
+        nameTok = self.expect(TokenType.IDENT, "Nama fungsi diharapkan")
+        sig = self.parseParams()
         body = self.parseBlock()
-        fnName = nameTok.text if nameTok != None else ""
-        return FuncStmt(fnName, params, body, defaults)
+        fn = FuncStmt(nameTok.text, sig[0], body, sig[1], sig[3], sig[4])
+        fn.receiver = sig[2]
+        return fn
 
     func parseClass(self):
-        self.advance()
-        nameTok = self.expect(TokenType.IDENT, "Expected class name")
+        nameTok = self.expect(TokenType.IDENT, "Nama kelas diharapkan")
         baseName = None
-        if self.match(TokenType.LPAREN) != None:
-            idTok = self.expect(TokenType.IDENT, "Expected base class name")
-            baseName = idTok.text if idTok != None else None
-            self.expect(TokenType.RPAREN, "Expected ')'")
-        elif self.check(TokenType.IDENT) and (self.peek(0).text == "turunan" or self.peek(0).text == "extends"):
-            self.advance()
-            idTok = self.expect(TokenType.IDENT, "Expected base class name")
-            baseName = idTok.text if idTok != None else None
-
-        self.match(TokenType.COLON)
-        self.expect(TokenType.LBRACE, "Expected '{'")
+        if self.match(TokenType.EXTENDS) != None:
+            baseName = self.expect(TokenType.IDENT, "Nama kelas induk diharapkan").text
+        elif self.match(TokenType.LPAREN) != None:
+            if not self.check(TokenType.RPAREN):
+                baseName = self.expect(TokenType.IDENT, "Nama kelas induk diharapkan").text
+                if baseName == "object":
+                    baseName = None
+                if not self.check(TokenType.RPAREN):
+                    self.fail("bentuk kelas induk ini belum didukung kompiler")
+            self.expect(TokenType.RPAREN, "')' diharapkan setelah kelas induk")
+        self.expect(TokenType.LBRACE, "'{' diharapkan setelah nama kelas")
         methods = []
+        attrs = []
         while not self.check(TokenType.RBRACE) and not self.check(TokenType.EOF):
-            self.skipSemicolons()
-            if self.check(TokenType.RBRACE):
-                break
-            if self.check(TokenType.FUNC):
-                methods.append(self.parseFunction())
-            elif self.check(TokenType.PASS):
+            tok = self.peek(0)
+            if tok.type == TokenType.SEMICOLON:
+                self.advance()
+                continue
+            if self.isWord(tok, "pass"):
                 self.advance()
                 self.match(TokenType.SEMICOLON)
-            else:
+                continue
+            if tok.type == TokenType.IDENT and self.peek(1).type == TokenType.ASSIGN:
                 self.advance()
-            self.skipSemicolons()
-        self.expect(TokenType.RBRACE, "Expected '}'")
-        className = nameTok.text if nameTok != None else ""
-        return ClassStmt(className, baseName, methods)
+                self.advance()
+                value = self.parseExpr()
+                if value.type == "IDENT":
+                    for m in methods:
+                        if m.name == value.name:
+                            self.fail("alias metode belum didukung kompiler")
+                self.expectEnd("';' diharapkan setelah atribut kelas")
+                attrs.append([tok.text, value])
+                continue
+            if tok.type == TokenType.STRING and (self.peek(1).type == TokenType.SEMICOLON or self.peek(1).line > tok.endLine):
+                self.advance()
+                self.match(TokenType.SEMICOLON)
+                continue
+            kind = ""
+            while tok.type == TokenType.AT:
+                self.advance()
+                dec = self.parseExpr()
+                self.expectEnd("';' diharapkan setelah dekorator")
+                if dec.type == "IDENT" and dec.name == "staticmethod":
+                    kind = "static"
+                elif dec.type == "IDENT" and dec.name == "classmethod":
+                    kind = "class"
+                elif dec.type == "IDENT" and dec.name == "property":
+                    kind = "property"
+                elif dec.type == "MEMBER" and dec.name == "setter" and dec.target.type == "IDENT":
+                    kind = "setter:" + dec.target.name
+                else:
+                    self.fail("dekorator metode kelas ini belum didukung")
+                tok = self.peek(0)
+            if tok.type != TokenType.FUNC:
+                self.fail("Cuma deklarasi fungsi yang boleh di dalam kelas")
+            self.advance()
+            m = self.parseFunction()
+            self.at(m, tok)
+            m.kind = kind
+            methods.append(m)
+        self.expect(TokenType.RBRACE, "'}' diharapkan setelah isi kelas")
+        return ClassStmt(nameTok.text, baseName, methods, attrs)
 
-    func parseVar(self):
-        self.advance()
-        nameTok = self.expect(TokenType.IDENT, "Expected variable name")
-        val = NullExpr()
-        if self.match(TokenType.ASSIGN) != None:
+    func parseStruct(self):
+        nameTok = self.expect(TokenType.IDENT, "Nama bentuk diharapkan")
+        self.expect(TokenType.LBRACE, "'{' diharapkan setelah nama bentuk")
+        fields = []
+        while not self.check(TokenType.RBRACE):
+            fields.append(self.expect(TokenType.IDENT, "Nama field diharapkan").text)
+            if self.check(TokenType.COLON):
+                self.fail("anotasi tipe belum didukung kompiler")
+            if self.match(TokenType.COMMA) == None:
+                break
+        self.expect(TokenType.RBRACE, "'}' diharapkan setelah field bentuk")
+        return StructStmt(nameTok.text, fields)
+
+    func parseEnum(self):
+        nameTok = self.expect(TokenType.IDENT, "Nama jenis diharapkan")
+        self.expect(TokenType.LBRACE, "'{' diharapkan setelah nama jenis")
+        variants = []
+        while not self.check(TokenType.RBRACE):
+            variants.append(self.expect(TokenType.IDENT, "Nama varian diharapkan").text)
+            if self.match(TokenType.COMMA) == None:
+                break
+        self.expect(TokenType.RBRACE, "'}' diharapkan setelah varian jenis")
+        return EnumStmt(nameTok.text, variants)
+
+    func isClassLike(self, tok):
+        if tok.type != TokenType.IDENT or len(tok.text) == 0:
+            return False
+        first = tok.text[0]
+        return first >= "A" and first <= "Z"
+
+    func parseTry(self):
+        tryBlock = self.parseBlock()
+        if self.match(TokenType.FINALLY) != None:
+            finallyBlock = self.parseBlock()
+            rethrow = BlockStmt([ThrowStmt(IdentExpr("__fe"))])
+            return TryStmt(tryBlock, "__fe", rethrow, finallyBlock)
+        if not self.check(TokenType.CATCH):
+            self.fail("'tangkap' diharapkan setelah blok 'coba'")
+        clauses = []
+        while self.check(TokenType.CATCH):
+            self.advance()
+            clauses.append(self.parseCatchClause())
+        elseBlock = None
+        if self.match(TokenType.ELSE) != None:
+            elseBlock = self.parseBlock()
+        finallyBlock = None
+        if self.match(TokenType.FINALLY) != None:
+            finallyBlock = self.parseBlock()
+        if len(clauses) == 1 and clauses[0]["filter"] == None and elseBlock == None:
+            return TryStmt(tryBlock, clauses[0]["var"], clauses[0]["body"], finallyBlock)
+        return TryStmt(tryBlock, "", None, finallyBlock, clauses, elseBlock)
+
+    func parseCatchClause(self):
+        filter = None
+        var = ""
+        if self.match(TokenType.LPAREN) != None:
+            tok = self.peek(0)
+            if tok.type == TokenType.IDENT and not self.isClassLike(tok) and self.peek(1).type == TokenType.RPAREN:
+                var = self.advance().text
+                self.advance()
+            else:
+                items = []
+                while True:
+                    items.append(self.parsePostfix())
+                    if self.match(TokenType.COMMA) == None:
+                        break
+                self.expect(TokenType.RPAREN, "')' diharapkan")
+                filter = items[0] if len(items) == 1 else self.at(ListExpr(items), tok)
+        elif self.check(TokenType.IDENT):
+            tok = self.peek(0)
+            if self.isClassLike(tok) or self.peek(1).type == TokenType.DOT:
+                filter = self.parsePostfix()
+            else:
+                var = self.advance().text
+        if self.isWord(self.peek(0), "as", "sbg"):
+            self.advance()
+            var = self.expect(TokenType.IDENT, "Nama variabel diharapkan setelah 'as'").text
+        self.hidden += 1
+        self.catchVars.append(var if var != "" else "__ex" + str(self.hidden))
+        body = self.parseBlock()
+        self.catchVars.pop()
+        return {"filter": filter, "var": var, "body": body}
+
+    func parseThrow(self):
+        if self.check(TokenType.SEMICOLON) or self.check(TokenType.RBRACE):
+            if len(self.catchVars) == 0:
+                self.fail("'raise' tanpa nilai cuma boleh di dalam blok 'except'")
+            val = IdentExpr(self.catchVars[len(self.catchVars) - 1])
+        else:
             val = self.parseExpr()
-        self.match(TokenType.SEMICOLON)
-        varName = nameTok.text if nameTok != None else ""
-        return VarStmt(varName, val)
+            if self.isWord(self.peek(0), "from", "dari"):
+                self.advance()
+                self.parseExpr()
+        self.expectEnd("';' diharapkan setelah 'lempar'")
+        return ThrowStmt(val)
 
     func parseIf(self):
-        self.advance()
         condition = self.parseExpr()
-        self.match(TokenType.COLON)
         thenBranch = self.parseBlock()
-
-        self.skipSemicolons()
         elseBranch = None
         if self.match(TokenType.ELSE) != None:
-            self.skipSemicolons()
-            self.match(TokenType.COLON)
-            self.skipSemicolons()
-            if self.check(TokenType.IF):
-                elseBranch = self.parseIf()
-            else:
+            if self.check(TokenType.LBRACE):
                 elseBranch = self.parseBlock()
+            else:
+                elseBranch = BlockStmt([self.parseStatement()])
         return IfStmt(condition, thenBranch, elseBranch)
 
     func parseWhile(self):
-        self.advance()
         condition = self.parseExpr()
-        self.match(TokenType.COLON)
         body = self.parseBlock()
         return WhileStmt(condition, body)
 
-    func parseFor(self):
-        self.advance()
+    func forTargets(self):
+        names = []
+        paren = self.match(TokenType.LPAREN) != None
+        while True:
+            names.append(self.expect(TokenType.IDENT, "Nama variabel diharapkan setelah 'for'").text)
+            if self.match(TokenType.COMMA) == None:
+                break
+        if paren:
+            self.expect(TokenType.RPAREN, "')' diharapkan")
+        return names
 
-        if self.check(TokenType.LPAREN):
-            self.advance()
-            init = None
-            if not self.check(TokenType.SEMICOLON):
-                init = self.parseStatement()
-            else:
-                self.advance()
-
-            cond = BoolExpr(True)
-            if not self.check(TokenType.SEMICOLON):
-                cond = self.parseExpr()
-            self.expect(TokenType.SEMICOLON, "Expected ';' in for condition")
-
-            post = None
-            if not self.check(TokenType.RPAREN):
-                post = self.parseExpr()
-            self.expect(TokenType.RPAREN, "Expected ')'")
-            self.match(TokenType.COLON)
+    func parseFor(self, forTok):
+        if not self.check(TokenType.LPAREN):
+            declared = hasattr(forTok, "declared")
+            names = self.forTargets()
+            if not self.matchWord("in", "dalam"):
+                self.fail("'in' diharapkan setelah variabel 'for'")
+            iterable = self.parseExpr()
             body = self.parseBlock()
-            return ForStmt(init, cond, post, body)
-
-        varTok = self.expect(TokenType.IDENT, "Expected for loop variable name")
-        self.expect(TokenType.IN, "Expected 'in' in for loop")
-        iterable = self.parseExpr()
-        self.match(TokenType.COLON)
+            return ForInStmt(names[0], iterable, body, names, declared)
+        self.advance()
+        init = None
+        if not self.check(TokenType.SEMICOLON):
+            if self.match(TokenType.VAR) != None:
+                nameTok = self.expect(TokenType.IDENT, "Nama variabel diharapkan")
+                self.expect(TokenType.ASSIGN, "'=' diharapkan setelah nama variabel")
+                init = self.at(VarStmt(nameTok.text, self.parseExpr()), nameTok)
+            else:
+                init = self.at(ExprStmt(self.parseExpr()), forTok)
+        self.expect(TokenType.SEMICOLON, "';' diharapkan setelah inisialisasi perulangan 'untuk'")
+        cond = self.at(BoolExpr(True), forTok)
+        if not self.check(TokenType.SEMICOLON):
+            cond = self.parseExpr()
+        self.expect(TokenType.SEMICOLON, "';' diharapkan setelah kondisi perulangan 'untuk'")
+        post = None
+        if not self.check(TokenType.RPAREN):
+            post = self.parseExpr()
+        self.expect(TokenType.RPAREN, "')' diharapkan setelah klausa perulangan 'untuk'")
         body = self.parseBlock()
-        varName = varTok.text if varTok != None else ""
-        return ForInStmt(varName, iterable, body)
+        return ForStmt(init, cond, post, body)
 
     func parseReturn(self):
-        self.advance()
-        value = NullExpr()
+        value = None
         if not self.check(TokenType.SEMICOLON) and not self.check(TokenType.RBRACE) and not self.check(TokenType.EOF):
+            startTok = self.peek(0)
             value = self.parseExpr()
-        self.match(TokenType.SEMICOLON)
+            if self.check(TokenType.COMMA):
+                items = [value]
+                while self.match(TokenType.COMMA) != None:
+                    items.append(self.parseExpr())
+                value = self.at(ListExpr(items), startTok)
+        self.expectEnd("';' diharapkan setelah pernyataan 'hasil'")
         return ReturnStmt(value)
 
-    func parseTry(self):
-        self.advance()
-        self.match(TokenType.COLON)
-        tryBlock = self.parseBlock()
-
-        self.skipSemicolons()
-        catchVar = "err"
-        catchBlock = None
-        if self.match(TokenType.CATCH) != None:
-            self.skipSemicolons()
-            if self.match(TokenType.LPAREN) != None:
-                v = self.expect(TokenType.IDENT, "Expected exception variable name")
-                if v != None:
-                    catchVar = v.text
-                self.expect(TokenType.RPAREN, "Expected ')'")
-            elif self.check(TokenType.IDENT):
-                v = self.advance()
-                catchVar = v.text
-            self.skipSemicolons()
-            self.match(TokenType.COLON)
-            catchBlock = self.parseBlock()
-
-        self.skipSemicolons()
-        finallyBlock = None
-        if self.match(TokenType.FINALLY) != None:
-            self.skipSemicolons()
-            self.match(TokenType.COLON)
-            finallyBlock = self.parseBlock()
-
-        return TryStmt(tryBlock, catchVar, catchBlock, finallyBlock)
-
-    func parseThrow(self):
-        self.advance()
-        val = self.parseExpr()
-        self.match(TokenType.SEMICOLON)
-        return ThrowStmt(val)
-
     func parseExprStatement(self):
+        tok = self.peek(0)
+        nxt = self.peek(1)
+        if self.isWord(tok, "del", "hapus") and (nxt.type == TokenType.IDENT or nxt.type == TokenType.THIS):
+            self.advance()
+            parts = []
+            while True:
+                target = self.parseExpr()
+                if target.type == "IDENT":
+                    parts.append(self.at(ExprStmt(self.at(AssignExpr(target, "=", self.at(NullExpr(), tok)), tok)), tok))
+                elif target.type == "INDEX":
+                    parts.append(self.at(ExprStmt(self.at(CallExpr(self.at(IdentExpr("_delitem"), tok), [target.target, target.index]), tok)), tok))
+                else:
+                    self.fail("'del' butuh nama, x[i] atau x[kunci]")
+                if self.match(TokenType.COMMA) == None:
+                    break
+            self.expectEnd("';' diharapkan setelah 'del'")
+            k = 1
+            while k < len(parts):
+                self.pending.append(parts[k])
+                k += 1
+            return parts[0]
+        if self.isWord(tok, "assert", "pastikan") and nxt.type != TokenType.ASSIGN and nxt.type != TokenType.DOT and nxt.type != TokenType.LPAREN:
+            self.advance()
+            args = [self.parseExpr()]
+            if self.match(TokenType.COMMA) != None:
+                args.append(self.parseExpr())
+            self.expectEnd("';' diharapkan setelah 'assert'")
+            return ExprStmt(self.at(CallExpr(self.at(IdentExpr("_assert"), tok), args), tok))
+        starFirst = False
+        if tok.type == TokenType.STAR and nxt.type == TokenType.IDENT:
+            self.advance()
+            starFirst = True
         expr = self.parseExpr()
-        self.match(TokenType.SEMICOLON)
+        if self.check(TokenType.COMMA) and (expr.type == "IDENT" or expr.type == "INDEX" or expr.type == "MEMBER"):
+            return self.parseTupleAssign(expr, tok, 0 if starFirst else -1)
+        if starFirst:
+            self.fail("'*' di kiri penugasan butuh daftar variabel")
+        self.expectEnd("';' diharapkan setelah ekspresi")
         return ExprStmt(expr)
+
+    func parseTupleAssign(self, first, startTok, starIndex):
+        targets = [first]
+        while self.match(TokenType.COMMA) != None:
+            if self.check(TokenType.ASSIGN):
+                break
+            if self.check(TokenType.STAR):
+                if starIndex >= 0:
+                    self.fail("hanya satu '*' boleh di kiri penugasan")
+                self.advance()
+                starIndex = len(targets)
+            targets.append(self.parseOr())
+        self.expect(TokenType.ASSIGN, "'=' diharapkan pada penugasan beruntun")
+        rhs = [self.parseAssign()]
+        isLiteral = False
+        while self.match(TokenType.COMMA) != None:
+            if self.check(TokenType.SEMICOLON) or self.peek(0).line != self.tokens[self.pos - 1].endLine:
+                break
+            rhs.append(self.parseAssign())
+            isLiteral = True
+        self.expectEnd("';' diharapkan setelah penugasan")
+        for target in targets:
+            if target.type != "IDENT" and target.type != "INDEX" and target.type != "MEMBER":
+                self.fail("Target assignment nggak valid")
+        value = rhs[0]
+        if isLiteral:
+            value = self.at(ListExpr(rhs), startTok)
+        return TupleAssignStmt(targets, value, isLiteral, starIndex)
 
     func parseExpr(self):
         return self.parseAssign()
 
     func parseAssign(self):
-        target = self.parseTernary()
+        start = self.peek(0)
+        if self.isWord(start, "yield") and self.peek(1).type != TokenType.ASSIGN and self.peek(1).type != TokenType.DOT:
+            self.fail("'yield' belum didukung kompiler")
+        expr = self.parseOr()
 
-        if self.check(TokenType.ASSIGN) or self.check("+=") or self.check("-=") or self.check("*=") or self.check("/=") or self.check("%=") or self.check("&=") or self.check("|=") or self.check("^=") or self.check("<<=") or self.check(">>="):
-            opTok = self.advance()
-            val = self.parseAssign()
-            return AssignExpr(target, opTok.text, val)
-
-        return target
-
-    func parseTernary(self):
-        thenVal = self.parseOr()
-        if self.check(TokenType.IF):
+        if self.check(TokenType.IF) and self.pos > 0 and self.peek(0).line == self.tokens[self.pos - 1].endLine:
             self.advance()
             cond = self.parseOr()
-            self.expect(TokenType.ELSE, "Expected 'else' in conditional expression")
-            elseVal = self.parseTernary()
-            return TernaryExpr(cond, thenVal, elseVal)
-        return thenVal
+            self.expect(TokenType.ELSE, "'else' diharapkan dalam ekspresi kondisional")
+            other = self.parseAssign()
+            expr = self.at(TernaryExpr(cond, expr, other), start)
 
-    func parseOr(self):
-        left = self.parseAnd()
+        if self.check(TokenType.ASSIGN):
+            self.advance()
+            value = self.parseAssign()
+            if expr.type != "IDENT" and expr.type != "INDEX" and expr.type != "MEMBER":
+                self.fail("Target assignment nggak valid")
+            return self.at(AssignExpr(expr, "=", value), start)
 
-        while self.check(TokenType.OR):
+        if self.check(TokenType.COMPOUND):
+            if expr.type != "IDENT" and expr.type != "INDEX" and expr.type != "MEMBER":
+                self.fail("Target penugasan nggak valid")
             opTok = self.advance()
-            right = self.parseAnd()
-            left = BinaryExpr(opTok.text, left, right)
-
-        return left
-
-    func parseAnd(self):
-        left = self.parseEquality()
-
-        while self.check(TokenType.AND):
-            opTok = self.advance()
-            right = self.parseEquality()
-            left = BinaryExpr(opTok.text, left, right)
-
-        return left
-
-    func parseEquality(self):
-        left = self.parseComparison()
-
-        while self.check(TokenType.EQ) or self.check(TokenType.NEQ):
-            opTok = self.advance()
-            right = self.parseComparison()
-            left = BinaryExpr(opTok.text, left, right)
-
-        return left
-
-    func parseComparison(self):
-        left = self.parseBitOr()
-
-        while self.check(TokenType.LT) or self.check(TokenType.LTE) or self.check(TokenType.GT) or self.check(TokenType.GTE) or self.check(TokenType.IN):
-            opTok = self.advance()
-            right = self.parseBitOr()
-            left = BinaryExpr(opTok.text, left, right)
-
-        return left
-
-    func parseBitOr(self):
-        left = self.parseBitXor()
-
-        while self.check(TokenType.PIPE):
-            opTok = self.advance()
-            right = self.parseBitXor()
-            left = BinaryExpr(opTok.text, left, right)
-
-        return left
-
-    func parseBitXor(self):
-        left = self.parseBitAnd()
-
-        while self.check(TokenType.CARET):
-            opTok = self.advance()
-            right = self.parseBitAnd()
-            left = BinaryExpr(opTok.text, left, right)
-
-        return left
-
-    func parseBitAnd(self):
-        left = self.parseShift()
-
-        while self.check(TokenType.AMP):
-            opTok = self.advance()
-            right = self.parseShift()
-            left = BinaryExpr(opTok.text, left, right)
-
-        return left
-
-    func parseShift(self):
-        left = self.parseTerm()
-
-        while self.check(TokenType.SHL) or self.check(TokenType.SHR):
-            opTok = self.advance()
-            right = self.parseTerm()
-            left = BinaryExpr(opTok.text, left, right)
-
-        return left
-
-    func parseTerm(self):
-        left = self.parseFactor()
-
-        while self.check(TokenType.PLUS) or self.check(TokenType.MINUS):
-            opTok = self.advance()
-            right = self.parseFactor()
-            left = BinaryExpr(opTok.text, left, right)
-
-        return left
-
-    func parseFactor(self):
-        left = self.parseUnary()
-
-        while self.check(TokenType.STAR) or self.check(TokenType.SLASH) or self.check(TokenType.PERCENT):
-            opTok = self.advance()
-            right = self.parseUnary()
-            left = BinaryExpr(opTok.text, left, right)
-
-        return left
-
-    func parseUnary(self):
-        if self.check("!") or self.check(TokenType.NOT) or self.check(TokenType.MINUS) or self.check(TokenType.PLUS) or self.check(TokenType.TILDE):
-            opTok = self.advance()
-            operand = self.parseUnary()
-            return UnaryExpr(opTok.text, operand)
-
-        return self.parsePostfix()
-
-    func parsePostfix(self):
-        expr = self.parsePrimary()
-
-        while True:
-            if self.match(TokenType.LPAREN) != None:
-                args = []
-                if not self.check(TokenType.RPAREN):
-                    while True:
-                        args.append(self.parseExpr())
-                        if self.match(TokenType.COMMA) == None:
-                            break
-                self.expect(TokenType.RPAREN, "Expected ')'")
-                expr = CallExpr(expr, args)
-            elif self.match(TokenType.LBRACKET) != None:
-                start = None
-                stop = None
-                isSlice = False
-
-                if not self.check(TokenType.COLON):
-                    start = self.parseExpr()
-
-                if self.match(TokenType.COLON) != None:
-                    isSlice = True
-                    if not self.check(TokenType.RBRACKET):
-                        stop = self.parseExpr()
-
-                self.expect(TokenType.RBRACKET, "Expected ']'")
-
-                if isSlice:
-                    expr = SliceExpr(expr, start, stop)
-                else:
-                    expr = IndexExpr(expr, start)
-            elif self.match(TokenType.DOT) != None:
-                tok = self.peek(0)
-                if tok.type != TokenType.EOF and tok.type != TokenType.SEMICOLON and tok.type != "\n":
-                    self.advance()
-                    expr = MemberExpr(expr, tok.text)
-                else:
-                    nameTok = self.expect(TokenType.IDENT, "Expected member name after '.'")
-                    memberName = nameTok.text if nameTok != None else ""
-                    expr = MemberExpr(expr, memberName)
-            else:
-                break
+            value = self.parseAssign()
+            return self.at(AssignExpr(expr, opTok.text + "=", value), start)
 
         return expr
 
-    func parsePrimary(self):
-        if self.check(TokenType.NUMBER):
-            tok = self.advance()
-            numText = tok.text
-            floatLit = False
-            if not (numText.startswith("0x") or numText.startswith("0X") or numText.startswith("0b") or numText.startswith("0B") or numText.startswith("0o") or numText.startswith("0O")):
-                floatLit = "." in numText or "e" in numText or "E" in numText
-            return NumberExpr(tok.number, floatLit)
-        elif self.check(TokenType.STRING):
-            tok = self.advance()
-            return StringExpr(tok.text)
-        elif self.check(TokenType.TRUE):
+    func parseOr(self):
+        start = self.peek(0)
+        left = self.parseAnd()
+        while self.check(TokenType.OR):
             self.advance()
-            return BoolExpr(True)
-        elif self.check(TokenType.FALSE):
+            right = self.parseAnd()
+            left = self.at(BinaryExpr("or", left, right), start)
+        return left
+
+    func parseAnd(self):
+        start = self.peek(0)
+        left = self.parseEquality()
+        while self.check(TokenType.AND):
             self.advance()
-            return BoolExpr(False)
-        elif self.check(TokenType.NULL):
+            right = self.parseEquality()
+            left = self.at(BinaryExpr("and", left, right), start)
+        return left
+
+    func parseEquality(self):
+        start = self.peek(0)
+        left = self.parseComparison()
+        while self.check(TokenType.EQ) or self.check(TokenType.NEQ):
+            opTok = self.advance()
+            right = self.parseComparison()
+            left = self.at(BinaryExpr(opTok.text, left, right), start)
+        return left
+
+    func isRelational(self):
+        t = self.tokens[self.pos].type
+        return t == TokenType.LT or t == TokenType.LTE or t == TokenType.GT or t == TokenType.GTE
+
+    func cloneSimple(self, e):
+        if e.type == "IDENT":
+            return self.copyPos(IdentExpr(e.name), e)
+        if e.type == "NUMBER":
+            return self.copyPos(NumberExpr(e.value, e.isFloat), e)
+        if e.type == "STRING":
+            return self.copyPos(StringExpr(e.value), e)
+        if e.type == "BOOL":
+            return self.copyPos(BoolExpr(e.value), e)
+        if e.type == "NULL":
+            return self.copyPos(NullExpr(), e)
+        return None
+
+    func copyPos(self, node, source):
+        if hasattr(source, "line"):
+            node.line = source.line
+            node.col = source.col
+        return node
+
+    func parseComparison(self):
+        start = self.peek(0)
+        expr = self.parseBitOr()
+        while True:
+            tok = self.peek(0)
+            if self.isRelational():
+                operands = [expr]
+                ops = []
+                while self.isRelational():
+                    ops.append(self.advance().text)
+                    operands.append(self.parseBitOr())
+                if len(ops) == 1:
+                    expr = self.at(BinaryExpr(ops[0], operands[0], operands[1]), start)
+                    continue
+                chain = None
+                k = 0
+                while k < len(ops):
+                    leftOperand = operands[k]
+                    if k > 0:
+                        leftOperand = self.cloneSimple(operands[k])
+                        if leftOperand == None:
+                            self.fail("perbandingan berantai dengan operand kompleks belum didukung kompiler")
+                    cmp = self.at(BinaryExpr(ops[k], leftOperand, operands[k + 1]), start)
+                    if chain == None:
+                        chain = cmp
+                    else:
+                        chain = self.at(BinaryExpr("and", chain, cmp), start)
+                    k += 1
+                expr = chain
+            elif self.isWord(tok, "in", "dalam"):
+                self.advance()
+                right = self.parseBitOr()
+                expr = self.at(BinaryExpr("in", expr, right), start)
+            elif tok.type == TokenType.NOT and tok.text == "not" and self.isWord(self.peek(1), "in", "dalam"):
+                self.advance()
+                self.advance()
+                right = self.parseBitOr()
+                expr = self.at(UnaryExpr("not", self.at(BinaryExpr("in", expr, right), start)), start)
+            elif self.isWord(tok, "is", "adalah"):
+                self.advance()
+                negate = False
+                if self.check(TokenType.NOT) and self.peek(0).text == "not":
+                    self.advance()
+                    negate = True
+                right = self.parseBitOr()
+                expr = self.at(BinaryExpr("!=" if negate else "==", expr, right), start)
+            else:
+                break
+        return expr
+
+    func parseBitOr(self):
+        start = self.peek(0)
+        left = self.parseBitXor()
+        while self.check(TokenType.PIPE):
             self.advance()
-            return NullExpr()
-        elif self.check(TokenType.IDENT) and self.peek(0).text == "lambda":
+            left = self.at(BinaryExpr("|", left, self.parseBitXor()), start)
+        return left
+
+    func parseBitXor(self):
+        start = self.peek(0)
+        left = self.parseBitAnd()
+        while self.check(TokenType.CARET):
             self.advance()
-            params = []
-            while not self.check(TokenType.COLON) and not self.check(TokenType.LBRACE) and not self.check(TokenType.EOF):
-                p = self.expect(TokenType.IDENT, "Expected lambda parameter name")
-                if p != None:
-                    params.append(p.text)
-                if self.match(TokenType.COMMA) == None:
-                    break
-            matchedBrace = False
-            if self.match(TokenType.COLON) == None:
-                if self.match(TokenType.LBRACE) != None:
-                    matchedBrace = True
+            left = self.at(BinaryExpr("^", left, self.parseBitAnd()), start)
+        return left
+
+    func parseBitAnd(self):
+        start = self.peek(0)
+        left = self.parseShift()
+        while self.check(TokenType.AMP):
+            self.advance()
+            left = self.at(BinaryExpr("&", left, self.parseShift()), start)
+        return left
+
+    func parseShift(self):
+        start = self.peek(0)
+        left = self.parseTerm()
+        while self.check(TokenType.SHL) or self.check(TokenType.SHR):
+            opTok = self.advance()
+            left = self.at(BinaryExpr(opTok.text, left, self.parseTerm()), start)
+        return left
+
+    func parseTerm(self):
+        start = self.peek(0)
+        left = self.parseFactor()
+        while self.check(TokenType.PLUS) or self.check(TokenType.MINUS):
+            opTok = self.advance()
+            left = self.at(BinaryExpr(opTok.text, left, self.parseFactor()), start)
+        return left
+
+    func parseFactor(self):
+        start = self.peek(0)
+        left = self.parseUnary()
+        while self.check(TokenType.STAR) or self.check(TokenType.SLASH) or self.check(TokenType.PERCENT) or self.check(TokenType.SLASHSLASH):
+            opTok = self.advance()
+            left = self.at(BinaryExpr(opTok.text, left, self.parseUnary()), start)
+        return left
+
+    func parseUnary(self):
+        tok = self.peek(0)
+        if tok.type == TokenType.NOT and tok.text != "!":
+            self.advance()
+            return self.at(UnaryExpr("not", self.parseEquality()), tok)
+        if tok.type == TokenType.TILDE:
+            self.advance()
+            return self.at(UnaryExpr("~", self.parseUnary()), tok)
+        if tok.type == TokenType.MINUS:
+            self.advance()
+            return self.at(UnaryExpr("-", self.parseUnary()), tok)
+        if tok.type == TokenType.NOT:
+            self.advance()
+            return self.at(UnaryExpr("not", self.parseUnary()), tok)
+        return self.parsePower()
+
+    func parsePower(self):
+        start = self.peek(0)
+        base = self.parsePostfix()
+        if self.check(TokenType.STARSTAR):
+            self.advance()
+            return self.at(BinaryExpr("**", base, self.parseUnary()), start)
+        return base
+
+    func parseCallArgs(self, callee, start):
+        args = []
+        kwNames = []
+        kwValues = []
+        while not self.check(TokenType.RPAREN):
+            if self.check(TokenType.STAR) or self.check(TokenType.STARSTAR):
+                isKw = self.advance().type == TokenType.STARSTAR
+                args.append(self.at(SpreadExpr(self.parseExpr(), isKw), start))
+            elif self.check(TokenType.IDENT) and self.peek(1).type == TokenType.ASSIGN:
+                kwNames.append(self.advance().text)
+                self.advance()
+                kwValues.append(self.parseExpr())
+            else:
+                if len(kwNames) > 0:
+                    self.fail("Argumen posisi nggak boleh setelah argumen bernama")
+                args.append(self.parseExpr())
+                if self.check(TokenType.FOR) and len(args) == 1:
+                    args[0] = self.parseComprehension(args[0], None, False, start)
+            if self.match(TokenType.COMMA) == None:
+                break
+        self.expect(TokenType.RPAREN, "')' diharapkan setelah argumen")
+        return self.at(CallExpr(callee, args, kwNames, kwValues), start)
+
+    func parsePostfix(self):
+        start = self.peek(0)
+        expr = self.parsePrimary()
+        while True:
+            tok = self.peek(0)
+            if tok.type == TokenType.LPAREN:
+                self.advance()
+                expr = self.parseCallArgs(expr, start)
+            elif tok.type == TokenType.LBRACKET:
+                self.advance()
+                index = None
+                stop = None
+                step = None
+                isSlice = False
+                if not self.check(TokenType.COLON):
+                    index = self.parseExpr()
+                if self.match(TokenType.COLON) != None:
+                    isSlice = True
+                    if not self.check(TokenType.RBRACKET) and not self.check(TokenType.COLON):
+                        stop = self.parseExpr()
+                    if self.match(TokenType.COLON) != None:
+                        if not self.check(TokenType.RBRACKET):
+                            step = self.parseExpr()
+                self.expect(TokenType.RBRACKET, "']' diharapkan setelah index")
+                if isSlice:
+                    expr = self.at(SliceExpr(expr, index, stop, step), start)
                 else:
-                    self.expect(TokenType.COLON, "Expected ':' in lambda")
-            body = self.parseExpr()
-            if matchedBrace:
-                self.match(TokenType.RBRACE)
-            return LambdaExpr(params, ReturnStmt(body))
-        elif self.check(TokenType.IDENT) or self.check(TokenType.THIS) or self.check(TokenType.SUPER):
-            tok = self.advance()
-            return IdentExpr(tok.text)
-        elif self.match(TokenType.LPAREN) != None:
-            expr = self.parseExpr()
-            self.expect(TokenType.RPAREN, "Expected ')'")
-            return expr
-        elif self.match(TokenType.LBRACKET) != None:
+                    expr = self.at(IndexExpr(expr, index), start)
+            elif tok.type == TokenType.DOT:
+                self.advance()
+                nameTok = self.peek(0)
+                nt = nameTok.type
+                if nt == TokenType.EOF or nt == TokenType.SEMICOLON or nt == TokenType.RPAREN or nt == TokenType.RBRACE or nt == TokenType.RBRACKET or nt == TokenType.STRING or nt == TokenType.NUMBER:
+                    self.fail("Nama field diharapkan setelah '.'")
+                self.advance()
+                expr = self.at(MemberExpr(expr, nameTok.text), start)
+            else:
+                break
+        return expr
+
+    func parseLambda(self, tok):
+        self.advance()
+        params = []
+        defaults = {}
+        while not self.check(TokenType.COLON) and not self.check(TokenType.LBRACE):
+            nameTok = self.expect(TokenType.IDENT, "Nama parameter diharapkan")
+            params.append(nameTok.text)
+            if self.match(TokenType.ASSIGN) != None:
+                defaults[nameTok.text] = self.parseExpr()
+            elif len(defaults) > 0:
+                self.fail("Parameter tanpa nilai default nggak boleh setelah yang punya default")
+            if self.match(TokenType.COMMA) == None:
+                break
+        inline = False
+        if self.match(TokenType.LBRACE) != None:
+            inline = True
+        else:
+            self.expect(TokenType.COLON, "':' diharapkan setelah parameter lambda")
+        body = self.parseAssign()
+        if inline:
+            self.match(TokenType.SEMICOLON)
+            self.expect(TokenType.RBRACE, "'}' diharapkan")
+        return self.at(LambdaExpr(params, self.at(ReturnStmt(body), tok), defaults), tok)
+
+    func parsePrimary(self):
+        tok = self.peek(0)
+        t = tok.type
+        if t == TokenType.NUMBER:
+            self.advance()
+            return self.at(NumberExpr(tok.number, tok.isFloat), tok)
+        if t == TokenType.STRING:
+            self.advance()
+            return self.at(StringExpr(tok.text), tok)
+        if t == TokenType.TRUE:
+            self.advance()
+            return self.at(BoolExpr(True), tok)
+        if t == TokenType.FALSE:
+            self.advance()
+            return self.at(BoolExpr(False), tok)
+        if t == TokenType.NULL:
+            self.advance()
+            return self.at(NullExpr(), tok)
+        if t == TokenType.IDENT:
+            nxt = self.peek(1).type
+            if tok.text == "lambda" and (nxt == TokenType.IDENT or nxt == TokenType.COLON or nxt == TokenType.LBRACE):
+                return self.parseLambda(tok)
+            if tok.text == "await":
+                self.fail("'await' belum didukung kompiler")
+            self.advance()
+            return self.at(IdentExpr(tok.text), tok)
+        if t == TokenType.THIS:
+            self.advance()
+            return self.at(IdentExpr("self"), tok)
+        if t == TokenType.SUPER:
+            self.advance()
+            if self.check(TokenType.LPAREN) and self.peek(1).type == TokenType.RPAREN:
+                self.advance()
+                self.advance()
+            return self.at(IdentExpr("super"), tok)
+        if t == TokenType.LBRACKET:
+            self.advance()
             elements = []
             if not self.check(TokenType.RBRACKET):
-                while True:
-                    elements.append(self.parseExpr())
-                    if self.match(TokenType.COMMA) == None:
+                elements.append(self.parseExpr())
+                if self.check(TokenType.FOR):
+                    comp = self.parseComprehension(elements[0], None, False, tok)
+                    self.expect(TokenType.RBRACKET, "']' diharapkan setelah komprehensi")
+                    return comp
+                while self.match(TokenType.COMMA) != None:
+                    if self.check(TokenType.RBRACKET):
                         break
-            self.expect(TokenType.RBRACKET, "Expected ']'")
-            return ListExpr(elements)
-        elif self.match(TokenType.LBRACE) != None:
+                    elements.append(self.parseExpr())
+            self.expect(TokenType.RBRACKET, "']' diharapkan setelah elemen larik")
+            return self.at(ListExpr(elements), tok)
+        if t == TokenType.LDICT:
+            self.advance()
             keys = []
             values = []
-            if not self.check(TokenType.RBRACE):
-                while True:
-                    if self.check(TokenType.NUMBER):
-                        keyVal = self.advance().number
-                    else:
-                        keyTok = self.expect(TokenType.STRING, "Map key must be string or number")
-                        keyVal = keyTok.text if keyTok != None else ""
-                    self.expect(TokenType.COLON, "Expected ':' after map key")
-                    val = self.parseExpr()
-                    keys.append(keyVal)
-                    values.append(val)
-                    if self.match(TokenType.COMMA) == None:
+            while not self.check(TokenType.RDICT):
+                key = self.parseExpr()
+                if len(keys) == 0 and not self.check(TokenType.COLON):
+                    self.fail("himpunan (set) belum didukung kompiler")
+                self.expect(TokenType.COLON, "':' diharapkan setelah kunci peta")
+                value = self.parseExpr()
+                if len(keys) == 0 and self.check(TokenType.FOR):
+                    comp = self.parseComprehension(key, value, True, tok)
+                    self.expect(TokenType.RDICT, "'}' diharapkan setelah komprehensi")
+                    return comp
+                if key.type == "STRING":
+                    keys.append(key.value)
+                else:
+                    keys.append(key)
+                values.append(value)
+                if self.match(TokenType.COMMA) == None:
+                    break
+            self.expect(TokenType.RDICT, "'}' diharapkan setelah isi peta")
+            return self.at(MapExpr(keys, values), tok)
+        if t == TokenType.LPAREN:
+            self.advance()
+            if self.match(TokenType.RPAREN) != None:
+                return self.at(ListExpr([]), tok)
+            expr = self.parseExpr()
+            if self.check(TokenType.FOR):
+                self.fail("generator belum didukung kompiler")
+            if self.check(TokenType.COMMA):
+                items = [expr]
+                while self.match(TokenType.COMMA) != None:
+                    if self.check(TokenType.RPAREN):
                         break
-            self.expect(TokenType.RBRACE, "Expected '}'")
-            return MapExpr(keys, values)
+                    items.append(self.parseExpr())
+                self.expect(TokenType.RPAREN, "')' diharapkan setelah tuple")
+                return self.at(ListExpr(items), tok)
+            self.expect(TokenType.RPAREN, "')' diharapkan setelah ekspresi")
+            return expr
+        if t == TokenType.FUNC:
+            self.advance()
+            sig = self.parseParams()
+            body = self.parseBlock()
+            fn = self.at(LambdaExpr(sig[0], body, sig[1], sig[3], sig[4]), tok)
+            fn.receiver = sig[2]
+            return fn
+        self.fail("Token nggak terduga")
 
-        tok = self.peek(0)
-        print("Parser error line " + str(tok.line) + ": Unexpected token '" + tok.text + "'")
-        self.errorCount += 1
-        self.advance()
-        return NullExpr()
+    func parseComprehension(self, element, value, isDict, startTok):
+        clauses = []
+        while self.check(TokenType.FOR):
+            self.advance()
+            names = self.forTargets()
+            if not self.matchWord("in", "dalam"):
+                self.fail("'in' diharapkan setelah variabel 'for'")
+            iterable = self.parseOr()
+            conds = []
+            while self.check(TokenType.IF):
+                self.advance()
+                conds.append(self.parseOr())
+            clauses.append([names, iterable, conds])
+        return self.at(CompExpr(element, value, isDict, clauses), startTok)

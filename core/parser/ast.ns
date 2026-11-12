@@ -50,10 +50,12 @@ class UnaryExpr:
         self.jenis = "UNER"
 
 class CallExpr:
-    func __init__(self, callee, args):
+    func __init__(self, callee, args, kwNames = None, kwValues = None):
         self.type = "CALL"
         self.callee = callee
         self.args = args
+        self.kwNames = kwNames if kwNames != None else []
+        self.kwValues = kwValues if kwValues != None else []
         self.jenis = "PANGGIL"
 
 class IndexExpr:
@@ -64,11 +66,12 @@ class IndexExpr:
         self.jenis = "INDEX"
 
 class SliceExpr:
-    func __init__(self, target, start, stop):
+    func __init__(self, target, start, stop, step = None):
         self.type = "SLICE"
         self.target = target
         self.start = start
         self.stop = stop
+        self.step = step
         self.jenis = "IRISAN"
         self.awal = start
         self.sampai = stop
@@ -116,31 +119,49 @@ class TernaryExpr:
         self.kondisi = condition
 
 class LambdaExpr:
-    func __init__(self, params, body):
+    func __init__(self, params, body, defaults = None, restName = None, kwName = None):
         self.type = "LAMBDA"
+        self.restName = restName
+        self.kwName = kwName
         self.params = params
         self.body = body
+        self.defaults = defaults if defaults != None else {}
         self.jenis = "LAMBDA"
         self.badan = body
 
 class BlockStmt:
     func __init__(self, stmts):
         self.type = "BLOCK"
+        self.line = 0
+        self.col = 0
         self.stmts = stmts
         self.jenis = "BLOK"
 
 class VarStmt:
     func __init__(self, name, value):
         self.type = "VAR"
+        self.line = 0
+        self.col = 0
         self.name = name
         self.value = value
         self.jenis = "BUAT"
         self.nama = name
         self.nilai = value
 
+class SpreadExpr:
+    func __init__(self, value, isKw):
+        self.type = "SPREAD"
+        self.value = value
+        self.isKw = isKw
+        self.jenis = "SEBAR"
+
 class FuncStmt:
-    func __init__(self, name, params, body, defaults = None):
+    func __init__(self, name, params, body, defaults = None, restName = None, kwName = None):
         self.type = "FUNC"
+        self.line = 0
+        self.col = 0
+        self.restName = restName
+        self.kwName = kwName
         self.name = name
         self.params = params
         self.body = body
@@ -152,6 +173,8 @@ class FuncStmt:
 class IfStmt:
     func __init__(self, condition, thenBranch, elseBranch):
         self.type = "IF"
+        self.line = 0
+        self.col = 0
         self.condition = condition
         self.thenBranch = thenBranch
         self.elseBranch = elseBranch
@@ -163,6 +186,8 @@ class IfStmt:
 class WhileStmt:
     func __init__(self, condition, body):
         self.type = "WHILE"
+        self.line = 0
+        self.col = 0
         self.condition = condition
         self.body = body
         self.jenis = "SELAMA"
@@ -172,6 +197,8 @@ class WhileStmt:
 class ForStmt:
     func __init__(self, init, condition, post, body):
         self.type = "FOR"
+        self.line = 0
+        self.col = 0
         self.init = init
         self.condition = condition
         self.post = post
@@ -183,8 +210,12 @@ class ForStmt:
         self.badan = body
 
 class ForInStmt:
-    func __init__(self, variable, iterable, body):
+    func __init__(self, variable, iterable, body, targets = None, declared = False):
         self.type = "FOR_IN"
+        self.line = 0
+        self.col = 0
+        self.targets = targets if targets != None else [variable]
+        self.declared = declared
         self.variable = variable
         self.iterable = iterable
         self.body = body
@@ -196,6 +227,8 @@ class ForInStmt:
 class ReturnStmt:
     func __init__(self, value):
         self.type = "RETURN"
+        self.line = 0
+        self.col = 0
         self.value = value
         self.jenis = "HASIL"
         self.nilai = value
@@ -203,29 +236,35 @@ class ReturnStmt:
 class BreakStmt:
     func __init__(self):
         self.type = "BREAK"
+        self.line = 0
+        self.col = 0
         self.jenis = "BERHENTI"
 
 class ContinueStmt:
     func __init__(self):
         self.type = "CONTINUE"
+        self.line = 0
+        self.col = 0
         self.jenis = "LANJUT"
 
 class TryStmt:
-    func __init__(self, tryBlock, catchVar, catchBlock, finallyBlock):
+    func __init__(self, tryBlock, catchVar, catchBlock, finallyBlock, clauses = None, elseBlock = None):
         self.type = "TRY"
+        self.line = 0
+        self.col = 0
+        self.clauses = clauses
+        self.elseBlock = elseBlock
         self.tryBlock = tryBlock
         self.catchVar = catchVar
         self.catchBlock = catchBlock
         self.finallyBlock = finallyBlock
         self.jenis = "COBA"
-        self.coba_blok = tryBlock
-        self.tangkap_var = catchVar
-        self.tangkap_blok = catchBlock
-        self.akhirnya_blok = finallyBlock
 
 class ThrowStmt:
     func __init__(self, value):
         self.type = "THROW"
+        self.line = 0
+        self.col = 0
         self.value = value
         self.jenis = "LEMPAR"
         self.nilai = value
@@ -233,12 +272,64 @@ class ThrowStmt:
 class ExprStmt:
     func __init__(self, expr):
         self.type = "EXPR"
+        self.line = 0
+        self.col = 0
         self.expr = expr
         self.jenis = "EKSPRESI"
 
+class CompExpr:
+    func __init__(self, element, value, isDict, clauses):
+        self.type = "COMP"
+        self.element = element
+        self.value = value
+        self.isDict = isDict
+        self.clauses = clauses
+        self.jenis = "KOMPREHENSI"
+
+class WithStmt:
+    func __init__(self, items, body):
+        self.type = "WITH"
+        self.line = 0
+        self.col = 0
+        self.items = items
+        self.body = body
+        self.jenis = "DENGAN"
+
+class TupleAssignStmt:
+    func __init__(self, targets, value, isLiteral, starIndex = -1):
+        self.type = "TUPLE_ASSIGN"
+        self.line = 0
+        self.col = 0
+        self.starIndex = starIndex
+        self.targets = targets
+        self.value = value
+        self.isLiteral = isLiteral
+        self.jenis = "TUGAS_BERUNTUN"
+
+class StructStmt:
+    func __init__(self, name, fields):
+        self.type = "STRUCT"
+        self.line = 0
+        self.col = 0
+        self.name = name
+        self.fields = fields
+        self.jenis = "BENTUK"
+
+class EnumStmt:
+    func __init__(self, name, variants):
+        self.type = "ENUM"
+        self.line = 0
+        self.col = 0
+        self.name = name
+        self.variants = variants
+        self.jenis = "JENIS"
+
 class ClassStmt:
-    func __init__(self, name, baseClass, methods):
+    func __init__(self, name, baseClass, methods, attrs = None):
         self.type = "CLASS"
+        self.line = 0
+        self.col = 0
+        self.attrs = attrs if attrs != None else []
         self.name = name
         self.baseClass = baseClass
         self.methods = methods

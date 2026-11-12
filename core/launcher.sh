@@ -6,6 +6,7 @@
 DIR=$1
 shift
 ENGINE="$DIR/nusa-engine"
+export NUSA_HOME="$DIR"
 
 runInterp() {
     if [ -x "$ENGINE" ]; then
@@ -30,7 +31,7 @@ bin="$cache/$(printf '%s' "$abs" | cksum | tr ' ' '-')"
 
 stale() {
     [ -e "$1" ] || return 0
-    for f in "$abs" "$DIR"/compiler/*.ns "$DIR"/compiler/backend/*/*.ns "$DIR"/compiler/assembler/*.ns "$DIR"/core/parser/*.ns; do
+    for f in "$abs" "$DIR"/compiler/*.ns "$DIR"/compiler/backend/*/*.ns "$DIR"/compiler/assembler/*.ns "$DIR"/core/parser/*.ns "$DIR"/core/resolver.ns; do
         [ "$f" -nt "$1" ] && return 0
     done
     if [ -f "$bin.deps" ]; then

@@ -24,6 +24,9 @@ rtFailPrint:
     mov rax, 231
     mov rdi, 1
     syscall
+rtStackOverflow:
+    lea rdi, [strStackOverflow]
+    jmp rtFail
 rtThrow:
     mov r11, [excTop]
     test r11, r11
@@ -37,6 +40,21 @@ rtThrow:
     mov rax, rdi
     jmp r10
 rtUncaught:
+    mov rax, rdi
+    test al, 1
+    jnz rtUcPlain
+    cmp rdi, 4
+    jbe rtUcPlain
+    cmp qword ptr [rdi], 4
+    jne rtUcPlain
+    push rdi
+    lea rsi, [strPesanKey]
+    call rtMapGet
+    pop rdi
+    test rax, rax
+    jz rtUcPlain
+    mov rdi, rax
+rtUcPlain:
     push rdi
     lea rdi, [strUncaught]
     mov rsi, 2

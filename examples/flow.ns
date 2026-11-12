@@ -1,0 +1,41 @@
+# Comprehensions, unpacking, ternaries, chained comparisons, try/finally.
+squares = [n * n for n in range(6)]
+evens = [n for n in squares if n % 2 == 0]
+lookup = {w: len(w) for w in ["one", "three", "five"]}
+print(squares, evens, lookup)
+
+pairs = [[1, "a"], [2, "b"], [3, "c"]]
+for number, letter in pairs:
+    print(number, letter)
+
+first, second = 1, 2
+first, second = second, first
+print(first, second)
+
+age = 20
+print("adult" if age >= 18 else "minor", 1 < age < 30)
+
+func attempt(n):
+    log = []
+    try:
+        log.append("start")
+        if n > 1:
+            throw "too big"
+        log.append("ok")
+    catch e:
+        log.append("caught " + str(e))
+    finally:
+        log.append("cleanup")
+    return log
+
+print(attempt(1))
+print(attempt(5))
+
+i = 0
+while True:
+    i += 1
+    if i % 2 == 0:
+        continue
+    if i > 7:
+        break
+print(i)

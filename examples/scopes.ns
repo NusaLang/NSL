@@ -1,0 +1,27 @@
+# An assignment updates the variable of that name when one is already visible
+# (a function parameter, an outer function's variable, or a module variable).
+# Otherwise it makes a new local.
+total = 0
+
+func addToTotal(n):
+    total = total + n
+
+addToTotal(5)
+addToTotal(7)
+print(total)
+
+func shadow():
+    total = 100       # `total` is visible here, so this updates the module variable
+    return total
+
+print(shadow(), total)
+
+func local():
+    fresh = 1         # new name: stays inside the function
+    return fresh
+
+print(local())
+
+for i in range(3):
+    pass
+print(i)

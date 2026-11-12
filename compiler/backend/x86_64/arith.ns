@@ -2,6 +2,10 @@ ARITH_RUNTIME = """rtTruthy:
     mov rax, [rdi]
     cmp rax, 2
     je rtTrLen
+    cmp rax, 3
+    je rtTrLen
+    cmp rax, 4
+    je rtTrLen
     cmp rax, 6
     je rtTrFloat
     mov rax, 1
@@ -330,7 +334,20 @@ rtArith:
     je rtArMul
     cmp r10, 3
     je rtArDiv
+    cmp r10, 5
+    je rtArFloorDiv
     jmp rtArMod
+rtArFloorDiv:
+    divsd xmm0, xmm1
+    roundsd xmm0, xmm0, 9
+    jmp rtBoxFloat
+rtFloorDiv:
+    mov rax, rdi
+    and rax, rsi
+    test al, 1
+    jnz rtIntDiv
+    mov edx, 5
+    jmp rtArith
 rtArAdd:
     addsd xmm0, xmm1
     jmp rtBoxFloat
@@ -344,12 +361,16 @@ rtArDiv:
     divsd xmm0, xmm1
     jmp rtBoxFloat
 rtArMod:
-    movsd xmm2, xmm0
-    divsd xmm2, xmm1
-    roundsd xmm2, xmm2, 9
-    mulsd xmm2, xmm1
-    subsd xmm0, xmm2
-    jmp rtBoxFloat
+    sub rsp, 8
+    movsd [rsp], xmm1
+    call rtBoxFloat
+    push rax
+    movsd xmm0, [rsp+8]
+    call rtBoxFloat
+    push rax
+    call fnnsRtFmod
+    add rsp, 24
+    ret
 rtArithOther:
     cmp r10, 0
     je rtArithConcat
@@ -366,6 +387,18 @@ rtArithMulCheck:
     jnz rtAmIntLeft
     cmp rdi, 4
     jbe rtArithBad
+    cmp qword ptr [rdi], 3
+    jne rtAmNotList
+    test r9b, 1
+    jz rtArithBad
+    push rdi
+    push r9
+    call fnnsRtListRepeat
+    add rsp, 16
+    ret
+rtAmNotList:
+    cmp rdi, 4
+    jbe rtArithBad
     cmp qword ptr [rdi], 2
     jne rtArithBad
     mov rsi, r9
@@ -378,6 +411,14 @@ rtAmIntLeft:
     jnz rtArithBad
     cmp rsi, 4
     jbe rtArithBad
+    cmp qword ptr [rsi], 3
+    jne rtAmIntStr
+    push rsi
+    push r8
+    call fnnsRtListRepeat
+    add rsp, 16
+    ret
+rtAmIntStr:
     cmp qword ptr [rsi], 2
     jne rtArithBad
     mov rdi, rsi
@@ -489,6 +530,64 @@ rtAcDone:
     pop r13
     pop r12
     ret
+rtAddX:
+    mov rax, rdi
+    and rax, rsi
+    test al, 1
+    jz rtAddXSlow
+    mov rax, rsi
+    sub rax, 1
+    add rax, rdi
+    jo rtAddXSlow
+    ret
+rtAddXSlow:
+    xor edx, edx
+    jmp rtArith
+rtSubX:
+    mov rax, rdi
+    and rax, rsi
+    test al, 1
+    jz rtSubXSlow
+    mov rax, rdi
+    sub rax, rsi
+    jo rtSubXSlow
+    add rax, 1
+    jo rtSubXSlow
+    ret
+rtSubXSlow:
+    mov edx, 1
+    jmp rtArith
+rtMulX:
+    mov rax, rdi
+    and rax, rsi
+    test al, 1
+    jz rtMulXSlow
+    mov rax, rdi
+    sar rax, 1
+    mov rdx, rsi
+    dec rdx
+    imul rax, rdx
+    jo rtMulXSlow
+    inc rax
+    ret
+rtMulXSlow:
+    mov edx, 2
+    jmp rtArith
+rtShlX:
+    mov rax, rdi
+    and rax, rsi
+    test al, 1
+    jz rtShlXSlow
+    mov rax, rdi
+    sar rax, 1
+    mov rcx, rsi
+    sar rcx, 1
+    shl rax, cl
+    lea rax, [rax*2+1]
+    ret
+rtShlXSlow:
+    mov r10, 3
+    jmp rtBitSlow
 rtAdd:
     mov rax, rdi
     and rax, rsi
@@ -498,6 +597,11 @@ rtAdd:
     sub rax, 1
     add rax, rdi
     jo rtAddSlow
+    mov rcx, rax
+    sar rcx, 54
+    add rcx, 1
+    cmp rcx, 1
+    ja rtAddSlow
     ret
 rtAddSlow:
     xor edx, edx
@@ -512,6 +616,11 @@ rtSub:
     jo rtSubSlow
     add rax, 1
     jo rtSubSlow
+    mov rcx, rax
+    sar rcx, 54
+    add rcx, 1
+    cmp rcx, 1
+    ja rtSubSlow
     ret
 rtSubSlow:
     mov edx, 1
@@ -528,6 +637,11 @@ rtMul:
     imul rax, rdx
     jo rtMulSlow
     inc rax
+    mov rcx, rax
+    sar rcx, 54
+    add rcx, 1
+    cmp rcx, 1
+    ja rtMulSlow
     ret
 rtMulSlow:
     mov edx, 2
@@ -631,7 +745,16 @@ rtShl:
     sar rax, 1
     mov rcx, rsi
     sar rcx, 1
+    cmp rcx, 62
+    ja rtShlSlow
+    cmp rcx, 0
+    jl rtShlSlow
     shl rax, cl
+    mov rdx, rax
+    sar rdx, 53
+    add rdx, 1
+    cmp rdx, 1
+    ja rtShlSlow
     lea rax, [rax*2+1]
     ret
 rtShlSlow:
@@ -682,8 +805,16 @@ rtBsShr:
     mov rcx, r9
     sar r8, cl
 rtBsDone:
+    mov rax, r8
+    sar rax, 53
+    add rax, 1
+    cmp rax, 1
+    ja rtBsFloat
     lea rax, [r8*2+1]
     ret
+rtBsFloat:
+    cvtsi2sd xmm0, r8
+    jmp rtBoxFloat
 rtBitNot:
     test dil, 1
     jz rtBitNotSlow
@@ -696,8 +827,7 @@ rtBitNotSlow:
     call rtToDouble
     cvttsd2si r8, xmm0
     not r8
-    lea rax, [r8*2+1]
-    ret
+    jmp rtBsDone
 rtIntDiv:
     sar rdi, 1
     sar rsi, 1

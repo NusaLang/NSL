@@ -1,0 +1,17 @@
+# Modules. `import shop.cart` finds shop/cart.ns (or shop/cart/index.ns) next to
+# this file, then in nusa_packages folders, then in NUSA_PATH, then the standard library.
+import shop.cart
+from shop.cart import add, total
+import shop.price as price
+
+add("apple", 2)
+add("pear")
+print(total(), cart.total(), price.of("pear"))
+
+# The name can be any text, decided while the program runs.
+for name in ["shop.cart", "./shop/price", "shop/price"]:
+    module = impor(name)
+    print(name, len(module) > 0)
+
+if __name__ == "__main__":
+    print("run directly")

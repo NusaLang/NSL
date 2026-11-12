@@ -1,0 +1,73 @@
+# Operators, properties, static and class methods, context managers, and typed errors.
+class Vec:
+    func __init__(self, x, y):
+        self.x = x
+        self.y = y
+    func __add__(self, other):
+        return Vec(self.x + other.x, self.y + other.y)
+    func __eq__(self, other):
+        return self.x == other.x and self.y == other.y
+    func __len__(self):
+        return 2
+    func __getitem__(self, i):
+        return self.x if i == 0 else self.y
+    func __repr__(self):
+        return "Vec(" + str(self.x) + ", " + str(self.y) + ")"
+
+a = Vec(1, 2)
+b = Vec(3, 4)
+print(a + b, a == Vec(1, 2), len(a), a[1], [a, b])
+
+class Temperature:
+    func __init__(self, celsius):
+        self._celsius = celsius
+    @property
+    func fahrenheit(self):
+        return self._celsius * 9 / 5 + 32
+    @property
+    func celsius(self):
+        return self._celsius
+    @celsius.setter
+    func celsius(self, value):
+        self._celsius = value
+    @staticmethod
+    func boiling():
+        return Temperature(100)
+    @classmethod
+    func fromFahrenheit(cls, f):
+        return cls((f - 32) * 5 / 9)
+
+t = Temperature(20)
+t.celsius = 30
+print(t.celsius, t.fahrenheit, Temperature.boiling().celsius, Temperature.fromFahrenheit(212).celsius)
+
+class Resource:
+    func __init__(self, name):
+        self.name = name
+    func __enter__(self):
+        print("open", self.name)
+        return self
+    func __exit__(self, kind, error, trace):
+        print("close", self.name)
+        return False
+
+with Resource("db") as db:
+    print("using", db.name)
+
+class NotFound(Exception):
+    func __init__(self, what):
+        self.pesan = what + " not found"
+        self.what = what
+
+func find(name):
+    if name == "ghost":
+        raise NotFound(name)
+    return name
+
+for name in ["ana", "ghost"]:
+    try:
+        print(find(name))
+    except NotFound as e:
+        print("error:", e.pesan, e.what)
+    except Exception as e:
+        print("other", e.pesan)

@@ -1,0 +1,1055 @@
+func loadModule(path):
+    candidates = [
+        path,
+        "core/" + path,
+        "compiler/" + path,
+        "../" + path,
+        "../../" + path,
+        "../../../" + path,
+        "experiment/" + path,
+        path.split("/")[-1]
+    ]
+    for c in candidates:
+        try:
+            return impor(c)
+        except e:
+            pass
+    return impor(path)
+
+astModule = loadModule("core/parser/ast.ns")
+NumberExpr = astModule.NumberExpr
+StringExpr = astModule.StringExpr
+IdentExpr = astModule.IdentExpr
+IndexExpr = astModule.IndexExpr
+AssignExpr = astModule.AssignExpr
+astNames = None
+CallExpr = astModule.CallExpr
+BlockStmt = astModule.BlockStmt
+VarStmt = astModule.VarStmt
+ExprStmt = astModule.ExprStmt
+ForInStmt = astModule.ForInStmt
+ThrowStmt = astModule.ThrowStmt
+TryStmt = astModule.TryStmt
+
+INITNAMES = ["__init__", "konstruktor", "init", "constructor"]
+
+# Methods the interpreter has on lists, texts, and maps that native code does not.
+BADMETHODS = ["sort", "insert", "index", "remove", "reverse", "extend", "count", "copy", "replace", "lstrip", "rstrip", "update", "setdefault", "capitalize", "title", "format", "zfill", "splitlines", "center", "ljust", "rjust"]
+
+func unsupported(msg):
+    lempar "native: " + msg
+
+func hasEscape(node, inLoop):
+    if node == None:
+        return False
+    t = node.type
+    if t == "BLOCK":
+        for s in node.stmts:
+            if hasEscape(s, inLoop):
+                return True
+        return False
+    if t == "RETURN":
+        return True
+    if t == "BREAK" or t == "CONTINUE":
+        return not inLoop
+    if t == "IF":
+        return hasEscape(node.thenBranch, inLoop) or hasEscape(node.elseBranch, inLoop)
+    if t == "WHILE" or t == "FOR" or t == "FOR_IN":
+        return hasEscape(node.body, True)
+    if t == "TRY":
+        return hasEscape(node.tryBlock, inLoop) or hasEscape(node.catchBlock, inLoop) or hasEscape(node.finallyBlock, inLoop)
+    return False
+
+# Names that a function body binds: parameters, assignments, loop variables.
+func collectLocals(node, found):
+    if node == None or not hasattr(node, "type"):
+        return None
+    t = node.type
+    if t == "BLOCK":
+        for s in node.stmts:
+            collectLocals(s, found)
+    elif t == "VAR":
+        found[node.name] = True
+        collectLocals(node.value, found)
+    elif t == "EXPR":
+        collectLocals(node.expr, found)
+    elif t == "ASSIGN":
+        if node.target.type == "IDENT":
+            found[node.target.name] = True
+        collectLocals(node.target, found)
+        collectLocals(node.value, found)
+    elif t == "IF":
+        collectLocals(node.condition, found)
+        collectLocals(node.thenBranch, found)
+        collectLocals(node.elseBranch, found)
+    elif t == "WHILE":
+        collectLocals(node.condition, found)
+        collectLocals(node.body, found)
+    elif t == "FOR":
+        collectLocals(node.init, found)
+        collectLocals(node.post, found)
+        collectLocals(node.body, found)
+    elif t == "FOR_IN":
+        for n in node.targets:
+            found[n] = True
+        collectLocals(node.body, found)
+    elif t == "TRY":
+        found[node.catchVar] = True
+        collectLocals(node.tryBlock, found)
+        collectLocals(node.catchBlock, found)
+        collectLocals(node.finallyBlock, found)
+    elif t == "TUPLE_ASSIGN":
+        for target in node.targets:
+            collectLocals(ExprStmt(AssignExpr(target, "=", node.value)), found)
+
+# Identifiers read anywhere inside an expression or statement.
+func collectIdents(node, found):
+    if node == None or not hasattr(node, "type"):
+        return None
+    t = node.type
+    if t == "IDENT":
+        found[node.name] = True
+    elif t == "BINARY":
+        collectIdents(node.left, found)
+        collectIdents(node.right, found)
+    elif t == "UNARY":
+        collectIdents(node.operand, found)
+    elif t == "CALL":
+        collectIdents(node.callee, found)
+        for a in node.args:
+            collectIdents(a, found)
+        for a in node.kwValues:
+            collectIdents(a, found)
+    elif t == "INDEX":
+        collectIdents(node.target, found)
+        collectIdents(node.index, found)
+    elif t == "SLICE":
+        collectIdents(node.target, found)
+        collectIdents(node.start, found)
+        collectIdents(node.stop, found)
+    elif t == "LIST":
+        for el in node.elements:
+            collectIdents(el, found)
+    elif t == "MAP":
+        for v in node.values:
+            collectIdents(v, found)
+    elif t == "ASSIGN":
+        collectIdents(node.target, found)
+        collectIdents(node.value, found)
+    elif t == "MEMBER":
+        collectIdents(node.target, found)
+    elif t == "TERNARY":
+        collectIdents(node.condition, found)
+        collectIdents(node.thenVal, found)
+        collectIdents(node.elseVal, found)
+    elif t == "LAMBDA":
+        collectIdents(node.body, found)
+    elif t == "BLOCK":
+        for s in node.stmts:
+            collectIdents(s, found)
+    elif t == "VAR":
+        collectIdents(node.value, found)
+    elif t == "RETURN" or t == "THROW":
+        collectIdents(node.value, found)
+    elif t == "EXPR":
+        collectIdents(node.expr, found)
+    elif t == "IF":
+        collectIdents(node.condition, found)
+        collectIdents(node.thenBranch, found)
+        collectIdents(node.elseBranch, found)
+    elif t == "WHILE":
+        collectIdents(node.condition, found)
+        collectIdents(node.body, found)
+
+class Prep:
+    func __init__(self, arch):
+        self.arch = arch
+        self.counter = 0
+        self.funcSigs = {}
+        self.classes = {}
+        self.methodSigs = {}
+        self.fieldNames = {}
+        self.selfFields = {}
+        self.outerLocals = None
+        self.moduleName = "__main__"
+        self.tables = {}
+
+    func fresh(self, base):
+        self.counter += 1
+        return "__" + base + str(self.counter)
+
+    # Gathers signatures before anything is rewritten.
+    func scan(self, stmts):
+        self.funcSigs = {}
+        self.classes = {}
+        self.tables[self.moduleName] = [self.funcSigs, self.classes]
+        for s in stmts:
+            if s.type == "FUNC":
+                self.funcSigs[s.name] = [s.params, s.defaults]
+            elif s.type == "CLASS":
+                methods = {}
+                for m in s.methods:
+                    methods[m.name] = [m.params, m.defaults]
+                    if not (m.name in self.methodSigs):
+                        self.methodSigs[m.name] = []
+                    self.methodSigs[m.name].append([m.params, m.defaults])
+                self.classes[s.name] = {"base": s.baseClass, "methods": methods, "node": s}
+        for s in stmts:
+            self.scanFields(s)
+
+    func scanFields(self, node):
+        if node == None or not hasattr(node, "type"):
+            return None
+        t = node.type
+        if t == "ASSIGN":
+            tg = node.target
+            if tg.type == "MEMBER" and not (tg.target.type == "IDENT" and (tg.target.name == "self" or tg.target.name == "this" or tg.target.name == "ini")):
+                self.fieldNames[tg.name] = True
+            if tg.type == "MEMBER":
+                self.selfFields[tg.name] = True
+            self.scanFields(node.target)
+            self.scanFields(node.value)
+        elif t == "BLOCK":
+            for s in node.stmts:
+                self.scanFields(s)
+        elif t == "FUNC":
+            self.scanFields(node.body)
+        elif t == "CLASS":
+            for m in node.methods:
+                self.scanFields(m)
+        elif t == "EXPR":
+            self.scanFields(node.expr)
+        elif t == "VAR" or t == "RETURN" or t == "THROW":
+            self.scanFields(node.value)
+        elif t == "IF":
+            self.scanFields(node.condition)
+            self.scanFields(node.thenBranch)
+            self.scanFields(node.elseBranch)
+        elif t == "WHILE":
+            self.scanFields(node.condition)
+            self.scanFields(node.body)
+        elif t == "FOR":
+            self.scanFields(node.init)
+            self.scanFields(node.condition)
+            self.scanFields(node.post)
+            self.scanFields(node.body)
+        elif t == "FOR_IN":
+            self.scanFields(node.iterable)
+            self.scanFields(node.body)
+        elif t == "TRY":
+            self.scanFields(node.tryBlock)
+            self.scanFields(node.catchBlock)
+            self.scanFields(node.finallyBlock)
+        elif t == "TUPLE_ASSIGN":
+            for target in node.targets:
+                if target.type == "MEMBER" and not (target.target.type == "IDENT" and (target.target.name == "self" or target.target.name == "this" or target.target.name == "ini")):
+                    self.fieldNames[target.name] = True
+            self.scanFields(node.value)
+        elif t == "BINARY":
+            self.scanFields(node.left)
+            self.scanFields(node.right)
+        elif t == "UNARY":
+            self.scanFields(node.operand)
+        elif t == "CALL":
+            self.scanFields(node.callee)
+            for a in node.args:
+                self.scanFields(a)
+        elif t == "TERNARY":
+            self.scanFields(node.condition)
+            self.scanFields(node.thenVal)
+            self.scanFields(node.elseVal)
+        elif t == "LAMBDA":
+            self.scanFields(node.body)
+        elif t == "INDEX":
+            self.scanFields(node.target)
+            self.scanFields(node.index)
+        elif t == "LIST":
+            for el in node.elements:
+                self.scanFields(el)
+
+    func initSignature(self, clsName):
+        name = clsName
+        while name != None and (name in self.classes):
+            info = self.classes[name]
+            for cand in INITNAMES:
+                if cand in info["methods"]:
+                    return info["methods"][cand]
+            name = info["base"]
+        return [[], {}]
+
+    func bindKeywords(self, call, sig):
+        params = sig[0]
+        defaults = sig[1]
+        n = len(call.args)
+        byName = {}
+        k = 0
+        for name in call.kwNames:
+            if not (name in params):
+                unsupported("argumen bernama '" + name + "' tidak dikenal")
+            if name in byName:
+                unsupported("argumen bernama '" + name + "' dua kali")
+            byName[name] = call.kwValues[k]
+            k += 1
+        j = 0
+        while j < n and j < len(params):
+            if params[j] in byName:
+                unsupported("argumen '" + params[j] + "' diberikan dua kali")
+            j += 1
+        args = []
+        for a in call.args:
+            args.append(a)
+        lastExplicit = n
+        j = n
+        while j < len(params):
+            p = params[j]
+            if p in byName:
+                args.append(byName[p])
+                lastExplicit = len(args)
+            elif p in defaults:
+                args.append(defaults[p])
+            else:
+                unsupported("argumen '" + p + "' wajib diisi")
+            j += 1
+        args = args[:lastExplicit]
+        result = CallExpr(call.callee, args)
+        if hasattr(call, "line"):
+            result.line = call.line
+            result.col = call.col
+        return result
+
+    func lowerCall(self, call):
+        for a in call.args:
+            if a.type == "SPREAD":
+                unsupported("argumen *spread")
+        if len(call.kwNames) == 0:
+            return call
+        callee = call.callee
+        if callee.type == "IDENT":
+            if callee.name in self.funcSigs:
+                return self.bindKeywords(call, self.funcSigs[callee.name])
+            if callee.name in self.classes:
+                return self.bindKeywords(call, self.initSignature(callee.name))
+        if callee.type == "MEMBER" and (callee.name in self.methodSigs):
+            sigs = self.methodSigs[callee.name]
+            first = sigs[0]
+            for sg in sigs:
+                if sg[0] != first[0]:
+                    unsupported("argumen bernama pada metode '" + callee.name + "' yang berbeda di tiap kelas")
+            return self.bindKeywords(call, first)
+        unsupported("argumen bernama pada panggilan ini")
+
+    func lowerExpr(self, e, asCallee):
+        if e == None:
+            return None
+        t = e.type
+        if t == "IDENT":
+            if e.name == "__name__":
+                return StringExpr(self.moduleName)
+            if e.name == "__file__":
+                unsupported("__file__")
+            return e
+        if t == "STRING":
+            for ch in e.value:
+                if ord(ch) > 127:
+                    unsupported("teks non-ASCII")
+            return e
+        if t == "BINARY":
+            if e.op == "**":
+                unsupported("operator **")
+            e.left = self.lowerExpr(e.left, False)
+            e.right = self.lowerExpr(e.right, False)
+            return e
+        if t == "UNARY":
+            e.operand = self.lowerExpr(e.operand, False)
+            return e
+        if t == "CALL":
+            if e.callee.type == "IDENT" and (e.callee.name == "impor" or e.callee.name == "import") and not hasattr(e, "topImport"):
+                unsupported("impor di luar penugasan tingkat atas")
+            if e.callee.type == "IDENT" and (e.callee.name == "range" or e.callee.name == "rentang") and len(e.args) == 3:
+                unsupported("range dengan langkah di luar for")
+            e = self.lowerCall(e)
+            callee = e.callee
+            if callee.type == "MEMBER":
+                mname = callee.name
+                if mname in BADMETHODS:
+                    unsupported("metode '" + mname + "'")
+                if mname == "pop" and len(e.args) > 0:
+                    unsupported("metode pop dengan argumen")
+                if (mname in self.selfFields) and not (mname in self.methodSigs):
+                    unsupported("field '" + mname + "' dipanggil sebagai fungsi")
+                callee.target = self.lowerExpr(callee.target, False)
+            else:
+                e.callee = self.lowerExpr(callee, False)
+            k = 0
+            for a in e.args:
+                e.args[k] = self.lowerExpr(a, False)
+                k += 1
+            return e
+        if t == "INDEX":
+            e.target = self.lowerExpr(e.target, False)
+            e.index = self.lowerExpr(e.index, False)
+            return e
+        if t == "SLICE":
+            if e.step != None:
+                unsupported("slice dengan langkah")
+            e.target = self.lowerExpr(e.target, False)
+            e.start = self.lowerExpr(e.start, False)
+            e.stop = self.lowerExpr(e.stop, False)
+            return e
+        if t == "LIST":
+            k = 0
+            for el in e.elements:
+                e.elements[k] = self.lowerExpr(el, False)
+                k += 1
+            return e
+        if t == "MAP":
+            k = 0
+            for key in e.keys:
+                if tipe(key) == "teks":
+                    for ch in key:
+                        if ord(ch) > 127:
+                            unsupported("teks non-ASCII")
+                else:
+                    e.keys[k] = self.lowerExpr(key, False)
+                k += 1
+            k = 0
+            for v in e.values:
+                e.values[k] = self.lowerExpr(v, False)
+                k += 1
+            return e
+        if t == "ASSIGN":
+            if e.target.type == "IDENT" and ((e.target.name in self.funcSigs) or (e.target.name in self.classes)):
+                unsupported("nama fungsi atau kelas '" + e.target.name + "' diisi ulang")
+            e.target = self.lowerExpr(e.target, False)
+            e.value = self.lowerExpr(e.value, False)
+            return e
+        if t == "MEMBER":
+            if e.name == "__name__" or e.name == "__file__":
+                unsupported("atributo " + e.name)
+            if not asCallee and (e.name in self.methodSigs):
+                unsupported("metode '" + e.name + "' dipakai sebagai nilai")
+            e.target = self.lowerExpr(e.target, False)
+            return e
+        if t == "TERNARY":
+            e.condition = self.lowerExpr(e.condition, False)
+            e.thenVal = self.lowerExpr(e.thenVal, False)
+            e.elseVal = self.lowerExpr(e.elseVal, False)
+            return e
+        if t == "LAMBDA":
+            if e.restName != None or e.kwName != None:
+                unsupported("parameter *args/**kwargs")
+            if len(e.defaults) > 0:
+                unsupported("lambda dengan parameter default")
+            if self.outerLocals != None:
+                used = {}
+                collectIdents(e.body, used)
+                for name in used:
+                    if (name in self.outerLocals) and not (name in e.params):
+                        unsupported("lambda menangkap variabel lokal '" + name + "'")
+            e.body = self.lowerStmt(e.body)
+            return e
+        if t == "COMP":
+            unsupported("komprehensi")
+        if t == "SPREAD":
+            unsupported("argumen *spread")
+        return e
+
+    # Top-level statements of a file. An import must be one of these, written
+    # `name = impor("literal")`, so the module can start where the statement is.
+    func lowerTop(self, stmts):
+        self.funcSigs = self.tables[self.moduleName][0]
+        self.classes = self.tables[self.moduleName][1]
+        out = []
+        for s in stmts:
+            call = None
+            if s.type == "EXPR" and s.expr.type == "ASSIGN" and s.expr.target.type == "IDENT" and s.expr.op == "=":
+                call = s.expr.value
+            elif s.type == "VAR":
+                call = s.value
+            if call != None and call.type == "CALL" and call.callee.type == "IDENT" and (call.callee.name == "impor" or call.callee.name == "import") and len(call.args) == 1 and call.args[0].type == "STRING":
+                call.topImport = True
+            out.append(self.lowerStmt(s))
+        self.optimizeList(out, BlockStmt(out))
+        return out
+
+
+    # ---------- objects that never leave their block ----------
+    # `p = Cls(a, b)` where every use of `p` is a field read or write or a call
+    # of a small method becomes plain local variables. No object is built.
+
+    func eachChild(self, node, fn):
+        t = node.type
+        if t == "BINARY":
+            node.left = fn(node.left)
+            node.right = fn(node.right)
+        elif t == "UNARY":
+            node.operand = fn(node.operand)
+        elif t == "CALL":
+            node.callee = fn(node.callee)
+            k = 0
+            for a in node.args:
+                node.args[k] = fn(a)
+                k += 1
+        elif t == "INDEX":
+            node.target = fn(node.target)
+            node.index = fn(node.index)
+        elif t == "SLICE":
+            node.target = fn(node.target)
+            if node.start != None:
+                node.start = fn(node.start)
+            if node.stop != None:
+                node.stop = fn(node.stop)
+        elif t == "LIST":
+            k = 0
+            for el in node.elements:
+                node.elements[k] = fn(el)
+                k += 1
+        elif t == "MAP":
+            k = 0
+            for v in node.values:
+                node.values[k] = fn(v)
+                k += 1
+        elif t == "ASSIGN":
+            node.target = fn(node.target)
+            node.value = fn(node.value)
+        elif t == "MEMBER":
+            node.target = fn(node.target)
+        elif t == "TERNARY":
+            node.condition = fn(node.condition)
+            node.thenVal = fn(node.thenVal)
+            node.elseVal = fn(node.elseVal)
+        elif t == "LAMBDA":
+            node.body = fn(node.body)
+        elif t == "BLOCK":
+            k = 0
+            for st in node.stmts:
+                node.stmts[k] = fn(st)
+                k += 1
+        elif t == "VAR" or t == "RETURN" or t == "THROW":
+            if node.value != None:
+                node.value = fn(node.value)
+        elif t == "EXPR":
+            node.expr = fn(node.expr)
+        elif t == "FUNC":
+            node.body = fn(node.body)
+        elif t == "CLASS":
+            k = 0
+            for m in node.methods:
+                node.methods[k] = fn(m)
+                k += 1
+        elif t == "IF":
+            node.condition = fn(node.condition)
+            node.thenBranch = fn(node.thenBranch)
+            if node.elseBranch != None:
+                node.elseBranch = fn(node.elseBranch)
+        elif t == "WHILE":
+            node.condition = fn(node.condition)
+            node.body = fn(node.body)
+        elif t == "FOR":
+            if node.init != None:
+                node.init = fn(node.init)
+            node.condition = fn(node.condition)
+            if node.post != None:
+                node.post = fn(node.post)
+            node.body = fn(node.body)
+        elif t == "FOR_IN":
+            node.iterable = fn(node.iterable)
+            node.body = fn(node.body)
+        elif t == "TRY":
+            node.tryBlock = fn(node.tryBlock)
+            if node.catchBlock != None:
+                node.catchBlock = fn(node.catchBlock)
+            if node.finallyBlock != None:
+                node.finallyBlock = fn(node.finallyBlock)
+
+    func countIdent(self, node, name):
+        total = [0]
+        func visit(n):
+            if n.type == "IDENT" and n.name == name:
+                total[0] += 1
+            self.eachChild(n, visit)
+            return n
+        visit(node)
+        return total[0]
+
+    func isPureExpr(self, e, allowed):
+        t = e.type
+        if t == "NUMBER" or t == "STRING" or t == "BOOL" or t == "NULL":
+            return True
+        if t == "IDENT":
+            return e.name in allowed
+        if t == "BINARY":
+            return self.isPureExpr(e.left, allowed) and self.isPureExpr(e.right, allowed)
+        if t == "UNARY":
+            return self.isPureExpr(e.operand, allowed)
+        if t == "TERNARY":
+            return self.isPureExpr(e.condition, allowed) and self.isPureExpr(e.thenVal, allowed) and self.isPureExpr(e.elseVal, allowed)
+        if t == "MEMBER":
+            return e.target.type == "IDENT" and e.target.name == "self" and ("self" in allowed)
+        return False
+
+    # What an object of this class looks like, or None when it is not simple enough.
+    func classShape(self, name):
+        if not (name in self.classes):
+            return None
+        node = self.classes[name]["node"]
+        if node.baseClass != None or len(node.attrs) > 0:
+            return None
+        init = None
+        for m in node.methods:
+            if m.name == "__init__" or m.name == "constructor" or m.name == "init":
+                init = m
+            if m.restName != None or m.kwName != None:
+                return None
+            if hasattr(m, "kind") and m.kind != "":
+                return None
+        if init == None:
+            return None
+        allowed = {"self": True}
+        for prm in init.params:
+            allowed[prm] = True
+        fields = []
+        values = {}
+        for st in init.body.stmts:
+            if st.type != "EXPR" or st.expr.type != "ASSIGN" or st.expr.op != "=":
+                return None
+            tg = st.expr.target
+            if tg.type != "MEMBER" or tg.target.type != "IDENT" or tg.target.name != "self":
+                return None
+            if tg.name in values:
+                return None
+            if not self.isPureExpr(st.expr.value, allowed):
+                return None
+            fields.append(tg.name)
+            values[tg.name] = st.expr.value
+        if len(fields) == 0:
+            return None
+        for d in init.defaults:
+            if init.defaults[d].type != "NUMBER" and init.defaults[d].type != "STRING" and init.defaults[d].type != "BOOL" and init.defaults[d].type != "NULL":
+                return None
+        methods = {}
+        for m in node.methods:
+            if m == init:
+                continue
+            kind = self.methodShape(m, fields)
+            if kind != None:
+                methods[m.name] = kind
+        return {"fields": fields, "values": values, "init": init, "methods": methods}
+
+    # ["expr", e] for `return e`; ["stmts", list] for `self.f = e` / `self.f op= e` lines.
+    func methodShape(self, m, fields):
+        allowed = {"self": True}
+        for prm in m.params:
+            allowed[prm] = True
+        stmts = m.body.stmts
+        if len(stmts) == 1 and stmts[0].type == "RETURN" and stmts[0].value != None:
+            if self.isPureExpr(stmts[0].value, allowed) and self.fieldsKnown(stmts[0].value, fields):
+                return ["expr", stmts[0].value, m]
+            return None
+        for st in stmts:
+            if st.type != "EXPR" or st.expr.type != "ASSIGN":
+                return None
+            tg = st.expr.target
+            if tg.type != "MEMBER" or tg.target.type != "IDENT" or tg.target.name != "self" or not (tg.name in fields):
+                return None
+            if not self.isPureExpr(st.expr.value, allowed) or not self.fieldsKnown(st.expr.value, fields):
+                return None
+        if len(stmts) == 0:
+            return None
+        return ["stmts", stmts, m]
+
+    func fieldsKnown(self, e, fields):
+        ok = [True]
+        func visit(n):
+            if n.type == "MEMBER" and not (n.name in fields):
+                ok[0] = False
+            self.eachChild(n, visit)
+            return n
+        visit(e)
+        return ok[0]
+
+    func copyWith(self, e, subst):
+        t = e.type
+        if t == "IDENT":
+            if e.name in subst:
+                return self.copyWith(subst[e.name], {})
+            return IdentExpr(e.name)
+        if t == "NUMBER":
+            return NumberExpr(e.value, e.isFloat)
+        if t == "STRING":
+            return StringExpr(e.value)
+        if t == "BOOL":
+            return astModule.BoolExpr(e.value)
+        if t == "NULL":
+            return astModule.NullExpr()
+        if t == "BINARY":
+            return astModule.BinaryExpr(e.op, self.copyWith(e.left, subst), self.copyWith(e.right, subst))
+        if t == "UNARY":
+            return astModule.UnaryExpr(e.op, self.copyWith(e.operand, subst))
+        if t == "TERNARY":
+            return astModule.TernaryExpr(self.copyWith(e.condition, subst), self.copyWith(e.thenVal, subst), self.copyWith(e.elseVal, subst))
+        if t == "MEMBER":
+            if "self." + e.name in subst:
+                return self.copyWith(subst["self." + e.name], {})
+            return astModule.MemberExpr(self.copyWith(e.target, subst), e.name)
+        return e
+
+    # Every use of `name` inside `node` is one this pass can turn into locals.
+    func usesOk(self, node, name, shape):
+        t = node.type
+        if t == "IDENT":
+            return node.name != name
+        if t == "FUNC" or t == "LAMBDA" or t == "CLASS":
+            return self.countIdent(node, name) == 0
+        if t == "MEMBER" and node.target.type == "IDENT" and node.target.name == name:
+            return node.name in shape["fields"]
+        if t == "CALL" and node.callee.type == "MEMBER" and node.callee.target.type == "IDENT" and node.callee.target.name == name:
+            m = node.callee.name
+            if not (m in shape["methods"]) or len(node.kwNames) > 0:
+                return False
+            kind = shape["methods"][m]
+            if len(node.args) > len(kind[2].params):
+                return False
+            if kind[0] == "stmts":
+                return False
+            allowed = {}
+            for a in node.args:
+                if not self.pureArg(a, name, shape):
+                    return False
+            return True
+        ok = [True]
+        func visit(n):
+            if ok[0] and not self.usesOk(n, name, shape):
+                ok[0] = False
+            return n
+        if t == "EXPR" and node.expr.type == "CALL" and node.expr.callee.type == "MEMBER" and node.expr.callee.target.type == "IDENT" and node.expr.callee.target.name == name:
+            m = node.expr.callee.name
+            if m in shape["methods"] and len(node.expr.kwNames) == 0 and len(node.expr.args) <= len(shape["methods"][m][2].params):
+                for a in node.expr.args:
+                    if not self.pureArg(a, name, shape):
+                        return False
+                return True
+            return False
+        self.eachChild(node, visit)
+        return ok[0]
+
+    func pureArg(self, a, name, shape):
+        t = a.type
+        if t == "NUMBER" or t == "STRING" or t == "BOOL" or t == "NULL":
+            return True
+        if t == "IDENT":
+            return a.name != name
+        if t == "BINARY":
+            return self.pureArg(a.left, name, shape) and self.pureArg(a.right, name, shape)
+        if t == "UNARY":
+            return self.pureArg(a.operand, name, shape)
+        if t == "MEMBER":
+            return a.target.type == "IDENT" and a.target.name == name and (a.name in shape["fields"])
+        return False
+
+    func fieldName(self, name, f):
+        return name + "_" + f
+
+    # Rewrites uses of `name` in place.
+    func rewriteUses(self, node, name, shape):
+        t = node.type
+        if t == "MEMBER" and node.target.type == "IDENT" and node.target.name == name:
+            return IdentExpr(self.fieldName(name, node.name))
+        if t == "CALL" and node.callee.type == "MEMBER" and node.callee.target.type == "IDENT" and node.callee.target.name == name:
+            return self.inlineCall(node.callee.name, node.args, name, shape)
+        if t == "EXPR" and node.expr.type == "CALL" and node.expr.callee.type == "MEMBER" and node.expr.callee.target.type == "IDENT" and node.expr.callee.target.name == name:
+            call = node.expr
+            kind = shape["methods"][call.callee.name]
+            args = []
+            for a in call.args:
+                args.append(self.rewriteUses(a, name, shape))
+            if kind[0] == "expr":
+                return ExprStmt(self.inlineCall(call.callee.name, call.args, name, shape))
+            return self.inlineStatements(call.callee.name, args, name, shape)
+        func visit(n):
+            return self.rewriteUses(n, name, shape)
+        self.eachChild(node, visit)
+        return node
+
+    func inlineCall(self, m, args, name, shape):
+        kind = shape["methods"][m]
+        meth = kind[2]
+        subst = {}
+        k = 0
+        for prm in meth.params:
+            if k < len(args):
+                subst[prm] = self.rewriteUses(args[k], name, shape)
+            elif prm in meth.defaults:
+                subst[prm] = meth.defaults[prm]
+            else:
+                subst[prm] = astModule.NullExpr()
+            k += 1
+        for f in shape["fields"]:
+            subst["self." + f] = IdentExpr(self.fieldName(name, f))
+        return self.copyWith(kind[1], subst)
+
+    # A method made of `self.f = e` lines, written out where it is called.
+    func inlineStatements(self, m, args, name, shape):
+        kind = shape["methods"][m]
+        meth = kind[2]
+        out = []
+        subst = {}
+        k = 0
+        for prm in meth.params:
+            tmp = self.fresh("ma")
+            if k < len(args):
+                out.append(ExprStmt(AssignExpr(IdentExpr(tmp), "=", args[k])))
+            elif prm in meth.defaults:
+                out.append(ExprStmt(AssignExpr(IdentExpr(tmp), "=", self.copyWith(meth.defaults[prm], {}))))
+            else:
+                out.append(ExprStmt(AssignExpr(IdentExpr(tmp), "=", astModule.NullExpr())))
+            subst[prm] = IdentExpr(tmp)
+            k += 1
+        for f in shape["fields"]:
+            subst["self." + f] = IdentExpr(self.fieldName(name, f))
+        for st in kind[1]:
+            tg = st.expr.target
+            out.append(ExprStmt(AssignExpr(IdentExpr(self.fieldName(name, tg.name)), st.expr.op, self.copyWith(st.expr.value, subst))))
+        return BlockStmt(out)
+
+    # The statements that stand for `name = Cls(args)`.
+    func constructStmts(self, name, call, shape):
+        init = shape["init"]
+        out = []
+        subst = {}
+        k = 0
+        for prm in init.params:
+            tmp = self.fresh("ca")
+            if k < len(call.args):
+                out.append(ExprStmt(AssignExpr(IdentExpr(tmp), "=", call.args[k])))
+            elif prm in init.defaults:
+                out.append(ExprStmt(AssignExpr(IdentExpr(tmp), "=", self.copyWith(init.defaults[prm], {}))))
+            else:
+                return None
+            subst[prm] = IdentExpr(tmp)
+            k += 1
+        for f in shape["fields"]:
+            subst["self." + f] = IdentExpr(self.fieldName(name, f))
+        done = {}
+        for f in shape["fields"]:
+            value = self.copyWith(shape["values"][f], subst)
+            out.append(ExprStmt(AssignExpr(IdentExpr(self.fieldName(name, f)), "=", value)))
+            subst["self." + f] = IdentExpr(self.fieldName(name, f))
+        return out
+
+    func candidate(self, st):
+        call = None
+        name = None
+        if st.type == "EXPR" and st.expr.type == "ASSIGN" and st.expr.op == "=" and st.expr.target.type == "IDENT":
+            call = st.expr.value
+            name = st.expr.target.name
+        elif st.type == "VAR":
+            call = st.value
+            name = st.name
+        if call == None or call.type != "CALL" or call.callee.type != "IDENT" or len(call.kwNames) > 0:
+            return None
+        return [name, call]
+
+    func optimizeList(self, stmts, root):
+        i = 0
+        while i < len(stmts):
+            st = stmts[i]
+            cand = self.candidate(st)
+            if cand != None and (cand[1].callee.name in self.classes):
+                name = cand[0]
+                shape = self.classShape(cand[1].callee.name)
+                if shape != None and not (name in cand[1].callee.name):
+                    after = BlockStmt(stmts[i + 1:])
+                    inside = self.countIdent(after, name)
+                    total = self.countIdent(root, name)
+                    argsUse = 0
+                    for a in cand[1].args:
+                        argsUse += self.countIdent(a, name)
+                    if total == inside + 1 + argsUse and argsUse == 0 and self.usesOk(after, name, shape):
+                        built = self.constructStmts(name, cand[1], shape)
+                        if built != None:
+                            self.rewriteUses(after, name, shape)
+                            rest = after.stmts
+                            while len(stmts) > i:
+                                stmts.pop()
+                            for b in built:
+                                stmts.append(b)
+                            for r in rest:
+                                stmts.append(r)
+                            i += len(built)
+                            continue
+            i += 1
+        for st in stmts:
+            self.optimizeInside(st, root)
+
+    func optimizeInside(self, st, root):
+        t = st.type
+        if t == "BLOCK":
+            self.optimizeList(st.stmts, root)
+        elif t == "IF":
+            self.optimizeInside(st.thenBranch, root)
+            if st.elseBranch != None:
+                self.optimizeInside(st.elseBranch, root)
+        elif t == "WHILE" or t == "FOR" or t == "FOR_IN":
+            self.optimizeInside(st.body, root)
+        elif t == "TRY":
+            self.optimizeInside(st.tryBlock, root)
+            if st.catchBlock != None:
+                self.optimizeInside(st.catchBlock, root)
+
+    func lowerBlock(self, stmts):
+        out = []
+        for s in stmts:
+            out.append(self.lowerStmt(s))
+        return out
+
+    func lowerFunc(self, f, isMethod):
+        if f.restName != None or f.kwName != None:
+            unsupported("parameter *args/**kwargs")
+        k = 0
+        for name in f.defaults:
+            f.defaults[name] = self.lowerExpr(f.defaults[name], False)
+        saved = self.outerLocals
+        found = {}
+        for p in f.params:
+            found[p] = True
+        found["self"] = True
+        collectLocals(f.body, found)
+        self.outerLocals = found
+        f.body = self.lowerStmt(f.body)
+        self.outerLocals = saved
+        if not isMethod:
+            self.optimizeList(f.body.stmts, f.body)
+        return f
+
+    func lowerStmt(self, s):
+        if s == None:
+            return None
+        t = s.type
+        if t == "BLOCK":
+            s.stmts = self.lowerBlock(s.stmts)
+            return s
+        if t == "VAR":
+            s.value = self.lowerExpr(s.value, False)
+            return s
+        if t == "FUNC":
+            return self.lowerFunc(s, False)
+        if t == "CLASS":
+            if len(s.attrs) > 0:
+                unsupported("atribut kelas")
+            for m in s.methods:
+                if hasattr(m, "kind") and m.kind != "":
+                    unsupported("metode static/class/property")
+                if m.name.startswith("__") and m.name.endswith("__") and m.name != "__init__" and m.name != "__str__":
+                    unsupported("metode khusus " + m.name)
+                if self.arch == "arm64" and (m.name == "__str__" or m.name == "append" or m.name == "push" or m.name == "pop" or m.name == "get" or m.name == "ambil"):
+                    unsupported("metode '" + m.name + "' belum didukung di ARM64")
+                self.lowerFunc(m, True)
+            return s
+        if t == "STRUCT" or t == "ENUM":
+            unsupported("bentuk/jenis")
+        if t == "WITH":
+            unsupported("with")
+        if t == "IF":
+            s.condition = self.lowerExpr(s.condition, False)
+            s.thenBranch = self.lowerStmt(s.thenBranch)
+            s.elseBranch = self.lowerStmt(s.elseBranch)
+            return s
+        if t == "WHILE":
+            s.condition = self.lowerExpr(s.condition, False)
+            s.body = self.lowerStmt(s.body)
+            return s
+        if t == "FOR":
+            s.init = self.lowerStmt(s.init)
+            s.condition = self.lowerExpr(s.condition, False)
+            s.post = self.lowerExpr(s.post, False)
+            s.body = self.lowerStmt(s.body)
+            return s
+        if t == "FOR_IN":
+            it = s.iterable
+            if it.type == "CALL" and it.callee.type == "IDENT" and (it.callee.name == "range" or it.callee.name == "rentang") and len(it.args) == 3 and len(it.kwNames) == 0:
+                if self.arch == "arm64":
+                    unsupported("range dengan langkah")
+                k = 0
+                for a in it.args:
+                    it.args[k] = self.lowerExpr(a, False)
+                    k += 1
+            else:
+                s.iterable = self.lowerExpr(s.iterable, False)
+            s.body = self.lowerStmt(s.body)
+            if len(s.targets) > 1:
+                tmp = self.fresh("fe")
+                binds = []
+                k = 0
+                for name in s.targets:
+                    binds.append(ExprStmt(AssignExpr(IdentExpr(name), "=", IndexExpr(IdentExpr(tmp), NumberExpr(k, False)))))
+                    k += 1
+                body = BlockStmt(binds + [s.body])
+                loop = ForInStmt(tmp, s.iterable, body, [tmp], False)
+                if hasattr(s, "line"):
+                    loop.line = s.line
+                    loop.col = s.col
+                return loop
+            return s
+        if t == "RETURN" or t == "THROW":
+            s.value = self.lowerExpr(s.value, False)
+            return s
+        if t == "EXPR":
+            s.expr = self.lowerExpr(s.expr, False)
+            return s
+        if t == "TUPLE_ASSIGN":
+            return self.lowerTuple(s)
+        if t == "TRY":
+            return self.lowerTry(s)
+        return s
+
+    func lowerTuple(self, s):
+        if s.starIndex >= 0:
+            unsupported("penugasan beruntun dengan '*'")
+        n = len(s.targets)
+        stmts = []
+        if s.isLiteral:
+            elements = s.value.elements
+            if len(elements) != n:
+                unsupported("jumlah nilai dan variabel tidak sama")
+            temps = []
+            k = 0
+            for el in elements:
+                tmp = self.fresh("tp")
+                temps.append(tmp)
+                stmts.append(VarStmt(tmp, self.lowerExpr(el, False)))
+                k += 1
+            k = 0
+            for target in s.targets:
+                stmts.append(ExprStmt(AssignExpr(self.lowerExpr(target, False), "=", IdentExpr(temps[k]))))
+                k += 1
+        else:
+            tmp = self.fresh("tp")
+            stmts.append(VarStmt(tmp, self.lowerExpr(s.value, False)))
+            k = 0
+            for target in s.targets:
+                stmts.append(ExprStmt(AssignExpr(self.lowerExpr(target, False), "=", IndexExpr(IdentExpr(tmp), NumberExpr(k, False)))))
+                k += 1
+        return BlockStmt(stmts)
+
+    func lowerTry(self, s):
+        if s.clauses != None or s.elseBlock != None:
+            unsupported("coba/tangkap dengan jenis kesalahan")
+        s.tryBlock = self.lowerStmt(s.tryBlock)
+        s.catchBlock = self.lowerStmt(s.catchBlock)
+        s.finallyBlock = self.lowerStmt(s.finallyBlock)
+        if s.finallyBlock == None:
+            return s
+        if hasEscape(s.tryBlock, False) or hasEscape(s.catchBlock, False):
+            unsupported("return/break/continue di dalam try dengan finally")
+        inner = TryStmt(s.tryBlock, s.catchVar, s.catchBlock, None)
+        fv = self.fresh("fin")
+        wrapper = TryStmt(BlockStmt([inner]), fv, BlockStmt([s.finallyBlock, ThrowStmt(IdentExpr(fv))]), None)
+        return BlockStmt([wrapper, s.finallyBlock])
+
+# Rewrites a parsed module for the native backends or refuses it with an
+# "native: ..." error, which makes the launcher run the program on the
+# interpreter instead. Returns the lowered statements and the field names
+# that are assigned from outside a class.
+func newPrep(arch):
+    return Prep(arch)

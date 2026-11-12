@@ -119,7 +119,7 @@ func absolutePath(p):
 func writeDeps(path, inputFile, backend):
     lines = [absolutePath(inputFile)]
     for name in backend.importOrder:
-        resolved = backend.resolveImportPath(name)
+        resolved = backend.resolvedOf[name] if name in backend.resolvedOf else None
         if resolved != None:
             lines.append(absolutePath(resolved))
     TulisFile(path, "\n".join(lines) + "\n")

@@ -1,0 +1,13 @@
+import .price as price
+
+items = []
+
+func add(name, qty = 1):
+    items.append([name, qty, price.of(name)])
+    return len(items)
+
+func total():
+    sum = 0
+    for item in items:
+        sum += item[1] * item[2]
+    return sum

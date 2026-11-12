@@ -1,0 +1,13 @@
+# Text: slicing, methods, f-strings with format specs.
+s = "Nusantara Bahasa"
+print(len(s), s.upper(), s.lower())
+print(s[0:9], s[10:], s[-6:], s[::-1])
+print(s.split(" "), "-".join(["a", "b", "c"]))
+print(s.find("Bahasa"), s.startswith("Nus"), s.endswith("sa"), s.replace("a", "o"))
+print("  padded  ".strip() + "|")
+
+name = "nsl"
+pi = 3.14159
+big = 1234567
+print(f"{name} {pi:.2f} {big:,} [{name:>6}] [{name:<6}] [{7:03d}]")
+print("ab" * 3, "x" in s, "q" in s)

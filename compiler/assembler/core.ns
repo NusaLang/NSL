@@ -89,6 +89,8 @@ class Assembler:
         for st in self.stmts:
             k = st["kind"]
             if k == "label":
+                if st["name"] in self.symbols:
+                    asmFail("duplicate label " + st["name"])
                 self.symbols[st["name"]] = [st["section"], sizes[st["section"]]]
             elif k == "ins":
                 st["off"] = sizes["text"]

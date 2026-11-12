@@ -44,6 +44,7 @@ func loadSubmodule(path):
 
 runtimeModule = loadSubmodule("runtime.ns")
 preludeModule = loadModule("compiler/prelude.ns")
+guardModule = loadModule("compiler/guard.ns")
 resolverModule = loadModule("core/resolver.ns")
 resolveModulePath = resolverModule.resolveModulePath
 
@@ -55,7 +56,9 @@ TulisFile = tulis_file
 INTLIMIT = 4503599627370496 * 1024
 REGS = ["x19", "x20", "x21", "x22", "x23"]
 JUMPS = {"<": "b.ge", "<=": "b.gt", ">": "b.le", ">=": "b.lt", "==": "b.ne", "!=": "b.eq"}
-ARITH = {"+": "rtAdd", "-": "rtSub", "*": "rtMul", "/": "rtDiv", "//": "rtDiv", "%": "rtMod"}
+ARITHX = {"+": "rtAddX", "-": "rtSubX", "*": "rtMulX", "/": "rtDiv", "//": "rtFloorDiv", "%": "rtMod"}
+BITWISEX = {"&": "rtBitAnd", "|": "rtBitOr", "^": "rtBitXor", "<<": "rtShlX", ">>": "rtShr"}
+ARITH = {"+": "rtAdd", "-": "rtSub", "*": "rtMul", "/": "rtDiv", "//": "rtFloorDiv", "%": "rtMod"}
 BITWISE = {"&": "rtBitAnd", "|": "rtBitOr", "^": "rtBitXor", "<<": "rtShl", ">>": "rtShr"}
 STRMETHODS = {"find": "rtStrFind", "startswith": "rtStrStartsWith", "endswith": "rtStrEndsWith", "join": "rtStrJoin", "strip": "rtStrStrip", "lower": "rtStrLower", "upper": "rtStrUpper", "split": "rtStrSplit", "isdigit": "rtStrIsDigit", "isalpha": "rtStrIsAlpha", "isalnum": "rtStrIsAlnum"}
 
@@ -425,6 +428,40 @@ func collectSelfFieldStmt(s, found):
     elif t == "EXPR":
         collectSelfFieldExpr(s.expr, found)
 
+# Names a module's top-level code binds. Functions and classes are left out:
+# a function that assigns one of these names writes the global.
+func collectModuleNames(s, found):
+    if s == None or not hasattr(s, "type"):
+        return None
+    t = s.type
+    if t == "BLOCK":
+        for st in s.stmts:
+            collectModuleNames(st, found)
+    elif t == "VAR":
+        found[s.name] = True
+    elif t == "EXPR":
+        e = s.expr
+        while e != None and e.type == "ASSIGN":
+            if e.target.type == "IDENT":
+                found[e.target.name] = True
+            e = e.value
+    elif t == "IF":
+        collectModuleNames(s.thenBranch, found)
+        collectModuleNames(s.elseBranch, found)
+    elif t == "WHILE":
+        collectModuleNames(s.body, found)
+    elif t == "FOR":
+        collectModuleNames(s.init, found)
+        collectModuleNames(s.body, found)
+    elif t == "FOR_IN":
+        found[s.variable] = True
+        collectModuleNames(s.body, found)
+    elif t == "TRY":
+        found[s.catchVar] = True
+        collectModuleNames(s.tryBlock, found)
+        collectModuleNames(s.catchBlock, found)
+        collectModuleNames(s.finallyBlock, found)
+
 class Arm64Compiler:
     func __init__(self):
         self.out = []
@@ -453,6 +490,18 @@ class Arm64Compiler:
         self.locals = {}
         self.regOf = {}
         self.loops = []
+        self.tryDepth = 0
+        self.exactInts = False
+        self.forceLocal = False
+        self.moduleAssigned = {}
+        self.externalFields = {}
+        self.prep = guardModule.newPrep("arm64")
+        self.mainDir = "."
+        self.resolvedOf = {}
+        self.nameOfFile = {}
+        self.aliasOf = {}
+        self.initialized = {}
+        self.funcAliases = {}
 
     func emit(self, line):
         self.out.append("    " + line)
@@ -497,35 +546,54 @@ class Arm64Compiler:
         self.dataLines.append(" .double " + str(value))
         return lbl
 
-    func resolveImportPath(self, name):
-        if self.sourceDir != None and self.sourceDir != "":
-            p1 = self.sourceDir + "/" + name
-            if FileAda(p1):
-                return p1
-            if FileAda(p1 + ".ns"):
-                return p1 + ".ns"
-        return resolveModulePath(name, FileAda)
+    func resolveImportPath(self, name, importerDir = None):
+        base = importerDir if importerDir != None else self.mainDir
+        return resolverModule.resolveModuleFile(name, base, FileAda)
+
+    func requestModule(self, name, dirName, queue):
+        resolved = self.resolveImportPath(name, dirName)
+        if resolved == None:
+            fail("cannot resolve import '" + name + "'")
+        if name in self.resolvedOf:
+            if self.resolvedOf[name] != resolved:
+                fail("dois modulos diferentes importados como '" + name + "'")
+            return None
+        self.resolvedOf[name] = resolved
+        if resolved in self.nameOfFile:
+            self.aliasOf[name] = self.nameOfFile[resolved]
+            return None
+        self.nameOfFile[resolved] = name
+        queue.append(name)
+
+    func canon(self, name):
+        if name in self.aliasOf:
+            return self.aliasOf[name]
+        return name
 
     func processImports(self, tree):
         self.importIndex = {}
         self.importOrder = []
         self.importInfo = {}
         queue = []
+        found = []
         for s in tree:
-            scanStmt(s, queue)
+            scanStmt(s, found)
+        for name in found:
+            self.requestModule(name, self.mainDir, queue)
         qi = 0
         while qi < len(queue):
             path = queue[qi]
             qi += 1
             if path in self.importIndex:
                 continue
-            resolved = self.resolveImportPath(path)
-            if resolved == None:
-                fail("cannot resolve import '" + path + "'")
+            resolved = self.resolvedOf[path]
             modParser = Parser(Lexer(BacaFile(resolved)).tokenize())
             modTree = modParser.parse()
             if modParser.errorCount > 0:
                 fail("syntax errors in imported module '" + path + "'")
+            self.prep.moduleName = path
+            self.prep.scan(modTree)
+            modTree = self.prep.lowerTop(modTree)
             idx = len(self.importOrder)
             self.importIndex[path] = idx
             self.importOrder.append(path)
@@ -568,7 +636,9 @@ class Arm64Compiler:
                 if cs.baseClass != None and (cs.baseClass in renameMap):
                     cs.baseClass = renameMap[cs.baseClass]
                 for m in cs.methods:
+                    methodName = m.name
                     renameStmt(m, renameMap)
+                    m.name = methodName
             for os in otherStmts:
                 renameStmt(os, renameMap)
 
@@ -580,8 +650,7 @@ class Arm64Compiler:
             for os in otherStmts:
                 scanStmt(os, nested)
             for p in nested:
-                if not (p in self.importIndex) and not (p in queue):
-                    queue.append(p)
+                self.requestModule(p, resolverModule.directoryOf(resolved), queue)
 
             self.importInfo[path] = {
                 "funcStmts": funcStmtsLocal,
@@ -628,6 +697,11 @@ class Arm64Compiler:
                 return None
             if name in self.locals:
                 self.stackAccess("str", reg, self.varOff(name))
+                return None
+            if not self.forceLocal and (name in self.moduleAssigned):
+                self.globalNames[name] = True
+                self.emit("ldr x16, =gv" + name)
+                self.emit("str " + reg + ", [x16]")
                 return None
             if not (name in self.globalNames):
                 if len(self.regOf) < len(REGS) and not self.noRegs:
@@ -731,26 +805,47 @@ class Arm64Compiler:
 
     func compile(self, tree, sourceDir = None):
         self.sourceDir = sourceDir
+        self.mainDir = resolverModule.absolutePath(sourceDir if sourceDir != None and sourceDir != "" else ".", resolverModule.currentDirectory())
+        resolverModule.setScriptDir(self.mainDir)
+        self.prep.scan(tree)
         self.processImports(tree)
+        self.prep.moduleName = "__main__"
+        tree = self.prep.lowerTop(tree)
+        self.externalFields = self.prep.fieldNames
         for s in tree:
+            collectModuleNames(s, self.moduleAssigned)
+        for path in self.importOrder:
+            for s in self.importInfo[path]["initStmts"]:
+                collectModuleNames(s, self.moduleAssigned)
+        aliasScan = []
+        for st in tree:
+            aliasScan.append(st)
+        for modPath in self.importOrder:
+            for st in self.importInfo[modPath]["initStmts"]:
+                aliasScan.append(st)
+        for s in aliasScan:
             if s.type == "EXPR" and s.expr.type == "ASSIGN" and s.expr.target.type == "IDENT":
                 if s.expr.value.type == "CALL" and s.expr.value.callee.type == "IDENT" and s.expr.value.callee.name == "impor" and len(s.expr.value.args) == 1 and s.expr.value.args[0].type == "STRING":
-                    self.moduleVars[s.expr.target.name] = s.expr.value.args[0].value
+                    self.moduleVars[s.expr.target.name] = self.canon(s.expr.value.args[0].value)
                 elif s.expr.value.type == "MEMBER" and s.expr.value.target.type == "IDENT" and (s.expr.value.target.name in self.moduleVars):
                     mpath = self.moduleVars[s.expr.value.target.name]
                     if mpath in self.importInfo:
                         pfx = self.importInfo[mpath]["prefix"]
                         if s.expr.value.name in self.importInfo[mpath]["classNames"]:
                             self.classAliases[s.expr.target.name] = pfx + s.expr.value.name
+                        elif s.expr.value.name in self.importInfo[mpath]["funcNames"]:
+                            self.funcAliases[s.expr.target.name] = pfx + s.expr.value.name
             elif s.type == "VAR":
                 if s.value != None and s.value.type == "CALL" and s.value.callee.type == "IDENT" and s.value.callee.name == "impor" and len(s.value.args) == 1 and s.value.args[0].type == "STRING":
-                    self.moduleVars[s.name] = s.value.args[0].value
+                    self.moduleVars[s.name] = self.canon(s.value.args[0].value)
                 elif s.value != None and s.value.type == "MEMBER" and s.value.target.type == "IDENT" and (s.value.target.name in self.moduleVars):
                     mpath = self.moduleVars[s.value.target.name]
                     if mpath in self.importInfo:
                         pfx = self.importInfo[mpath]["prefix"]
                         if s.value.name in self.importInfo[mpath]["classNames"]:
                             self.classAliases[s.name] = pfx + s.value.name
+                        elif s.value.name in self.importInfo[mpath]["funcNames"]:
+                            self.funcAliases[s.name] = pfx + s.value.name
 
         self.knownGlobals = {}
         for s in tree:
@@ -830,15 +925,23 @@ class Arm64Compiler:
         self.emit("add x3, x3, x2, lsl 3")
         self.emit("ldr x1, =gEnvp")
         self.emit("str x3, [x1]")
+        self.emit("mov x0, 0")
+        self.emit("ldr x1, =1073741824")
+        self.emit("mov x2, 3")
+        self.emit("ldr x3, =16418")
+        self.emit("mov x4, -1")
+        self.emit("mov x5, 0")
+        self.emit("mov x8, 222")
+        self.emit("svc #0")
+        self.emit("ldr x2, =262144")
+        self.emit("add x2, x0, x2")
+        self.emit("ldr x1, =stackLimit")
+        self.emit("str x2, [x1]")
+        self.emit("ldr x2, =1073741824")
+        self.emit("add x2, x0, x2")
+        self.emit("mov sp, x2")
         self.emit("bl rtInit")
         self.emit("bl rtSysInit")
-        for path in self.importOrder:
-            info = self.importInfo[path]
-            for cs in info["classStmts"]:
-                self.genClass(cs)
-            for s in info["initStmts"]:
-                self.genStmt(s)
-            self.genModuleObject(self.importIndex[path], info["funcNames"], info["varNames"], info["classNames"], info["prefix"])
         for s in mainStmts:
             self.genStmt(s)
         self.emit("mov x0, 0")
@@ -866,6 +969,7 @@ class Arm64Compiler:
         lines.append("gArgc: .zero 8")
         lines.append("gArgv: .zero 8")
         lines.append("gEnvp: .zero 8")
+        lines.append("stackLimit: .zero 8")
         lines.append("gvsys: .zero 8")
         lines.append("gvsys_argv: .zero 8")
         for g in self.globalNames:
@@ -886,6 +990,7 @@ class Arm64Compiler:
         self.classes[c.name] = {"base": c.baseClass, "methods": methods, "methodParams": methodParams, "methodDefaults": methodDefaults}
 
     func genFunc(self, f, label, plainName):
+        self.exactInts = plainName.startswith("nsRt")
         self.inFn = True
         self.fnName = label
         self.params = {}
@@ -893,6 +998,7 @@ class Arm64Compiler:
         self.locals = {}
         self.regOf = {}
         self.loops = []
+        self.tryDepth = 0
         self.cold = []
         self.noRegs = hasTry(f.body)
         loads = []
@@ -922,6 +1028,11 @@ class Arm64Compiler:
         else:
             head.append("    ldr x16, =" + str(frame))
             head.append("    sub sp, sp, x16")
+        head.append("    ldr x16, =stackLimit")
+        head.append("    ldr x16, [x16]")
+        head.append("    mov x17, sp")
+        head.append("    cmp x17, x16")
+        head.append("    b.lo rtStackOverflow")
         tail = ["epi" + label + ":"]
         k = 0
         while k < len(REGS):
@@ -932,6 +1043,7 @@ class Arm64Compiler:
         tail.append("    ldp x29, lr, [sp], 16")
         tail.append("    ret")
         self.inFn = False
+        self.exactInts = False
         return "\n".join(head + loads + bodyLines + tail + self.cold + ["    .ltorg"])
 
     func genBlock(self, node):
@@ -984,13 +1096,40 @@ class Arm64Compiler:
             self.genExpr(e)
             self.genTruthy(falseLabel)
 
+    func emitModuleInit(self, name):
+        if name in self.initialized or not (name in self.importInfo):
+            return None
+        self.initialized[name] = True
+        info = self.importInfo[name]
+        for cs in info["classStmts"]:
+            self.genClass(cs)
+        for st in info["initStmts"]:
+            self.genStmt(st)
+        self.genModuleObject(self.importIndex[name], info["funcNames"], info["varNames"], info["classNames"], info["prefix"])
+
+    func importedName(self, s):
+        call = None
+        if s.type == "EXPR" and s.expr.type == "ASSIGN":
+            call = s.expr.value
+        elif s.type == "VAR":
+            call = s.value
+        if call != None and call.type == "CALL" and call.callee.type == "IDENT" and call.callee.name == "impor" and len(call.args) == 1 and call.args[0].type == "STRING" and hasattr(call, "topImport"):
+            return self.canon(call.args[0].value)
+        return None
+
     func genStmt(self, s):
         t = s.type
+        if (t == "EXPR" or t == "VAR") and not self.inFn:
+            imported = self.importedName(s)
+            if imported != None:
+                self.emitModuleInit(imported)
         if t == "EXPR":
             self.genExpr(s.expr)
         elif t == "VAR":
             self.genExpr(s.value)
+            self.forceLocal = True
             self.varStore(s.name, "x0")
+            self.forceLocal = False
         elif t == "IF":
             elseLabel = self.newLabel()
             endLabel = self.newLabel()
@@ -1005,7 +1144,7 @@ class Arm64Compiler:
         elif t == "WHILE":
             top = self.newLabel()
             end = self.newLabel()
-            self.loops.append([top, end])
+            self.loops.append([top, end, self.tryDepth])
             self.label(top)
             self.genCond(s.condition, end)
             self.genBlock(s.body)
@@ -1018,7 +1157,7 @@ class Arm64Compiler:
             top = self.newLabel()
             cont = self.newLabel()
             end = self.newLabel()
-            self.loops.append([cont, end])
+            self.loops.append([cont, end, self.tryDepth])
             self.label(top)
             if s.condition != None:
                 self.genCond(s.condition, end)
@@ -1045,7 +1184,9 @@ class Arm64Compiler:
             self.emit("str x2, [sp, 24]")
             self.emit("mov x2, sp")
             self.emit("str x2, [x1]")
+            self.tryDepth += 1
             self.genBlock(s.tryBlock)
+            self.tryDepth -= 1
             self.emit("ldr x1, =excTop")
             self.emit("ldr x2, [sp]")
             self.emit("str x2, [x1]")
@@ -1055,7 +1196,9 @@ class Arm64Compiler:
             self.emit("b " + endLabel)
             self.label(catchLabel)
             if s.catchVar != None and s.catchVar != "":
+                self.forceLocal = True
                 self.varStore(s.catchVar, "x0")
+                self.forceLocal = False
             if s.catchBlock != None:
                 self.genBlock(s.catchBlock)
             if s.finallyBlock != None:
@@ -1071,10 +1214,17 @@ class Arm64Compiler:
                 self.genExpr(s.value)
             if not self.inFn:
                 fail("return outside function")
+            self.unwindTry(self.tryDepth, False)
             self.emit("b epi" + self.fnName)
         elif t == "BREAK":
+            if len(self.loops) == 0:
+                fail("break outside loop")
+            self.unwindTry(self.tryDepth - self.loops[-1][2], True)
             self.emit("b " + self.loops[-1][1])
         elif t == "CONTINUE":
+            if len(self.loops) == 0:
+                fail("continue outside loop")
+            self.unwindTry(self.tryDepth - self.loops[-1][2], True)
             self.emit("b " + self.loops[-1][0])
         elif t == "BLOCK":
             self.genBlock(s)
@@ -1086,6 +1236,17 @@ class Arm64Compiler:
             return None
         else:
             fail("unsupported statement " + t)
+
+    func unwindTry(self, count, dropStack):
+        k = 0
+        while k < count:
+            self.emit("ldr x1, =excTop")
+            self.emit("ldr x2, [x1]")
+            self.emit("ldr x2, [x2]")
+            self.emit("str x2, [x1]")
+            k += 1
+        if dropStack and count > 0:
+            self.emit("add sp, sp, " + str(32 * count))
 
     func genForIn(self, s):
         isRange = False
@@ -1114,13 +1275,15 @@ class Arm64Compiler:
                 self.varStore(curName, "x0")
                 self.genExpr(rangeArgs[1])
                 self.varStore(stopName, "x0")
-            self.loops.append([cont, end])
+            self.loops.append([cont, end, self.tryDepth])
             self.label(top)
             self.varLoad(curName, "x0")
             self.varLoad(stopName, "x1")
             self.emit("cmp x0, x1")
             self.emit("b.ge " + end)
+            self.forceLocal = not s.declared
             self.varStore(s.variable, "x0")
+            self.forceLocal = False
             self.genBlock(s.body)
             self.label(cont)
             self.varLoad(curName, "x0")
@@ -1136,7 +1299,7 @@ class Arm64Compiler:
         self.varStore(stopName, "x0")
         self.emit("mov x0, 1")
         self.varStore(curName, "x0")
-        self.loops.append([cont, end])
+        self.loops.append([cont, end, self.tryDepth])
         self.label(top)
         self.varLoad(stopName, "x2")
         self.emit("ldr x0, [x2, 8]")
@@ -1148,7 +1311,9 @@ class Arm64Compiler:
         self.emit("ldr x0, [x2, 24]")
         self.emit("asr x1, x1, 1")
         self.emit("ldr x0, [x0, x1, lsl 3]")
+        self.forceLocal = not s.declared
         self.varStore(s.variable, "x0")
+        self.forceLocal = False
         self.genBlock(s.body)
         self.label(cont)
         self.varLoad(curName, "x0")
@@ -1173,6 +1338,10 @@ class Arm64Compiler:
         ownFound = []
         for m in classStmtsByName[name].methods:
             collectSelfFieldStmt(m.body, ownFound)
+        for f in self.externalFields:
+            if not (f in fieldOffset):
+                fieldOffset[f] = 16 + 8 * len(fields)
+                fields.append(f)
         for f in ownFound:
             if not (f in fieldOffset):
                 fieldOffset[f] = 16 + 8 * len(fields)
@@ -1259,17 +1428,22 @@ class Arm64Compiler:
                 self.emit("b.vs " + cold)
                 self.emit("adds x3, x3, 1")
                 self.emit("b.vs " + cold)
+            if not self.exactInts:
+                self.emit("asr x6, x3, 54")
+                self.emit("add x6, x6, 1")
+                self.emit("cmp x6, 1")
+                self.emit("b.hi " + cold)
             self.emit("mov x0, x3")
             self.label(back)
             self.cold.append(cold + ":")
-            self.cold.append("    bl " + ARITH[op])
+            self.cold.append("    bl " + (ARITHX[op] if self.exactInts else ARITH[op]))
             self.cold.append("    b " + back)
         else:
-            self.emit("bl " + ARITH[op])
+            self.emit("bl " + (ARITHX[op] if self.exactInts else ARITH[op]))
 
     func genBitwise(self, op, e):
         self.genOperands(e)
-        self.emit("bl " + BITWISE[op])
+        self.emit("bl " + (BITWISEX[op] if self.exactInts else BITWISE[op]))
 
     func genCompareValue(self, e):
         falseLabel = self.newLabel()
@@ -1304,7 +1478,11 @@ class Arm64Compiler:
         elif t == "NULL":
             self.emit("mov x0, 0")
         elif t == "IDENT":
-            if e.name in self.funcs:
+            if e.name in self.funcAliases and not (self.inFn and (e.name in self.regOf or e.name in self.params or e.name in self.locals)):
+                self.emit("ldr x0, =" + fnLabel(self.funcAliases[e.name]))
+                self.emit("lsl x0, x0, 1")
+                self.emit("add x0, x0, 1")
+            elif e.name in self.funcs:
                 self.emit("ldr x0, =" + fnLabel(e.name))
                 self.emit("lsl x0, x0, 1")
                 self.emit("add x0, x0, 1")
@@ -1673,6 +1851,13 @@ class Arm64Compiler:
                     if prefixedCls in self.classes:
                         self.genInstantiateClass(prefixedCls, args)
                         return None
+                    if name in self.importInfo[mpath]["funcNames"]:
+                        self.genCall(astModule.CallExpr(astModule.IdentExpr(pfx + name), args))
+                        return None
+            if (name == "append" or name == "push") and len(args) != 1:
+                fail("metode " + name + " butuh satu argumen")
+            if (name == "get" or name == "ambil") and (len(args) < 1 or len(args) > 2):
+                fail("metode " + name + " butuh satu atau dua argumen")
             if name == "append" or name == "push":
                 self.genExpr(callee.target)
                 self.push("x0")
@@ -1711,6 +1896,9 @@ class Arm64Compiler:
             self.genIndirectCall(callee, args)
             return None
         name = callee.name
+        if name in self.funcAliases and not (name in self.regOf) and not (name in self.params) and not (name in self.locals):
+            self.genCall(astModule.CallExpr(astModule.IdentExpr(self.funcAliases[name]), args))
+            return None
         if name in self.classAliases:
             self.genInstantiateClass(self.classAliases[name], args)
         elif name in self.classes:
@@ -1787,8 +1975,10 @@ class Arm64Compiler:
             if len(args) == 1 and args[0].type == "STRING" and args[0].value == "sys":
                 self.emit("ldr x16, =gvsys")
                 self.emit("ldr x0, [x16]")
-            elif len(args) == 1 and args[0].type == "STRING" and (args[0].value in self.importIndex):
-                idx = self.importIndex[args[0].value]
+            elif len(args) == 1 and args[0].type == "STRING" and (self.canon(args[0].value) in self.importIndex):
+                if not (self.canon(args[0].value) in self.initialized):
+                    fail("impor('" + args[0].value + "') antes da inicializacao do modulo")
+                idx = self.importIndex[self.canon(args[0].value)]
                 self.varLoad("modobj" + str(idx), "x0")
             else:
                 fail("impor() with a non-literal or unresolved path is not supported in --native builds")

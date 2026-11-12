@@ -1,0 +1,21 @@
+# A small web service. Run it with `nusa examples/webServer.ns` and open
+# http://localhost:8080/ . It serves requests until you stop it.
+http = impor("net/http.ns")
+app = http.HttpServer()
+
+func home(req):
+    return "Halo dari Nusantara"
+
+func hello(req):
+    who = req.params["name"] if "name" in req.params else "dunia"
+    return {"pesan": "halo " + who}
+
+func broken(req):
+    throw {"pesan": "sengaja gagal"}
+
+app.get("/", home)
+app.get("/hello", hello)
+app.get("/broken", broken)
+
+print("listening on http://localhost:8080")
+app.listen(8080)
