@@ -18,6 +18,7 @@ func loadModule(path):
 
 astModule = loadModule("core/parser/ast.ns")
 NumberExpr = astModule.NumberExpr
+StringExpr = astModule.StringExpr
 IdentExpr = astModule.IdentExpr
 IndexExpr = astModule.IndexExpr
 AssignExpr = astModule.AssignExpr
@@ -169,6 +170,8 @@ class Prep:
         self.fieldNames = {}
         self.selfFields = {}
         self.outerLocals = None
+        self.moduleName = "__main__"
+        self.tables = {}
 
     func fresh(self, base):
         self.counter += 1
@@ -176,6 +179,9 @@ class Prep:
 
     # Gathers signatures before anything is rewritten.
     func scan(self, stmts):
+        self.funcSigs = {}
+        self.classes = {}
+        self.tables[self.moduleName] = [self.funcSigs, self.classes]
         for s in stmts:
             if s.type == "FUNC":
                 self.funcSigs[s.name] = [s.params, s.defaults]
@@ -335,6 +341,12 @@ class Prep:
         if e == None:
             return None
         t = e.type
+        if t == "IDENT":
+            if e.name == "__name__":
+                return StringExpr(self.moduleName)
+            if e.name == "__file__":
+                unsupported("__file__")
+            return e
         if t == "STRING":
             for ch in e.value:
                 if ord(ch) > 127:
@@ -350,6 +362,8 @@ class Prep:
             e.operand = self.lowerExpr(e.operand, False)
             return e
         if t == "CALL":
+            if e.callee.type == "IDENT" and (e.callee.name == "impor" or e.callee.name == "import") and not hasattr(e, "topImport"):
+                unsupported("impor di luar penugasan tingkat atas")
             if e.callee.type == "IDENT" and (e.callee.name == "range" or e.callee.name == "rentang") and len(e.args) == 3:
                 unsupported("range dengan langkah di luar for")
             e = self.lowerCall(e)
@@ -409,6 +423,8 @@ class Prep:
             e.value = self.lowerExpr(e.value, False)
             return e
         if t == "MEMBER":
+            if e.name == "__name__" or e.name == "__file__":
+                unsupported("atributo " + e.name)
             if not asCallee and (e.name in self.methodSigs):
                 unsupported("metode '" + e.name + "' dipakai sebagai nilai")
             e.target = self.lowerExpr(e.target, False)
@@ -436,6 +452,23 @@ class Prep:
         if t == "SPREAD":
             unsupported("argumen *spread")
         return e
+
+    # Top-level statements of a file. An import must be one of these, written
+    # `name = impor("literal")`, so the module can start where the statement is.
+    func lowerTop(self, stmts):
+        self.funcSigs = self.tables[self.moduleName][0]
+        self.classes = self.tables[self.moduleName][1]
+        out = []
+        for s in stmts:
+            call = None
+            if s.type == "EXPR" and s.expr.type == "ASSIGN" and s.expr.target.type == "IDENT" and s.expr.op == "=":
+                call = s.expr.value
+            elif s.type == "VAR":
+                call = s.value
+            if call != None and call.type == "CALL" and call.callee.type == "IDENT" and (call.callee.name == "impor" or call.callee.name == "import") and len(call.args) == 1 and call.args[0].type == "STRING":
+                call.topImport = True
+            out.append(self.lowerStmt(s))
+        return out
 
     func lowerBlock(self, stmts):
         out = []

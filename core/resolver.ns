@@ -1,93 +1,165 @@
 FileAda = file_ada
 GetEnv = ambil_env
+RunCommand = jalankan_perintah
 
-MODULE_ALIASES = {
-    "urllib_parse": "urllibParse"
-}
+# Where a module name is looked for, in this order:
+#   1. "./x" and "../x" only next to the file that imports them; "/x" as is.
+#   2. a bare name: next to the importing file, next to the main script,
+#      then every `nusa_packages` folder from there up to the root, then each
+#      folder of NUSA_PATH (colon separated), then the standard library.
+# For each place the name is tried as `x.ns`, `x/index.ns`, `x/main.ns`.
+# Dots stand for folders: `shop.cart` is `shop/cart`, `.sub` is `./sub`.
 
-func canonicalModuleName(name):
-    if name in MODULE_ALIASES:
-        return MODULE_ALIASES[name]
-    return name
+STDLIBDIRS = ["std", "lib", "lib/system", "lib/async", "lib/collections", "lib/math", "lib/types", "lib/text", "lib/utils", "crypto", "net", "media", ""]
 
-func getModuleCandidates(name):
-    target = canonicalModuleName(name)
-    names = [name]
-    if target != name:
-        names.append(target)
-    candidates = []
-    for n in names:
-        candidates.append(n)
-        candidates.append(n + ".ns")
-        candidates.append(n + "/main.ns")
-        if n.startswith("../"):
-            candidates.append(n[3:])
-            candidates.append(n[3:] + ".ns")
-    prefixes = [
-        "std/",
-        "crypto/",
-        "net/",
-        "media/",
-        "core/",
-        "core/interpreter/",
-        "core/parser/",
-        "lib/",
-        "lib/system/",
-        "lib/async/",
-        "lib/collections/",
-        "lib/math/",
-        "lib/types/",
-        "lib/text/",
-        "lib/utils/"
-    ]
-    for p in prefixes:
-        for n in names:
-            candidates.append(p + n + ".ns")
-    home = GetEnv("NUSA_HOME")
-    if home != None and home != "":
-        for p in prefixes:
-            for n in names:
-                candidates.append(home + "/" + p + n + ".ns")
-    return candidates
+MODULEALIASES = {"urllib_parse": "urllibParse"}
 
-func resolveModulePath(name, fileExistsFn = None):
-    checker = FileAda if fileExistsFn == None else fileExistsFn
-    if name.startswith("../"):
-        if checker("core/" + name):
-            return name
-        if checker(name):
-            return name
-    for c in getModuleCandidates(name):
-        if checker(c):
-            return c
-    return None
-
-scriptState = {"dir": ""}
+scriptState = {"dir": "", "cwd": ""}
 
 func setScriptDir(path):
     scriptState["dir"] = path
 
-func importModule(name):
-    tries = []
-    if scriptState["dir"] != "" and not name.startswith("/"):
-        local = scriptState["dir"] + "/" + name
-        if FileAda(local):
-            tries.append(local)
-        elif FileAda(local + ".ns"):
-            tries.append(local + ".ns")
-    target = resolveModulePath(name, FileAda)
-    if target != None:
-        tries.append(target)
-    tries.append(name)
-    for c in getModuleCandidates(name):
-        tries.append("../" + c)
-    lastError = None
-    for t in tries:
-        try:
-            return impor(t)
-        except failure:
-            lastError = failure
-    return impor(name)
+func currentDirectory():
+    if scriptState["cwd"] == "":
+        text = RunCommand("pwd", []).keluaran.strip()
+        scriptState["cwd"] = text
+    return scriptState["cwd"]
 
-func resolveAndImport(name):
-    return importModule(name)
+func scriptDirectory():
+    if scriptState["dir"] != "":
+        return scriptState["dir"]
+    return currentDirectory()
+
+func stdlibHome():
+    home = GetEnv("NUSA_HOME")
+    if home == None:
+        return ""
+    return home
+
+func directoryOf(path):
+    i = len(path) - 1
+    while i >= 0 and path[i] != "/":
+        i -= 1
+    if i < 0:
+        return "."
+    if i == 0:
+        return "/"
+    return path[:i]
+
+# Joins and collapses `.` and `..`.
+func normalizePath(path):
+    absolute = path.startswith("/")
+    out = []
+    for part in path.split("/"):
+        if part == "" or part == ".":
+            continue
+        if part == "..":
+            if len(out) > 0 and out[len(out) - 1] != "..":
+                out.pop()
+            elif not absolute:
+                out.append("..")
+            continue
+        out.append(part)
+    text = "/".join(out)
+    if absolute:
+        return "/" + text
+    if text == "":
+        return "."
+    return text
+
+func absolutePath(path, base):
+    if path.startswith("/"):
+        return normalizePath(path)
+    return normalizePath(base + "/" + path)
+
+# `shop.cart` -> `shop/cart`, `..up.x` -> `../up/x`. Names with a slash or an
+# extension are left alone.
+func spellName(name):
+    if name.endswith(".ns") or ("/" in name):
+        return name
+    lead = 0
+    while lead < len(name) and name[lead] == ".":
+        lead += 1
+    rest = name[lead:]
+    body = "/".join(rest.split("."))
+    if lead == 0:
+        return body
+    if lead == 1:
+        return "./" + body
+    return "../" * (lead - 1) + body
+
+func fileCandidates(base):
+    if base.endswith(".ns"):
+        return [base]
+    return [base + ".ns", base + "/index.ns", base + "/main.ns"]
+
+func packageRoots(startDir):
+    roots = []
+    cur = startDir
+    while True:
+        roots.append(cur + "/nusa_packages")
+        if cur == "/" or cur == "." or cur == "":
+            break
+        parent = directoryOf(cur)
+        if parent == cur:
+            break
+        cur = parent
+    return roots
+
+func searchRoots(importerDir):
+    roots = [importerDir]
+    scriptDir = scriptDirectory()
+    if scriptDir != importerDir:
+        roots.append(scriptDir)
+    for r in packageRoots(importerDir):
+        roots.append(r)
+    extra = GetEnv("NUSA_PATH")
+    if extra != None and extra != "":
+        for r in extra.split(":"):
+            if r != "":
+                roots.append(absolutePath(r, currentDirectory()))
+    home = stdlibHome()
+    if home != "":
+        for d in STDLIBDIRS:
+            roots.append(home if d == "" else home + "/" + d)
+    return roots
+
+# The absolute path of the file `name` means when imported from a file in
+# `importerDir`, or None.
+func resolveModuleFile(name, importerDir, existsFn = None):
+    exists = FileAda if existsFn == None else existsFn
+    spelled = spellName(name)
+    names = [spelled]
+    if spelled in MODULEALIASES:
+        names.append(MODULEALIASES[spelled])
+    for n in names:
+        if n.startswith("/"):
+            for c in fileCandidates(n):
+                if exists(c):
+                    return normalizePath(c)
+            continue
+        if n.startswith("./") or n.startswith("../"):
+            for c in fileCandidates(absolutePath(n, importerDir)):
+                if exists(c):
+                    return c
+            continue
+        for root in searchRoots(importerDir):
+            for c in fileCandidates(absolutePath(n, root)):
+                if exists(c):
+                    return c
+    return None
+
+func isStdlibFile(path):
+    home = stdlibHome()
+    if home == "":
+        return False
+    for d in STDLIBDIRS:
+        if d != "" and path.startswith(home + "/" + d + "/"):
+            return True
+    return False
+
+# Used by the command line and the compilers, where the importing file is the
+# main script.
+func resolveModulePath(name, existsFn = None, importerDir = None):
+    base = scriptDirectory() if importerDir == None else importerDir
+    return resolveModuleFile(name, base, existsFn)

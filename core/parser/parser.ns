@@ -159,10 +159,10 @@ class Parser:
         if self.isWord(tok, "pass") and (self.peek(1).type == TokenType.RBRACE or self.peek(1).type == TokenType.EOF):
             self.advance()
             return BlockStmt([])
-        if t == TokenType.IDENT and (tok.text == "import" or tok.text == "impor") and (self.peek(1).type == TokenType.IDENT or self.peek(1).type == TokenType.STRING):
+        if t == TokenType.IDENT and (tok.text == "import" or tok.text == "impor") and (self.peek(1).type == TokenType.IDENT or self.peek(1).type == TokenType.STRING or self.peek(1).type == TokenType.DOT):
             self.advance()
             return self.parseImport(tok)
-        if t == TokenType.IDENT and (tok.text == "from" or tok.text == "dari") and self.peek(1).type == TokenType.IDENT:
+        if t == TokenType.IDENT and (tok.text == "from" or tok.text == "dari") and (self.peek(1).type == TokenType.IDENT or self.peek(1).type == TokenType.DOT):
             self.advance()
             return self.parseFromImport(tok)
         if t == TokenType.AT:
@@ -225,13 +225,22 @@ class Parser:
             return self.parseBlock()
         return self.parseExprStatement()
 
+    # `shop.cart` is shop/cart; leading dots are folders: `.sub` is ./sub, `..x` is ../x.
     func modulePath(self):
         if self.check(TokenType.STRING):
             return self.advance().text
+        dots = 0
+        while self.check(TokenType.DOT):
+            self.advance()
+            dots += 1
         path = self.expect(TokenType.IDENT, "Nama modul diharapkan").text
         while self.check(TokenType.DOT):
             self.advance()
             path += "/" + self.expect(TokenType.IDENT, "Nama modul diharapkan").text
+        if dots == 1:
+            return "./" + path
+        if dots > 1:
+            return "../" * (dots - 1) + path
         return path
 
     func importCall(self, path, tok):
@@ -244,14 +253,10 @@ class Parser:
         stmts = []
         while True:
             path = self.modulePath()
-            alias = path.split("/")[0]
+            alias = path.split("/")[-1].split(".")[0]
             if self.isWord(self.peek(0), "as", "sbg"):
                 self.advance()
                 alias = self.expect(TokenType.IDENT, "Nama alias diharapkan").text
-            elif "/" in path:
-                self.fail("import bersarang butuh 'as': import a.b as nama")
-            if self.check(TokenType.STRING) or path.endswith(".ns"):
-                alias = alias.split(".")[0]
             stmts.append(self.bindName(alias, self.importCall(path, tok), tok))
             if self.match(TokenType.COMMA) == None:
                 break

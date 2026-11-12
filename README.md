@@ -103,6 +103,17 @@ Functions are values. `lambda x: x * x` and nested functions capture the variabl
 
 An assignment updates the variable of that name when one is already visible: a parameter, a variable of an enclosing function, or a module variable. Otherwise it creates a new local. `buat` always declares a new variable in the current block, and `global name` is accepted for readers coming from Python. See `examples/scopes.ns`.
 
+### Modules
+
+```python
+import shop.cart                  # shop/cart.ns or shop/cart/index.ns
+from shop.cart import add, total
+import .price as price            # next to this file; ..x is the folder above
+module = impor(name)              # any text, decided while the program runs
+```
+
+A name is looked up next to the importing file, next to the main script, in every `nusa_packages` folder from there up to the root (this is where `nusa get` puts packages), in each folder of `NUSA_PATH` (colon separated), and finally in the standard library. Each file runs once, the first time it is imported, and every import of it shares the same module. Cycles are fine: a module sees what the other has defined so far. `__name__` is `"__main__"` in the file you run, so `if __name__ == "__main__":` works. Native builds support imports written as `name = impor("literal")` at the top of a file; programs that import in other ways run in the interpreter. See `examples/imports.ns`.
+
 ### Classes
 
 Single inheritance with `super()`, class attributes, `@property` with `.setter`, `@staticmethod`, `@classmethod`. Special methods work as in Python: `__add__` and the other arithmetic and comparison operators, `__eq__`, `__len__`, `__getitem__`/`__setitem__`, `__contains__`, `__iter__`, `__call__`, `__bool__`, `__str__`, `__repr__`, `__enter__`/`__exit__` for `with`. Builtin error classes (`Exception`, `ValueError`, `KeyError`, ...) can be subclassed and caught by type: `catch NotFound as e:`. See `examples/objects.ns`.

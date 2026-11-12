@@ -1,0 +1,4 @@
+prices = {"apple": 3, "pear": 5}
+
+func of(name):
+    return prices[name] if name in prices else 0

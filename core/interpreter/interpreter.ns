@@ -76,16 +76,16 @@ Scope = loadModule("env").Scope
 Lexer = loadModule("parser/lexer").Lexer
 Parser = loadModule("parser/parser").Parser
 resolverModule = loadModule("resolver")
-resolveModulePath = resolverModule.resolveModulePath
-
-func runtimeImpor(name):
-    return resolverModule.importModule(name)
+resolveModuleFile = resolverModule.resolveModuleFile
+isStdlibFile = resolverModule.isStdlibFile
+directoryOf = resolverModule.directoryOf
+scriptDirectory = resolverModule.scriptDirectory
 
 # The statement being run, so errors can say where they happened.
-lineState = {"line": 0}
+lineState = {"line": 0, "file": ""}
 
 func rtError(msg):
-    err = {"pesan": msg, "line": lineState["line"]}
+    err = {"pesan": msg, "line": lineState["line"], "file": lineState["file"]}
     lempar err
 
 class ReturnSignal:
@@ -104,6 +104,7 @@ class ContinueSignal:
 class UserFunction:
     func __init__(self, name, params, body, closure, defaults = None, restName = None, kwName = None):
         self.isFunction = True
+        self.file = lineState["file"]
         self.restName = restName
         self.kwName = kwName
         self.name = name
@@ -201,7 +202,7 @@ class StopIteration(Exception):
 """
 
 func newClass(name, parent):
-    return {"isClass": True, "name": name, "parent": parent, "methods": {}, "attrs": {}, "statics": {}, "classMethods": {}, "props": {}, "setters": {}}
+    return {"isClass": True, "name": name, "parent": parent, "parentClass": None, "methods": {}, "attrs": {}, "statics": {}, "classMethods": {}, "props": {}, "setters": {}}
 
 BINARYDUNDERS = {"+": "__add__", "-": "__sub__", "*": "__mul__", "/": "__truediv__", "//": "__floordiv__", "%": "__mod__", "**": "__pow__", "<": "__lt__", "<=": "__le__", ">": "__gt__", ">=": "__ge__", "&": "__and__", "|": "__or__", "^": "__xor__", "<<": "__lshift__", ">>": "__rshift__"}
 REFLECTEDDUNDERS = {"+": "__radd__", "-": "__rsub__", "*": "__rmul__", "/": "__rtruediv__", "//": "__rfloordiv__", "%": "__rmod__"}
@@ -553,13 +554,72 @@ func makeStrFind(text):
 
 class Interpreter:
     func __init__(self):
-        self.globalScope = Scope(None)
+        self.builtinScope = Scope(None)
+        self.globalScope = Scope(self.builtinScope)
+        self.moduleCache = {}
+        self.loading = []
+        self.dirStack = [scriptDirectory()]
         self.registerBuiltins()
         for stmt in Parser(Lexer(EXCEPTIONSOURCE).tokenize()).parse():
-            self.execute(stmt, self.globalScope)
+            self.execute(stmt, self.builtinScope)
+
+    func setMainFile(self, path):
+        lineState["file"] = path
+        self.globalScope.define("__name__", "__main__")
+        self.globalScope.define("__file__", path)
+
+    # `impor(name)` with any expression for the name. See core/resolver.ns for
+    # where names are searched. Each file runs once and later imports share the
+    # same module map; the map is the module's own scope, so a cycle sees what
+    # is defined so far.
+    func importModule(self, name):
+        if tipe(name) != "teks":
+            rtError("impor() needs a text name")
+        importerDir = self.dirStack[len(self.dirStack) - 1]
+        path = resolveModuleFile(name, importerDir)
+        if path == None:
+            rtError("cannot find module '" + name + "'")
+        if path in self.moduleCache:
+            return self.moduleCache[path]
+        if isStdlibFile(path):
+            module = impor(path)
+            self.moduleCache[path] = module
+            return module
+        scope = Scope(self.builtinScope)
+        module = scope.vars
+        self.moduleCache[path] = module
+        scope.define("__name__", name)
+        scope.define("__file__", path)
+        source = hostBacaFile(path)
+        if source.startswith("#!"):
+            nl = source.find("\n")
+            source = source[nl + 1:] if nl >= 0 else ""
+        try:
+            tree = Parser(Lexer(source).tokenize()).parse()
+        except e:
+            err = normalizeError(e)
+            detail = str(err["pesan"]) if tipe(err) == "peta" and "pesan" in err else str(err)
+            self.moduleCache.pop(path)
+            rtError(path + ": " + detail)
+        self.dirStack.append(directoryOf(path))
+        savedFile = lineState["file"]
+        savedLine = lineState["line"]
+        lineState["file"] = path
+        try:
+            for stmt in tree:
+                self.execute(stmt, scope)
+        except failure:
+            self.dirStack.pop()
+            lineState["file"] = savedFile
+            self.moduleCache.pop(path)
+            raise failure
+        self.dirStack.pop()
+        lineState["file"] = savedFile
+        lineState["line"] = savedLine
+        return module
 
     func registerBuiltins(self):
-        g = self.globalScope
+        g = self.builtinScope
         interp = self
 
         func printer(*items, **options):
@@ -662,8 +722,11 @@ class Interpreter:
         g.define("tulis_file", hostTulisFile)
         g.define("fileExists", hostFileAda)
         g.define("file_ada", hostFileAda)
-        g.define("import", runtimeImpor)
-        g.define("impor", runtimeImpor)
+        func importFn(name):
+            return interp.importModule(name)
+
+        g.define("import", importFn)
+        g.define("impor", importFn)
         g.define("time", waktu)
         g.define("waktu", waktu)
         g.define("gcInfo", hostGcInfo)
@@ -763,10 +826,7 @@ class Interpreter:
         while cur != None:
             if cur["name"] == cls["name"]:
                 return True
-            parentName = cur["parent"]
-            if parentName == None:
-                return False
-            cur = self.globalScope.get(parentName)
+            cur = cur["parentClass"]
         return False
 
     func show(self, v, top):
@@ -809,10 +869,7 @@ class Interpreter:
         while cur != None:
             if methodName in cur["methods"]:
                 return [cur["methods"][methodName], cur]
-            parentName = cur["parent"]
-            if parentName == None:
-                return [None, None]
-            cur = self.globalScope.get(parentName)
+            cur = cur["parentClass"]
         return [None, None]
 
     func findAttr(self, clsObj, name):
@@ -824,10 +881,7 @@ class Interpreter:
         while cur != None:
             if name in cur[table]:
                 return [True, cur[table][name], cur]
-            parentName = cur["parent"]
-            if parentName == None:
-                return [False, None, None]
-            cur = self.globalScope.get(parentName)
+            cur = cur["parentClass"]
         return [False, None, None]
 
     func bindParams(self, fnObj, scope, args, kw):
@@ -898,10 +952,13 @@ class Interpreter:
 
     func callUserFunction(self, fnTarget, args, kw):
         savedLine = lineState["line"]
+        savedFile = lineState["file"]
+        lineState["file"] = fnTarget.file
         fnScope = Scope(fnTarget.closure)
         self.bindParams(fnTarget, fnScope, args, kw)
         result = self.runBody(fnTarget, fnScope)
         lineState["line"] = savedLine
+        lineState["file"] = savedFile
         return result
 
     func callMethod(self, inst, found, args, kw):
@@ -911,9 +968,12 @@ class Interpreter:
         lk.define("ini", inst)
         lk.define("__kelasAktif__", found[1])
         savedLine = lineState["line"]
+        savedFile = lineState["file"]
+        lineState["file"] = m.file
         self.bindParams(m, lk, args, kw)
         result = self.runBody(m, lk)
         lineState["line"] = savedLine
+        lineState["file"] = savedFile
         return result
 
     func makeFunction(self, name, params, body, defaults, env, restName = None, kwName = None):
@@ -1242,6 +1302,11 @@ class Interpreter:
 
     func defineClass(self, stmt, env):
         clsObj = newClass(stmt.name, stmt.baseClass)
+        if stmt.baseClass != None:
+            base = env.get(stmt.baseClass)
+            if not isClass(base):
+                rtError("'" + stmt.baseClass + "' is not a class")
+            clsObj["parentClass"] = base
         for m in stmt.methods:
             fnObj = self.makeFunction(m.name, m.params, m.body, m.defaults, env, m.restName, m.kwName)
             kind = m.kind if hasattr(m, "kind") else ""
@@ -1576,8 +1641,7 @@ class Interpreter:
         if tt == "peta":
             if "isSuperProxy" in target:
                 ownerClass = target["fromClass"]
-                parentName = ownerClass["parent"] if ownerClass != None else None
-                parentClass = self.globalScope.get(parentName) if parentName != None else None
+                parentClass = ownerClass["parentClass"] if ownerClass != None else None
                 if parentClass != None:
                     found = self.findMethod(parentClass, name)
                     if found[0] != None:

@@ -515,6 +515,13 @@ class X86_64Compiler:
         self.moduleAssigned = {}
         self.externalFields = {}
         self.prep = guardModule.newPrep("x86_64")
+        self.mainDir = "."
+        self.resolvedOf = {}
+        self.nameOfFile = {}
+        self.aliasOf = {}
+        self.initialized = {}
+        self.funcAliases = {}
+        self.nestDepth = 0
 
     func emit(self, line):
         self.out.append("    " + line)
@@ -559,37 +566,56 @@ class X86_64Compiler:
         self.dataLines.append(" .double " + str(value))
         return lbl
 
-    func resolveImportPath(self, name):
-        if self.sourceDir != None and self.sourceDir != "":
-            p1 = self.sourceDir + "/" + name
-            if FileAda(p1):
-                return p1
-            if FileAda(p1 + ".ns"):
-                return p1 + ".ns"
-        return resolveModulePath(name, FileAda)
+    func resolveImportPath(self, name, importerDir = None):
+        base = importerDir if importerDir != None else self.mainDir
+        return resolverModule.resolveModuleFile(name, base, FileAda)
+
+    # Records which file `name` means for the file in `dirName` and queues it.
+    # Two different files under one name cannot be told apart in native code.
+    func requestModule(self, name, dirName, queue):
+        resolved = self.resolveImportPath(name, dirName)
+        if resolved == None:
+            fail("cannot resolve import '" + name + "'")
+        if name in self.resolvedOf:
+            if self.resolvedOf[name] != resolved:
+                fail("dois modulos diferentes importados como '" + name + "'")
+            return None
+        self.resolvedOf[name] = resolved
+        if resolved in self.nameOfFile:
+            self.aliasOf[name] = self.nameOfFile[resolved]
+            return None
+        self.nameOfFile[resolved] = name
+        queue.append(name)
+
+    func canon(self, name):
+        if name in self.aliasOf:
+            return self.aliasOf[name]
+        return name
 
     func processImports(self, tree):
         self.importIndex = {}
         self.importOrder = []
         self.importInfo = {}
         queue = []
+        found = []
         for s in tree:
-            scanStmt(s, queue)
+            scanStmt(s, found)
+        for name in found:
+            self.requestModule(name, self.mainDir, queue)
         qi = 0
         while qi < len(queue):
             path = queue[qi]
             qi += 1
             if path in self.importIndex:
                 continue
-            resolved = self.resolveImportPath(path)
-            if resolved == None:
-                fail("cannot resolve import '" + path + "'")
+            resolved = self.resolvedOf[path]
             modParser = Parser(Lexer(BacaFile(resolved)).tokenize())
             modTree = modParser.parse()
             if modParser.errorCount > 0:
                 fail("syntax errors in imported module '" + path + "'")
+            self.prep.moduleName = path
             self.prep.scan(modTree)
-            modTree = self.prep.lowerBlock(modTree)
+            modTree = self.prep.lowerTop(modTree)
             idx = len(self.importOrder)
             self.importIndex[path] = idx
             self.importOrder.append(path)
@@ -646,8 +672,7 @@ class X86_64Compiler:
             for os in otherStmts:
                 scanStmt(os, nested)
             for p in nested:
-                if not (p in self.importIndex) and not (p in queue):
-                    queue.append(p)
+                self.requestModule(p, resolverModule.directoryOf(resolved), queue)
 
             self.importInfo[path] = {
                 "funcStmts": funcStmtsLocal,
@@ -683,34 +708,47 @@ class X86_64Compiler:
 
     func compile(self, tree, sourceDir = None):
         self.sourceDir = sourceDir
+        self.mainDir = resolverModule.absolutePath(sourceDir if sourceDir != None and sourceDir != "" else ".", resolverModule.currentDirectory())
+        resolverModule.setScriptDir(self.mainDir)
         self.prep.scan(tree)
         self.processImports(tree)
-        tree = self.prep.lowerBlock(tree)
+        self.prep.moduleName = "__main__"
+        tree = self.prep.lowerTop(tree)
         self.externalFields = self.prep.fieldNames
         for s in tree:
             collectModuleNames(s, self.moduleAssigned)
         for path in self.importOrder:
             for s in self.importInfo[path]["initStmts"]:
                 collectModuleNames(s, self.moduleAssigned)
-        for s in tree:
+        aliasScan = []
+        for st in tree:
+            aliasScan.append(st)
+        for modPath in self.importOrder:
+            for st in self.importInfo[modPath]["initStmts"]:
+                aliasScan.append(st)
+        for s in aliasScan:
             if s.type == "EXPR" and s.expr.type == "ASSIGN" and s.expr.target.type == "IDENT":
                 if s.expr.value.type == "CALL" and s.expr.value.callee.type == "IDENT" and s.expr.value.callee.name == "impor" and len(s.expr.value.args) == 1 and s.expr.value.args[0].type == "STRING":
-                    self.moduleVars[s.expr.target.name] = s.expr.value.args[0].value
+                    self.moduleVars[s.expr.target.name] = self.canon(s.expr.value.args[0].value)
                 elif s.expr.value.type == "MEMBER" and s.expr.value.target.type == "IDENT" and (s.expr.value.target.name in self.moduleVars):
                     mpath = self.moduleVars[s.expr.value.target.name]
                     if mpath in self.importInfo:
                         pfx = self.importInfo[mpath]["prefix"]
                         if s.expr.value.name in self.importInfo[mpath]["classNames"]:
                             self.classAliases[s.expr.target.name] = pfx + s.expr.value.name
+                        elif s.expr.value.name in self.importInfo[mpath]["funcNames"]:
+                            self.funcAliases[s.expr.target.name] = pfx + s.expr.value.name
             elif s.type == "VAR":
                 if s.value != None and s.value.type == "CALL" and s.value.callee.type == "IDENT" and s.value.callee.name == "impor" and len(s.value.args) == 1 and s.value.args[0].type == "STRING":
-                    self.moduleVars[s.name] = s.value.args[0].value
+                    self.moduleVars[s.name] = self.canon(s.value.args[0].value)
                 elif s.value != None and s.value.type == "MEMBER" and s.value.target.type == "IDENT" and (s.value.target.name in self.moduleVars):
                     mpath = self.moduleVars[s.value.target.name]
                     if mpath in self.importInfo:
                         pfx = self.importInfo[mpath]["prefix"]
                         if s.value.name in self.importInfo[mpath]["classNames"]:
                             self.classAliases[s.name] = pfx + s.value.name
+                        elif s.value.name in self.importInfo[mpath]["funcNames"]:
+                            self.funcAliases[s.name] = pfx + s.value.name
 
         self.knownGlobals = {}
         for s in tree:
@@ -836,13 +874,6 @@ class X86_64Compiler:
             self.emit("lea rsp, [rax+1073741824]")
         self.emit("call rtInit")
         self.emit("call rtSysInit")
-        for path in self.importOrder:
-            info = self.importInfo[path]
-            for cs in info["classStmts"]:
-                self.genClass(cs)
-            for s in info["initStmts"]:
-                self.genStmt(s)
-            self.genModuleObject(self.importIndex[path], info["funcNames"], info["varNames"], info["classNames"], info["prefix"])
         for s in mainStmts:
             self.genStmt(s)
         self.emit("mov rax, 231")
@@ -1070,8 +1101,34 @@ class X86_64Compiler:
             self.genExpr(e)
             self.genTruthy(falseLabel)
 
+    # A module starts running where the first import of it stands.
+    func emitModuleInit(self, name):
+        if name in self.initialized or not (name in self.importInfo):
+            return None
+        self.initialized[name] = True
+        info = self.importInfo[name]
+        for cs in info["classStmts"]:
+            self.genClass(cs)
+        for st in info["initStmts"]:
+            self.genStmt(st)
+        self.genModuleObject(self.importIndex[name], info["funcNames"], info["varNames"], info["classNames"], info["prefix"])
+
+    func importedName(self, s):
+        call = None
+        if s.type == "EXPR" and s.expr.type == "ASSIGN":
+            call = s.expr.value
+        elif s.type == "VAR":
+            call = s.value
+        if call != None and call.type == "CALL" and call.callee.type == "IDENT" and call.callee.name == "impor" and len(call.args) == 1 and call.args[0].type == "STRING" and hasattr(call, "topImport"):
+            return self.canon(call.args[0].value)
+        return None
+
     func genStmt(self, s):
         t = s.type
+        if (t == "EXPR" or t == "VAR") and not self.inFn:
+            imported = self.importedName(s)
+            if imported != None:
+                self.emitModuleInit(imported)
         if t == "EXPR":
             self.genExpr(s.expr)
         elif t == "VAR":
@@ -1570,7 +1627,10 @@ class X86_64Compiler:
         elif t == "NULL":
             self.emit("xor rax, rax")
         elif t == "IDENT":
-            if e.name in self.funcs:
+            if e.name in self.funcAliases and not (self.inFn and (e.name in self.regOf or e.name in self.params or e.name in self.locals)):
+                self.emit("lea rax, [" + fnLabel(self.funcAliases[e.name]) + "]")
+                self.emit("lea rax, [rax*2+1]")
+            elif e.name in self.funcs:
                 self.emit("lea rax, [" + fnLabel(e.name) + "]")
                 self.emit("lea rax, [rax*2+1]")
             elif e.name in self.classes:
@@ -2102,6 +2162,9 @@ class X86_64Compiler:
                 self.emit("add rsp, " + str(8 * len(args) + extraIndirect))
             return None
         name = callee.name
+        if name in self.funcAliases and not (name in self.regOf) and not (name in self.params) and not (name in self.locals):
+            self.genCall(astModule.CallExpr(astModule.IdentExpr(self.funcAliases[name]), args))
+            return None
         if name in self.classAliases:
             self.genInstantiateClass(self.classAliases[name], args)
         elif name in self.classes:
@@ -2189,8 +2252,10 @@ class X86_64Compiler:
         elif name == "impor":
             if len(args) == 1 and args[0].type == "STRING" and args[0].value == "sys":
                 self.emit("mov rax, [gvsys]")
-            elif len(args) == 1 and args[0].type == "STRING" and (args[0].value in self.importIndex):
-                idx = self.importIndex[args[0].value]
+            elif len(args) == 1 and args[0].type == "STRING" and (self.canon(args[0].value) in self.importIndex):
+                if not (self.canon(args[0].value) in self.initialized):
+                    fail("impor('" + args[0].value + "') antes da inicializacao do modulo")
+                idx = self.importIndex[self.canon(args[0].value)]
                 self.emit("mov rax, " + self.addr("modobj" + str(idx), False))
             else:
                 fail("impor() with a non-literal or unresolved path is not supported in --native builds")

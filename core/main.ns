@@ -71,10 +71,11 @@ func parseChecked(src, tokens = False, ast = False):
         fail("syntax errors: " + str(parseState["errors"]))
     return tree
 
-func exec(src, tokens, ast, runtime = None):
+func exec(src, tokens, ast, runtime = None, file = ""):
     tree = parseChecked(src, tokens, ast)
     if runtime == None:
         runtime = Interpreter()
+    runtime.setMainFile(file)
     runtime.run(tree)
     return runtime
 
@@ -117,6 +118,8 @@ func guarded(fn):
         where = ""
         if lineState["line"] > 0:
             where = " (line " + str(lineState["line"]) + ")"
+            if lineState["file"] != "":
+                where = " (" + lineState["file"] + ", line " + str(lineState["line"]) + ")"
         if tipe(e) == "peta" and "isInstance" in e and "pesan" in e["fields"]:
             fail("error: " + str(e["fields"]["pesan"]) + where)
         if tipe(e) == "peta" and "pesan" in e:
@@ -430,7 +433,7 @@ func main():
     runtime = None
     if mode == "file":
         setScriptDirFor(arg)
-        runtime = guarded(lambda: exec(readSource(arg, skipFirst), tokens, ast))
+        runtime = guarded(lambda: exec(readSource(arg, skipFirst), tokens, ast, None, arg))
     elif mode == "eval":
         runtime = guarded(lambda: exec(arg, tokens, ast))
     elif mode == "module":
