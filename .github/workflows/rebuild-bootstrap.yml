@@ -28,8 +28,8 @@ jobs:
 
       - name: Fetch engine source from tag
         run: |
-          git fetch origin tag bootstrap-source
-          git checkout bootstrap-source -- engine
+          git fetch origin tag bootstrap-source-2
+          git checkout bootstrap-source-2 -- engine
 
       - name: Compile Android ARM64 engine
         run: |
@@ -55,7 +55,7 @@ jobs:
           cp nusa-android-arm64 dist/bundle/nusa-engine
           printf '#!/bin/sh\nDIR="$(cd "$(dirname "$0")" && pwd)"\nexec sh "$DIR/core/launcher.sh" "$DIR" "$@"\n' > dist/bundle/nusa
           chmod +x dist/bundle/nusa dist/bundle/nusa-engine
-          cp -r core compiler std net crypto media lib Makefile README.md LICENSE NOTICE dist/bundle/
+          cp -r core compiler std net crypto media lib examples Makefile README.md LICENSE NOTICE dist/bundle/
           tar -czf dist/nusa-android-arm64.tar.gz -C dist/bundle .
           cp nusa-android-arm64 dist/nusa-android-arm64
           cp nusa-android-arm64.sha256 dist/nusa-android-arm64.sha256
@@ -87,8 +87,8 @@ jobs:
       - name: Fetch engine source from tag
         shell: bash
         run: |
-          git fetch origin tag bootstrap-source
-          git checkout bootstrap-source -- engine
+          git fetch origin tag bootstrap-source-2
+          git checkout bootstrap-source-2 -- engine
 
       - name: Set up MSYS2
         uses: msys2/setup-msys2@v2
@@ -137,7 +137,7 @@ jobs:
           exec "$DIR/nusa-engine.exe" "$DIR/core/main.ns" "$@"
           EOF
           chmod +x dist/bundle/nusa dist/bundle/nusa-engine.exe
-          cp -r core compiler std net crypto media lib Makefile README.md LICENSE NOTICE install.ps1 dist/bundle/
+          cp -r core compiler std net crypto media lib examples Makefile README.md LICENSE NOTICE install.ps1 dist/bundle/
           tar -czf dist/nusa-windows-x86_64.tar.gz -C dist/bundle .
           cd dist
           cp ../nusa-windows-x86_64.exe ./nusa-windows-x86_64.exe
@@ -172,8 +172,8 @@ jobs:
 
       - name: Fetch engine source from tag
         run: |
-          git fetch origin tag bootstrap-source
-          git checkout bootstrap-source -- engine
+          git fetch origin tag bootstrap-source-2
+          git checkout bootstrap-source-2 -- engine
 
       - name: Compile macOS ARM64 and x86_64 engines
         run: |
@@ -191,13 +191,13 @@ jobs:
           cp nusa-darwin-arm64 dist/bundle-arm64/nusa-engine
           printf '#!/bin/sh\nDIR="$(cd "$(dirname "$0")" && pwd)"\nexec sh "$DIR/core/launcher.sh" "$DIR" "$@"\n' > dist/bundle-arm64/nusa
           chmod +x dist/bundle-arm64/nusa dist/bundle-arm64/nusa-engine
-          cp -r core compiler std net crypto media lib Makefile README.md LICENSE NOTICE dist/bundle-arm64/
+          cp -r core compiler std net crypto media lib examples Makefile README.md LICENSE NOTICE dist/bundle-arm64/
           tar -czf dist/nusa-darwin-arm64.tar.gz -C dist/bundle-arm64 .
 
           cp nusa-darwin-x86_64 dist/bundle-x86_64/nusa-engine
           printf '#!/bin/sh\nDIR="$(cd "$(dirname "$0")" && pwd)"\nexec sh "$DIR/core/launcher.sh" "$DIR" "$@"\n' > dist/bundle-x86_64/nusa
           chmod +x dist/bundle-x86_64/nusa dist/bundle-x86_64/nusa-engine
-          cp -r core compiler std net crypto media lib Makefile README.md LICENSE NOTICE dist/bundle-x86_64/
+          cp -r core compiler std net crypto media lib examples Makefile README.md LICENSE NOTICE dist/bundle-x86_64/
           tar -czf dist/nusa-darwin-x86_64.tar.gz -C dist/bundle-x86_64 .
 
           cp nusa-darwin-arm64 dist/nusa-darwin-arm64
