@@ -113,7 +113,10 @@ func guarded(fn):
     except e:
         if tipe(e) == "peta" and "pesan" in e:
             fail("error: " + str(e["pesan"]))
-        fail(str(e))
+        text = str(e)
+        if text.startswith("nusantara: error: "):
+            text = text[18:]
+        fail("error: " + text)
 
 func findModule(name):
     resolved = resolveModulePath(name, FileAda)

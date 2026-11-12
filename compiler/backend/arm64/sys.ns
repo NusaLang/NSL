@@ -39,6 +39,20 @@ rtThrow:
     add sp, sp, 32
     br x10
 rtUncaught:
+    tbnz x0, 0, rtUcPlain
+    cmp x0, 4
+    b.ls rtUcPlain
+    ldr x1, [x0]
+    cmp x1, 4
+    b.ne rtUcPlain
+    stp x0, lr, [sp, -16]!
+    ldr x1, =strPesanKey
+    bl rtMapGet
+    mov x2, x0
+    ldp x0, lr, [sp], 16
+    cbz x2, rtUcPlain
+    mov x0, x2
+rtUcPlain:
     stp x0, lr, [sp, -16]!
     ldr x0, =strUncaught
     mov x1, 2

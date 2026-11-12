@@ -312,7 +312,7 @@ func listRemoveAt(items, idx):
     if idx < 0:
         idx = idx + n
     if idx < 0 or idx >= n:
-        rtError("Index larik di luar batas: " + str(idx))
+        rtError("index out of range")
     k = idx
     while k < n - 1:
         items[k] = items[k + 1]
@@ -401,11 +401,17 @@ class Interpreter:
         g = self.globalScope
         interp = self
 
-        func printer(*items):
+        func printer(*items, **options):
             parts = []
             for item in items:
                 parts.append(interp.show(item, True))
-            print(gabung(parts, " "))
+            sep = options["sep"] if "sep" in options else " "
+            end = options["end"] if "end" in options else "\n"
+            line = gabung(parts, sep)
+            if end == "\n":
+                print(line)
+            else:
+                sys.stdout.write(line + end)
             return None
 
         func toText(x):
@@ -510,6 +516,60 @@ class Interpreter:
         g.define("callable", callable)
         g.define("input", input)
         g.define("sys", sys)
+        g.define("json_encode", json_encode)
+        g.define("json_decode", json_decode)
+        g.define("json_decode_aman", json_decode_aman)
+        g.define("base64_encode", base64_encode)
+        g.define("base64_decode", base64_decode)
+        g.define("sha256_hex", sha256_hex)
+        g.define("hmac_sha256_hex", hmac_sha256_hex)
+        g.define("jwt_buat", jwt_buat)
+        g.define("jwt_verifikasi", jwt_verifikasi)
+        g.define("tcp_konek", tcp_konek)
+        g.define("tcp_kirim", tcp_kirim)
+        g.define("tcp_terima", tcp_terima)
+        g.define("tcp_tutup", tcp_tutup)
+        g.define("http_get", http_get)
+        g.define("http_post", http_post)
+        g.define("http_dengar", http_dengar)
+        g.define("email_kirim", email_kirim)
+        g.define("jalan", jalan)
+        g.define("kanal_baru", kanal_baru)
+        g.define("kanal_kirim", kanal_kirim)
+        g.define("kanal_terima", kanal_terima)
+        g.define("kanal_tutup", kanal_tutup)
+        g.define("kanal_panjang", kanal_panjang)
+        g.define("wg_baru", wg_baru)
+        g.define("wg_tambah", wg_tambah)
+        g.define("wg_selesai", wg_selesai)
+        g.define("wg_tunggu", wg_tunggu)
+        g.define("pilih_kanal", pilih_kanal)
+        g.define("muat_plugin", muat_plugin)
+        g.define("byte_di", byte_di)
+        g.define("teks_dari", teks_dari)
+        g.define("potong", potong)
+        g.define("huruf_besar", huruf_besar)
+        g.define("huruf_kecil", huruf_kecil)
+        g.define("proc_stream_mulai", proc_stream_mulai)
+        g.define("proc_stream_baca", proc_stream_baca)
+        g.define("proc_stream_tutup", proc_stream_tutup)
+        g.define("qr_baca", qr_baca)
+        g.define("peta_kunci", peta_kunci)
+        g.define("set", set)
+        g.define("dict", dict)
+        g.define("tuple", tuple)
+        g.define("hasattr", hasattr)
+        g.define("getattr", getattr)
+        g.define("setattr", setattr)
+        g.define("vars", vars)
+        g.define("dir", dir)
+        g.define("id", id)
+        g.define("hash", hash)
+        g.define("iter", iter)
+        g.define("next", next)
+        g.define("baca_input", baca_input)
+        g.define("elemen", elemen)
+        g.define("teks", teks)
 
     func run(self, program):
         lastResult = None
@@ -1096,7 +1156,7 @@ class Interpreter:
             if tipe(idx) != "angka":
                 rtError("index harus angka")
             if idx < -n or idx >= n:
-                rtError("Index larik di luar batas: " + str(idx))
+                rtError("index out of range")
             return target[idx]
         rtError("Tipe '" + tt + "' nggak bisa di-index pakai []")
 
@@ -1119,7 +1179,7 @@ class Interpreter:
             if tipe(obj) == "larik":
                 n = len(obj)
                 if idx < -n or idx >= n:
-                    rtError("Index larik di luar batas: " + str(idx))
+                    rtError("index out of range")
             elif tipe(obj) != "peta":
                 rtError("Tipe '" + tipe(obj) + "' nggak bisa diisi pakai []")
             obj[idx] = val
@@ -1163,10 +1223,9 @@ class Interpreter:
         if tipe(fnTarget) == "peta" and "isBoundMethod" in fnTarget:
             return self.callMethod(fnTarget["instance"], [fnTarget["method"], fnTarget["definingClass"]], args, kw)
 
-        if len(kw) > 0:
-            rtError("argumen bernama belum didukung untuk fungsi bawaan")
-
         ft = str(tipe(fnTarget))
+        if len(kw) > 0:
+            return fnTarget(*self.wrapHostArgs(args), **kw)
         isCallableObj = callable(fnTarget) or ft == "kelas" or ft == "BoundMethod"
         if isCallableObj:
             args = self.wrapHostArgs(args)

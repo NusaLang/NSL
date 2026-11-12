@@ -56,7 +56,7 @@ EnumStmt = astModule.EnumStmt
 
 # Words the full language gives a meaning this parser does not implement. A file
 # using one is refused, so it runs on the engine instead of being compiled wrong.
-UNSUPPORTEDWORDS = ["yield", "with", "dengan", "import", "from", "dari", "match", "case"]
+UNSUPPORTEDWORDS = ["yield", "with", "dengan", "match", "case"]
 
 class Parser:
     func __init__(self, tokens):
@@ -158,12 +158,18 @@ class Parser:
         if self.isWord(tok, "pass") and (self.peek(1).type == TokenType.RBRACE or self.peek(1).type == TokenType.EOF):
             self.advance()
             return BlockStmt([])
+        if t == TokenType.IDENT and (tok.text == "import" or tok.text == "impor") and (self.peek(1).type == TokenType.IDENT or self.peek(1).type == TokenType.STRING):
+            self.advance()
+            return self.parseImport(tok)
+        if t == TokenType.IDENT and (tok.text == "from" or tok.text == "dari") and self.peek(1).type == TokenType.IDENT:
+            self.advance()
+            return self.parseFromImport(tok)
+        if t == TokenType.AT:
+            return self.parseDecorated()
         if t == TokenType.IDENT and (tok.text in UNSUPPORTEDWORDS):
             nxt = self.peek(1).type
             if nxt == TokenType.IDENT or nxt == TokenType.STRING or nxt == TokenType.NUMBER or nxt == TokenType.LBRACKET or nxt == TokenType.THIS:
                 self.fail("'" + tok.text + "' belum didukung kompiler")
-        if t == TokenType.AT:
-            self.fail("dekorator belum didukung kompiler")
         if t == TokenType.VAR:
             self.advance()
             return self.parseVar()
@@ -214,6 +220,87 @@ class Parser:
         if t == TokenType.LBRACE:
             return self.parseBlock()
         return self.parseExprStatement()
+
+    func modulePath(self):
+        if self.check(TokenType.STRING):
+            return self.advance().text
+        path = self.expect(TokenType.IDENT, "Nama modul diharapkan").text
+        while self.check(TokenType.DOT):
+            self.advance()
+            path += "/" + self.expect(TokenType.IDENT, "Nama modul diharapkan").text
+        return path
+
+    func importCall(self, path, tok):
+        return self.at(CallExpr(self.at(IdentExpr("impor"), tok), [self.at(StringExpr(path), tok)]), tok)
+
+    func bindName(self, name, value, tok):
+        return self.at(ExprStmt(self.at(AssignExpr(self.at(IdentExpr(name), tok), "=", value), tok)), tok)
+
+    func parseImport(self, tok):
+        stmts = []
+        while True:
+            path = self.modulePath()
+            alias = path.split("/")[0]
+            if self.isWord(self.peek(0), "as", "sbg"):
+                self.advance()
+                alias = self.expect(TokenType.IDENT, "Nama alias diharapkan").text
+            elif "/" in path:
+                self.fail("import bersarang butuh 'as': import a.b as nama")
+            if self.check(TokenType.STRING) or path.endswith(".ns"):
+                alias = alias.split(".")[0]
+            stmts.append(self.bindName(alias, self.importCall(path, tok), tok))
+            if self.match(TokenType.COMMA) == None:
+                break
+        self.expectEnd("';' diharapkan setelah import")
+        k = 1
+        while k < len(stmts):
+            self.pending.append(stmts[k])
+            k += 1
+        return stmts[0]
+
+    func parseFromImport(self, tok):
+        path = self.modulePath()
+        if not self.matchWord("import", "impor"):
+            self.fail("'import' diharapkan")
+        self.hidden += 1
+        holder = "__mod" + str(self.hidden)
+        stmts = [self.bindName(holder, self.importCall(path, tok), tok)]
+        while True:
+            name = self.expect(TokenType.IDENT, "Nama diharapkan setelah import").text
+            alias = name
+            if self.isWord(self.peek(0), "as", "sbg"):
+                self.advance()
+                alias = self.expect(TokenType.IDENT, "Nama alias diharapkan").text
+            stmts.append(self.bindName(alias, self.at(MemberExpr(self.at(IdentExpr(holder), tok), name), tok), tok))
+            if self.match(TokenType.COMMA) == None:
+                break
+        self.expectEnd("';' diharapkan setelah import")
+        k = 1
+        while k < len(stmts):
+            self.pending.append(stmts[k])
+            k += 1
+        return stmts[0]
+
+    func parseDecorated(self):
+        decorators = []
+        while self.check(TokenType.AT):
+            self.advance()
+            decorators.append(self.parseExpr())
+            self.expectEnd("';' diharapkan setelah dekorator")
+        tok = self.peek(0)
+        if tok.type != TokenType.FUNC:
+            self.fail("dekorator hanya untuk fungsi")
+        self.advance()
+        fn = self.parseFunction()
+        self.at(fn, tok)
+        k = len(decorators) - 1
+        wrapped = None
+        while k >= 0:
+            inner = self.at(IdentExpr(fn.name), tok) if wrapped == None else wrapped
+            wrapped = self.at(CallExpr(decorators[k], [inner]), tok)
+            k -= 1
+        self.pending.append(self.bindName(fn.name, wrapped, tok))
+        return fn
 
     func parseBlock(self):
         self.expect(TokenType.LBRACE, "'{' diharapkan")

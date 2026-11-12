@@ -403,6 +403,8 @@ class Prep:
                 k += 1
             return e
         if t == "ASSIGN":
+            if e.target.type == "IDENT" and ((e.target.name in self.funcSigs) or (e.target.name in self.classes)):
+                unsupported("nama fungsi atau kelas '" + e.target.name + "' diisi ulang")
             e.target = self.lowerExpr(e.target, False)
             e.value = self.lowerExpr(e.value, False)
             return e

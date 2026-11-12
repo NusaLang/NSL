@@ -56,8 +56,8 @@ strSp: .quad 2
  .ascii " "
 .align 8
 strErr: .quad 2
- .quad 15
- .ascii "runtime error: "
+ .quad 13
+ .ascii "nusa: error: "
 .align 8
 strBadOp: .quad 2
  .quad 21
@@ -88,8 +88,8 @@ strTypeKosong: .quad 2
  .ascii "kosong"
 .align 8
 strUncaught: .quad 2
- .quad 20
- .ascii "uncaught exception: "
+ .quad 13
+ .ascii "nusa: error: "
 .align 8
 strDivZero: .quad 2
  .quad 16
