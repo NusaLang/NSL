@@ -357,10 +357,17 @@ rtArDiv:
     fdiv d0, d0, d1
     b rtArDone
 rtArMod:
-    fdiv d2, d0, d1
-    frintm d2, d2
-    fmul d2, d2, d1
-    fsub d0, d0, d2
+    str d1, [sp, -16]!
+    bl rtBoxFloat
+    str x0, [sp, -16]!
+    ldr d0, [sp, 16]
+    bl rtBoxFloat
+    str x0, [sp, -16]!
+    bl fnnsRtFmod
+    add sp, sp, 48
+    ldp x20, x21, [sp], 16
+    ldp lr, x19, [sp], 16
+    ret
 rtArDone:
     bl rtBoxFloat
     ldp x20, x21, [sp], 16
@@ -383,17 +390,32 @@ rtArithMulCheck:
     cmp x0, 4
     b.ls rtArithBad
     ldr x2, [x0]
+    cmp x2, 3
+    b.eq rtAmList
     cmp x2, 2
     b.ne rtArithBad
     tbz x1, 0, rtArithBad
     ldp x20, x21, [sp], 16
     ldp lr, x19, [sp], 16
     b rtStrRepeat
+rtAmList:
+    tbz x1, 0, rtArithBad
+    ldp x20, x21, [sp], 16
+    ldp lr, x19, [sp], 16
+    stp lr, xzr, [sp, -16]!
+    str x0, [sp, -16]!
+    str x1, [sp, -16]!
+    bl fnnsRtListRepeat
+    add sp, sp, 32
+    ldp lr, xzr, [sp], 16
+    ret
 rtAmIntLeft:
     tbnz x1, 0, rtArithBad
     cmp x1, 4
     b.ls rtArithBad
     ldr x2, [x1]
+    cmp x2, 3
+    b.eq rtAmIntList
     cmp x2, 2
     b.ne rtArithBad
     mov x2, x0
@@ -402,6 +424,11 @@ rtAmIntLeft:
     ldp x20, x21, [sp], 16
     ldp lr, x19, [sp], 16
     b rtStrRepeat
+rtAmIntList:
+    mov x2, x0
+    mov x0, x1
+    mov x1, x2
+    b rtAmList
 rtArithBad:
     ldr x0, =strBadOp
     b rtFail
@@ -496,12 +523,65 @@ rtAcDone:
     ldp x20, x21, [sp], 16
     ldp lr, x19, [sp], 16
     ret
+rtAddX:
+    and x2, x0, x1
+    tbz x2, 0, rtAddXSlow
+    sub x3, x1, 1
+    adds x3, x3, x0
+    b.vs rtAddXSlow
+    mov x0, x3
+    ret
+rtAddXSlow:
+    mov x2, 0
+    b rtArith
+rtSubX:
+    and x2, x0, x1
+    tbz x2, 0, rtSubXSlow
+    subs x3, x0, x1
+    b.vs rtSubXSlow
+    adds x3, x3, 1
+    b.vs rtSubXSlow
+    mov x0, x3
+    ret
+rtSubXSlow:
+    mov x2, 1
+    b rtArith
+rtMulX:
+    and x2, x0, x1
+    tbz x2, 0, rtMulXSlow
+    asr x3, x0, 1
+    sub x4, x1, 1
+    mul x5, x3, x4
+    smulh x6, x3, x4
+    cmp x6, x5, asr 63
+    b.ne rtMulXSlow
+    add x0, x5, 1
+    ret
+rtMulXSlow:
+    mov x2, 2
+    b rtArith
+rtShlX:
+    and x2, x0, x1
+    tbz x2, 0, rtShlXSlow
+    asr x0, x0, 1
+    asr x1, x1, 1
+    lsl x0, x0, x1
+    lsl x0, x0, 1
+    add x0, x0, 1
+    ret
+rtShlXSlow:
+    mov x2, 3
+    b rtBitSlow
 rtAdd:
     and x2, x0, x1
     tbz x2, 0, rtAddSlow
     sub x3, x1, 1
     adds x3, x3, x0
     b.vs rtAddSlow
+    asr x6, x3, 54
+    add x6, x6, 1
+    cmp x6, 1
+    b.hi rtAddSlow
     mov x0, x3
     ret
 rtAddSlow:
@@ -514,6 +594,10 @@ rtSub:
     b.vs rtSubSlow
     adds x3, x3, 1
     b.vs rtSubSlow
+    asr x6, x3, 54
+    add x6, x6, 1
+    cmp x6, 1
+    b.hi rtSubSlow
     mov x0, x3
     ret
 rtSubSlow:
@@ -528,7 +612,12 @@ rtMul:
     smulh x6, x3, x4
     cmp x6, x5, asr 63
     b.ne rtMulSlow
-    add x0, x5, 1
+    add x7, x5, 1
+    asr x6, x7, 54
+    add x6, x6, 1
+    cmp x6, 1
+    b.hi rtMulSlow
+    mov x0, x7
     ret
 rtMulSlow:
     mov x2, 2
@@ -608,10 +697,16 @@ rtBitXorSlow:
 rtShl:
     and x2, x0, x1
     tbz x2, 0, rtShlSlow
-    asr x0, x0, 1
-    asr x1, x1, 1
-    lsl x0, x0, x1
-    lsl x0, x0, 1
+    asr x3, x1, 1
+    cmp x3, 62
+    b.hi rtShlSlow
+    asr x4, x0, 1
+    lsl x4, x4, x3
+    asr x5, x4, 53
+    add x5, x5, 1
+    cmp x5, 1
+    b.hi rtShlSlow
+    lsl x0, x4, 1
     add x0, x0, 1
     ret
 rtShlSlow:
@@ -635,6 +730,16 @@ rtBitSlow:
     bl rtToFloat2
     fcvtzs x8, d0
     fcvtzs x9, d1
+    ldr x10, =0x7fffffffffffffff
+    cmp x8, x10
+    b.ne rtSatA
+    ldr x8, =0x8000000000000000
+rtSatA:
+    ldr x10, =0x7fffffffffffffff
+    cmp x9, x10
+    b.ne rtSatB
+    ldr x9, =0x8000000000000000
+rtSatB:
     cmp x19, 0
     b.eq rtBsAnd
     cmp x19, 1
@@ -657,8 +762,17 @@ rtBsXor:
 rtBsShl:
     lsl x8, x8, x9
 rtBsDone:
+    asr x2, x8, 53
+    add x2, x2, 1
+    cmp x2, 1
+    b.hi rtBsFloat
     lsl x0, x8, 1
     add x0, x0, 1
+    ldp lr, x19, [sp], 16
+    ret
+rtBsFloat:
+    scvtf d0, x8
+    bl rtBoxFloat
     ldp lr, x19, [sp], 16
     ret
 rtBitNot:
@@ -672,9 +786,23 @@ rtBitNotSlow:
     stp lr, xzr, [sp, -16]!
     bl rtToDouble
     fcvtzs x8, d0
+    ldr x10, =0x7fffffffffffffff
+    cmp x8, x10
+    b.ne rtSatC
+    ldr x8, =0x8000000000000000
+rtSatC:
     mvn x8, x8
+    asr x2, x8, 53
+    add x2, x2, 1
+    cmp x2, 1
+    b.hi rtBnFloat
     lsl x0, x8, 1
     add x0, x0, 1
+    ldp lr, xzr, [sp], 16
+    ret
+rtBnFloat:
+    scvtf d0, x8
+    bl rtBoxFloat
     ldp lr, xzr, [sp], 16
     ret
 rtIntDiv:

@@ -180,11 +180,11 @@ func nsRtZeros(n):
 
 func nsRtFloatFormat(sign, m, e, special):
     if special == 2:
-        return "NaN"
+        return "-nan"
     if special == 1:
         if sign == 1:
-            return "-Inf"
-        return "+Inf"
+            return "-inf"
+        return "inf"
     prefix = ""
     if sign == 1:
         prefix = "-"
@@ -262,7 +262,13 @@ func nsRtListRepeat(a, n):
 func nsRtFmod(x, y):
     px = floatParts(x)
     py = floatParts(y)
-    if px[3] != 0 or py[3] != 0:
+    if px[3] == 2:
+        return x
+    if py[3] == 2:
+        return y
+    if px[3] == 1:
+        return x - x
+    if py[3] != 0:
         return x
     mx = px[1]
     ex = px[2]

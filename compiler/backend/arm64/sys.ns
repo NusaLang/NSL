@@ -26,6 +26,9 @@ rtFailPrint:
     mov x0, 1
     mov x8, 94
     svc #0
+rtStackOverflow:
+    ldr x0, =strStackOverflow
+    b rtFail
 rtThrow:
     ldr x1, =excTop
     ldr x11, [x1]

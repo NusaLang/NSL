@@ -56,6 +56,8 @@ TulisFile = tulis_file
 INTLIMIT = 4503599627370496 * 1024
 REGS = ["x19", "x20", "x21", "x22", "x23"]
 JUMPS = {"<": "b.ge", "<=": "b.gt", ">": "b.le", ">=": "b.lt", "==": "b.ne", "!=": "b.eq"}
+ARITHX = {"+": "rtAddX", "-": "rtSubX", "*": "rtMulX", "/": "rtDiv", "//": "rtFloorDiv", "%": "rtMod"}
+BITWISEX = {"&": "rtBitAnd", "|": "rtBitOr", "^": "rtBitXor", "<<": "rtShlX", ">>": "rtShr"}
 ARITH = {"+": "rtAdd", "-": "rtSub", "*": "rtMul", "/": "rtDiv", "//": "rtFloorDiv", "%": "rtMod"}
 BITWISE = {"&": "rtBitAnd", "|": "rtBitOr", "^": "rtBitXor", "<<": "rtShl", ">>": "rtShr"}
 STRMETHODS = {"find": "rtStrFind", "startswith": "rtStrStartsWith", "endswith": "rtStrEndsWith", "join": "rtStrJoin", "strip": "rtStrStrip", "lower": "rtStrLower", "upper": "rtStrUpper", "split": "rtStrSplit", "isdigit": "rtStrIsDigit", "isalpha": "rtStrIsAlpha", "isalnum": "rtStrIsAlnum"}
@@ -489,6 +491,7 @@ class Arm64Compiler:
         self.regOf = {}
         self.loops = []
         self.tryDepth = 0
+        self.exactInts = False
         self.forceLocal = False
         self.moduleAssigned = {}
         self.externalFields = {}
@@ -922,6 +925,21 @@ class Arm64Compiler:
         self.emit("add x3, x3, x2, lsl 3")
         self.emit("ldr x1, =gEnvp")
         self.emit("str x3, [x1]")
+        self.emit("mov x0, 0")
+        self.emit("ldr x1, =1073741824")
+        self.emit("mov x2, 3")
+        self.emit("ldr x3, =16418")
+        self.emit("mov x4, -1")
+        self.emit("mov x5, 0")
+        self.emit("mov x8, 222")
+        self.emit("svc #0")
+        self.emit("ldr x2, =262144")
+        self.emit("add x2, x0, x2")
+        self.emit("ldr x1, =stackLimit")
+        self.emit("str x2, [x1]")
+        self.emit("ldr x2, =1073741824")
+        self.emit("add x2, x0, x2")
+        self.emit("mov sp, x2")
         self.emit("bl rtInit")
         self.emit("bl rtSysInit")
         for s in mainStmts:
@@ -951,6 +969,7 @@ class Arm64Compiler:
         lines.append("gArgc: .zero 8")
         lines.append("gArgv: .zero 8")
         lines.append("gEnvp: .zero 8")
+        lines.append("stackLimit: .zero 8")
         lines.append("gvsys: .zero 8")
         lines.append("gvsys_argv: .zero 8")
         for g in self.globalNames:
@@ -971,6 +990,7 @@ class Arm64Compiler:
         self.classes[c.name] = {"base": c.baseClass, "methods": methods, "methodParams": methodParams, "methodDefaults": methodDefaults}
 
     func genFunc(self, f, label, plainName):
+        self.exactInts = plainName.startswith("nsRt")
         self.inFn = True
         self.fnName = label
         self.params = {}
@@ -1008,6 +1028,11 @@ class Arm64Compiler:
         else:
             head.append("    ldr x16, =" + str(frame))
             head.append("    sub sp, sp, x16")
+        head.append("    ldr x16, =stackLimit")
+        head.append("    ldr x16, [x16]")
+        head.append("    mov x17, sp")
+        head.append("    cmp x17, x16")
+        head.append("    b.lo rtStackOverflow")
         tail = ["epi" + label + ":"]
         k = 0
         while k < len(REGS):
@@ -1018,6 +1043,7 @@ class Arm64Compiler:
         tail.append("    ldp x29, lr, [sp], 16")
         tail.append("    ret")
         self.inFn = False
+        self.exactInts = False
         return "\n".join(head + loads + bodyLines + tail + self.cold + ["    .ltorg"])
 
     func genBlock(self, node):
@@ -1402,17 +1428,22 @@ class Arm64Compiler:
                 self.emit("b.vs " + cold)
                 self.emit("adds x3, x3, 1")
                 self.emit("b.vs " + cold)
+            if not self.exactInts:
+                self.emit("asr x6, x3, 54")
+                self.emit("add x6, x6, 1")
+                self.emit("cmp x6, 1")
+                self.emit("b.hi " + cold)
             self.emit("mov x0, x3")
             self.label(back)
             self.cold.append(cold + ":")
-            self.cold.append("    bl " + ARITH[op])
+            self.cold.append("    bl " + (ARITHX[op] if self.exactInts else ARITH[op]))
             self.cold.append("    b " + back)
         else:
-            self.emit("bl " + ARITH[op])
+            self.emit("bl " + (ARITHX[op] if self.exactInts else ARITH[op]))
 
     func genBitwise(self, op, e):
         self.genOperands(e)
-        self.emit("bl " + BITWISE[op])
+        self.emit("bl " + (BITWISEX[op] if self.exactInts else BITWISE[op]))
 
     func genCompareValue(self, e):
         falseLabel = self.newLabel()
