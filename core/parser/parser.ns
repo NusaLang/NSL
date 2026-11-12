@@ -142,7 +142,7 @@ class Parser:
     func parseStatement(self):
         start = self.peek(0)
         stmt = self.statementBody()
-        if stmt != None and not hasattr(stmt, "line"):
+        if stmt != None and stmt.line == 0:
             self.at(stmt, start)
         return stmt
 

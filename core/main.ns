@@ -23,6 +23,7 @@ func loadMod(name):
 Lexer = loadMod("parser/lexer").Lexer
 Parser = loadMod("parser/parser").Parser
 Interpreter = loadMod("interpreter/interpreter").Interpreter
+lineState = loadMod("interpreter/interpreter").lineState
 normalizeError = loadMod("interpreter/interpreter").normalizeError
 resolverModule = loadMod("resolver")
 resolveModulePath = resolverModule.resolveModulePath
@@ -113,11 +114,14 @@ func guarded(fn):
         return fn()
     except e:
         e = normalizeError(e)
+        where = ""
+        if lineState["line"] > 0:
+            where = " (line " + str(lineState["line"]) + ")"
         if tipe(e) == "peta" and "isInstance" in e and "pesan" in e["fields"]:
-            fail("error: " + str(e["fields"]["pesan"]))
+            fail("error: " + str(e["fields"]["pesan"]) + where)
         if tipe(e) == "peta" and "pesan" in e:
-            fail("error: " + str(e["pesan"]))
-        fail("error: " + str(e))
+            fail("error: " + str(e["pesan"]) + where)
+        fail("error: " + str(e) + where)
 
 func findModule(name):
     resolved = resolveModulePath(name, FileAda)

@@ -81,8 +81,11 @@ resolveModulePath = resolverModule.resolveModulePath
 func runtimeImpor(name):
     return resolverModule.importModule(name)
 
+# The statement being run, so errors can say where they happened.
+lineState = {"line": 0}
+
 func rtError(msg):
-    err = {"pesan": msg}
+    err = {"pesan": msg, "line": lineState["line"]}
     lempar err
 
 class ReturnSignal:
@@ -894,9 +897,12 @@ class Interpreter:
         return None
 
     func callUserFunction(self, fnTarget, args, kw):
+        savedLine = lineState["line"]
         fnScope = Scope(fnTarget.closure)
         self.bindParams(fnTarget, fnScope, args, kw)
-        return self.runBody(fnTarget, fnScope)
+        result = self.runBody(fnTarget, fnScope)
+        lineState["line"] = savedLine
+        return result
 
     func callMethod(self, inst, found, args, kw):
         m = found[0]
@@ -904,8 +910,11 @@ class Interpreter:
         lk.define("self", inst)
         lk.define("ini", inst)
         lk.define("__kelasAktif__", found[1])
+        savedLine = lineState["line"]
         self.bindParams(m, lk, args, kw)
-        return self.runBody(m, lk)
+        result = self.runBody(m, lk)
+        lineState["line"] = savedLine
+        return result
 
     func makeFunction(self, name, params, body, defaults, env, restName = None, kwName = None):
         evaluated = {}
@@ -999,6 +1008,8 @@ class Interpreter:
             return None
 
         t = stmt.type
+        if stmt.line != 0:
+            lineState["line"] = stmt.line
 
         if t == "BLOCK":
             childScope = Scope(env)

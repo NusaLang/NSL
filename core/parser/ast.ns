@@ -132,12 +132,16 @@ class LambdaExpr:
 class BlockStmt:
     func __init__(self, stmts):
         self.type = "BLOCK"
+        self.line = 0
+        self.col = 0
         self.stmts = stmts
         self.jenis = "BLOK"
 
 class VarStmt:
     func __init__(self, name, value):
         self.type = "VAR"
+        self.line = 0
+        self.col = 0
         self.name = name
         self.value = value
         self.jenis = "BUAT"
@@ -154,6 +158,8 @@ class SpreadExpr:
 class FuncStmt:
     func __init__(self, name, params, body, defaults = None, restName = None, kwName = None):
         self.type = "FUNC"
+        self.line = 0
+        self.col = 0
         self.restName = restName
         self.kwName = kwName
         self.name = name
@@ -167,6 +173,8 @@ class FuncStmt:
 class IfStmt:
     func __init__(self, condition, thenBranch, elseBranch):
         self.type = "IF"
+        self.line = 0
+        self.col = 0
         self.condition = condition
         self.thenBranch = thenBranch
         self.elseBranch = elseBranch
@@ -178,6 +186,8 @@ class IfStmt:
 class WhileStmt:
     func __init__(self, condition, body):
         self.type = "WHILE"
+        self.line = 0
+        self.col = 0
         self.condition = condition
         self.body = body
         self.jenis = "SELAMA"
@@ -187,6 +197,8 @@ class WhileStmt:
 class ForStmt:
     func __init__(self, init, condition, post, body):
         self.type = "FOR"
+        self.line = 0
+        self.col = 0
         self.init = init
         self.condition = condition
         self.post = post
@@ -200,6 +212,8 @@ class ForStmt:
 class ForInStmt:
     func __init__(self, variable, iterable, body, targets = None, declared = False):
         self.type = "FOR_IN"
+        self.line = 0
+        self.col = 0
         self.targets = targets if targets != None else [variable]
         self.declared = declared
         self.variable = variable
@@ -213,6 +227,8 @@ class ForInStmt:
 class ReturnStmt:
     func __init__(self, value):
         self.type = "RETURN"
+        self.line = 0
+        self.col = 0
         self.value = value
         self.jenis = "HASIL"
         self.nilai = value
@@ -220,16 +236,22 @@ class ReturnStmt:
 class BreakStmt:
     func __init__(self):
         self.type = "BREAK"
+        self.line = 0
+        self.col = 0
         self.jenis = "BERHENTI"
 
 class ContinueStmt:
     func __init__(self):
         self.type = "CONTINUE"
+        self.line = 0
+        self.col = 0
         self.jenis = "LANJUT"
 
 class TryStmt:
     func __init__(self, tryBlock, catchVar, catchBlock, finallyBlock, clauses = None, elseBlock = None):
         self.type = "TRY"
+        self.line = 0
+        self.col = 0
         self.clauses = clauses
         self.elseBlock = elseBlock
         self.tryBlock = tryBlock
@@ -241,6 +263,8 @@ class TryStmt:
 class ThrowStmt:
     func __init__(self, value):
         self.type = "THROW"
+        self.line = 0
+        self.col = 0
         self.value = value
         self.jenis = "LEMPAR"
         self.nilai = value
@@ -248,6 +272,8 @@ class ThrowStmt:
 class ExprStmt:
     func __init__(self, expr):
         self.type = "EXPR"
+        self.line = 0
+        self.col = 0
         self.expr = expr
         self.jenis = "EKSPRESI"
 
@@ -263,6 +289,8 @@ class CompExpr:
 class WithStmt:
     func __init__(self, items, body):
         self.type = "WITH"
+        self.line = 0
+        self.col = 0
         self.items = items
         self.body = body
         self.jenis = "DENGAN"
@@ -270,6 +298,8 @@ class WithStmt:
 class TupleAssignStmt:
     func __init__(self, targets, value, isLiteral, starIndex = -1):
         self.type = "TUPLE_ASSIGN"
+        self.line = 0
+        self.col = 0
         self.starIndex = starIndex
         self.targets = targets
         self.value = value
@@ -279,6 +309,8 @@ class TupleAssignStmt:
 class StructStmt:
     func __init__(self, name, fields):
         self.type = "STRUCT"
+        self.line = 0
+        self.col = 0
         self.name = name
         self.fields = fields
         self.jenis = "BENTUK"
@@ -286,6 +318,8 @@ class StructStmt:
 class EnumStmt:
     func __init__(self, name, variants):
         self.type = "ENUM"
+        self.line = 0
+        self.col = 0
         self.name = name
         self.variants = variants
         self.jenis = "JENIS"
@@ -293,6 +327,8 @@ class EnumStmt:
 class ClassStmt:
     func __init__(self, name, baseClass, methods, attrs = None):
         self.type = "CLASS"
+        self.line = 0
+        self.col = 0
         self.attrs = attrs if attrs != None else []
         self.name = name
         self.baseClass = baseClass
