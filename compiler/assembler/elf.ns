@@ -98,6 +98,8 @@ func base64Bytes(bs):
 func writeExecutable(path, bs):
     encoded = path + ".b64"
     tulis_file(encoded, base64Bytes(bs))
-    res = jalankan_perintah("sh", ["-c", "base64 -d '" + encoded + "' > '" + path + "' && chmod +x '" + path + "' && rm -f '" + encoded + "'"])
+    safePath = "'" + path.replace("'", "'\"'\"'") + "'"
+    safeEncoded = "'" + encoded.replace("'", "'\"'\"'") + "'"
+    res = jalankan_perintah("sh", ["-c", "base64 -d " + safeEncoded + " > " + safePath + " && chmod +x " + safePath + " && rm -f " + safeEncoded])
     if res.status != 0:
         asmFail("cannot write executable: " + res.error)

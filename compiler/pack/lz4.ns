@@ -1,5 +1,6 @@
 # LZ4 block compression in plain Nusantara. The stubs that unpack the result are
 # a few dozen instructions, which is what makes packing worth it for small programs.
+# ponytail: LZ4 leaves hello world near 25 KB; use stronger compression when a larger unpacker pays off.
 
 HASHSIZE = 65536
 

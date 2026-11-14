@@ -205,8 +205,9 @@ class Assembler:
                 elif n == ".ascii":
                     j = 0
                     bs = st["bytes"]
+                    dest = code if st["section"] == "text" else data
                     while j < len(bs):
-                        data[st["off"] + j] = bs[j]
+                        dest[st["off"] + j] = bs[j]
                         j += 1
         self.enc.emitTrailer(code)
         return elf.buildElf(self.enc.machine(), self.addr("_start"), code, data, self.sizes["data"], self.sizes["bss"])

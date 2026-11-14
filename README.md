@@ -21,6 +21,7 @@ for i in range(10):
 ```bash
 ./nusa main.ns              # compile to a cached native binary and run it
 ./nusa build main.ns -o app # compile straight to a native ELF binary
+./nusa build main.ns -o app --pack # compress the native ELF binary
 ./app                       # no runtime, no dependencies
 ```
 

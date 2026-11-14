@@ -157,7 +157,7 @@ func runToolChain(candidates, stepName, inputFile):
         print("    sudo apt-get install clang   (atau: binutils gcc)")
     builtinsSys.exit(1)
 
-func build(inputFile, outputFile, keepAsm = False, targetArch = None):
+func build(inputFile, outputFile, keepAsm = False, targetArch = None, pack = False):
     if not FileAda(inputFile):
         print("native: file '" + inputFile + "' not found")
         builtinsSys.exit(1)
@@ -206,12 +206,23 @@ func build(inputFile, outputFile, keepAsm = False, targetArch = None):
     hostArch = detectTarget()["arch"]
     isNativeHost = arch == hostArch
 
+    if pack and (toolchainOptions["external"] or compiler.usesGoBridge):
+        print("native: --pack requires the internal assembler")
+        builtinsSys.exit(1)
     if not toolchainOptions["external"] and not compiler.usesGoBridge:
         assembled = False
         try:
-            assembleToFile(asm, arch, outputFile)
+            if pack:
+                image = assemblerModule.assembleImage(asm, arch)
+                packed = loadSubmodule("compiler/pack/pack.ns").packImage(image, arch)
+                assemblerModule.elf.writeExecutable(outputFile, packed)
+            else:
+                assembleToFile(asm, arch, outputFile)
             assembled = True
         except e:
+            if pack:
+                print("native: --pack gagal: " + str(e))
+                builtinsSys.exit(1)
             print("assembler internal gagal, memakai toolchain sistem: " + str(e))
         if assembled:
             if not keepAsm:
@@ -271,12 +282,13 @@ func build(inputFile, outputFile, keepAsm = False, targetArch = None):
 func main():
     args = builtinsSys.argv
     if len(args) < 2:
-        print("usage: nusa compiler/driver.ns <file.ns> [-o output] [-S] [--external] [--target x86_64|arm64]")
+        print("usage: nusa compiler/driver.ns <file.ns> [-o output] [-S] [--pack] [--external] [--target x86_64|arm64]")
         builtinsSys.exit(1)
     inputFile = args[1]
     outputFile = "a.out"
     keepAsm = False
     targetArch = None
+    pack = False
     i = 2
     while i < len(args):
         if (args[i] == "-o" or args[i] == "--output") and i + 1 < len(args):
@@ -288,12 +300,15 @@ func main():
         elif args[i] == "--external":
             toolchainOptions["external"] = True
             i += 1
+        elif args[i] == "--pack":
+            pack = True
+            i += 1
         elif args[i] == "--target" and i + 1 < len(args):
             targetArch = args[i + 1]
             i += 2
         else:
             i += 1
-    build(inputFile, outputFile, keepAsm, targetArch)
+    build(inputFile, outputFile, keepAsm, targetArch, pack)
 
 if len(builtinsSys.argv) > 0:
     firstArg = builtinsSys.argv[0]

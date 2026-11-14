@@ -9,6 +9,7 @@ a.out
 *.o
 *.s
 *.bin
+__pycache__/
 
 plugins/**/*.so
 plugins/**/vendor/**/*.o

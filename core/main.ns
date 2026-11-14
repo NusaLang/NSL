@@ -250,7 +250,7 @@ func start(args):
         fail("nusa.json tidak punya scripts.start atau main")
     guarded(lambda: exec(readSource(entry, False), False, False))
 
-func doBuild(entry, out, isNative):
+func doBuild(entry, out, isNative, pack = False):
     src = BacaFile(entry)
     tree = parseChecked(src)
     if isNative:
@@ -266,7 +266,7 @@ func doBuild(entry, out, isNative):
                 except e3:
                     nativeMod = impor("compiler/native.ns")
 
-        nativeMod.build(entry, out)
+        nativeMod.build(entry, out, False, None, pack)
     else:
         cleanSrc = src
         if cleanSrc.startswith("#!"):
@@ -296,7 +296,7 @@ func mtimeOf(path):
         out = out[:len(out) - 1]
     return out
 
-func watchLoop(entry, out, isNative):
+func watchLoop(entry, out, isNative, pack):
     print("watch: memantau " + entry + " (ctrl-c buat keluar)")
     last = mtimeOf(entry)
     while True:
@@ -306,7 +306,7 @@ func watchLoop(entry, out, isNative):
             last = cur
             print("build ulang: " + entry)
             try:
-                doBuild(entry, out, isNative)
+                doBuild(entry, out, isNative, pack)
                 print("sukses")
             except e:
                 print("gagal: " + str(e))
@@ -316,6 +316,7 @@ func build(args):
     out = ""
     isNative = True
     watch = False
+    pack = False
     i = 2
     while i < len(args):
         if (args[i] == "-o" or args[i] == "--output") and i + 1 < len(args):
@@ -329,6 +330,9 @@ func build(args):
             i += 1
         elif args[i] == "--watch":
             watch = True
+            i += 1
+        elif args[i] == "--pack":
+            pack = True
             i += 1
         else:
             if target == ".":
@@ -351,13 +355,15 @@ func build(args):
     elif out == "":
         out = entry[:len(entry) - 3]
 
+    if pack and not isNative:
+        fail("--pack requires native build")
     try:
-        doBuild(entry, out, isNative)
+        doBuild(entry, out, isNative, pack)
     except e:
         fail(str(e))
 
     if watch:
-        watchLoop(entry, out, isNative)
+        watchLoop(entry, out, isNative, pack)
 
 func main():
     args = sys.argv
