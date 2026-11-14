@@ -73,6 +73,12 @@ rtInitTry:
     mov rdi, 1
     syscall
 rtInitOk:
+    mov r8, rax
+    mov rdi, rax
+    mov rdx, 15
+    mov rax, 28
+    syscall
+    mov rax, r8
     mov [heapPtr], rax
     add rax, rsi
     mov [heapLimit], rax

@@ -303,7 +303,7 @@ class Lexer:
             pt = prev.type
             inWord = pt == TokenType.IDENT and (prev.text == "in" or prev.text == "dalam" or prev.text == "is")
             opener = pt == TokenType.ASSIGN or pt == TokenType.LPAREN or pt == TokenType.LBRACKET or pt == TokenType.COMMA or pt == TokenType.COLON or pt == TokenType.RETURN or pt == TokenType.THROW or pt == TokenType.LDICT or pt == TokenType.ELSE or pt == TokenType.AND or pt == TokenType.OR or pt == TokenType.STARSTAR or pt == TokenType.PIPE or pt == TokenType.AMP or pt == TokenType.CARET or pt == TokenType.MINUS or (pt == TokenType.NOT and prev.text != "!")
-            if not opener and not inWord:
+            if not opener and not inWord and not prev.text in CONTINUERS:
                 i += 1
                 continue
             nest = 0

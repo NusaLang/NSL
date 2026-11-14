@@ -1515,6 +1515,31 @@ class Interpreter:
         return nusaList(value)
 
     func binaryValue(self, op, leftVal, rightVal):
+        # plain host numbers are the common case: comparisons need no care, and
+        # sums, differences and products of whole numbers stay exact below 2^53
+        if tipe(leftVal) == "angka" and tipe(rightVal) == "angka":
+            if op == "<":
+                return leftVal < rightVal
+            elif op == ">":
+                return leftVal > rightVal
+            elif op == "<=":
+                return leftVal <= rightVal
+            elif op == ">=":
+                return leftVal >= rightVal
+            elif op == "==":
+                return leftVal == rightVal
+            elif op == "!=":
+                return leftVal != rightVal
+            elif op == "+" or op == "-" or op == "*":
+                if leftVal % 1 == 0 and rightVal % 1 == 0:
+                    if op == "+":
+                        quick = leftVal + rightVal
+                    elif op == "-":
+                        quick = leftVal - rightVal
+                    else:
+                        quick = leftVal * rightVal
+                    if quick < 9007199254740992 and quick > -9007199254740992:
+                        return quick + 0
         ka = numKind(leftVal)
         if ka != 9:
             kb = numKind(rightVal)

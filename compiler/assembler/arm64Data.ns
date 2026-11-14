@@ -87,6 +87,8 @@ class Arm64DataEncoder:
         nbase = 0x92800000 if is64(d) else 0x12800000
         if v >= 0 and v <= 65535:
             return zbase + v * 32 + rd
+        if v > 0 and v % 65536 == 0 and v // 65536 <= 65535:
+            return zbase + 0x200000 + (v // 65536) * 32 + rd
         if v < 0 and v >= -65536:
             return nbase + ((0 - v - 1) % 65536) * 32 + rd
         asmFail("mov immediate out of range: " + s)

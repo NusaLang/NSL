@@ -88,6 +88,12 @@ rtInitTry:
     mov x8, 94
     svc #0
 rtInitOk:
+    mov x10, x0
+    mov x1, x9
+    mov x2, 15
+    mov x8, 233
+    svc #0
+    mov x0, x10
     ldr x1, =heapPtr
     str x0, [x1]
     add x0, x0, x9
