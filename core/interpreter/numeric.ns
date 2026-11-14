@@ -1,0 +1,23 @@
+# The number module and the few entry points the interpreter reaches for most.
+
+func loadNumbers():
+    candidates = ["numbers.ns", "../numbers.ns", "core/numbers.ns", "../core/numbers.ns"]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/numbers.ns")
+
+numbersModule = loadNumbers()
+
+numKind = numbersModule.kindOf
+
+numBinary = numbersModule.binary
+
+numCompare = numbersModule.compare
+
+numCmp = numbersModule.cmpValues
+
+numText = numbersModule.toText
+

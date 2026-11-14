@@ -1,0 +1,116 @@
+# int(), float(), abs(), round(), min(), max(), sum() and friends on the interpreter's numbers.
+
+func loadPart(name):
+    candidates = [name, "interpreter/" + name, "core/interpreter/" + name, "../core/interpreter/" + name]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/interpreter/" + name)
+
+numericPart = loadPart("numeric.ns")
+errorsPart = loadPart("errors.ns")
+collectionsPart = loadPart("collections.ns")
+
+numbersModule = numericPart.numbersModule
+numKind = numericPart.numKind
+numBinary = numericPart.numBinary
+rtError = errorsPart.rtError
+nusaList = collectionsPart.nusaList
+nusaCompareItems = collectionsPart.nusaCompareItems
+
+func nusaInt(x, base = None):
+    if numKind(x) != 9:
+        return numbersModule.toInt(x)
+    if tipe(x) == "teks":
+        t = x.strip().replace("_", "")
+        body = t
+        if body.startswith("-") or body.startswith("+"):
+            body = body[1:]
+        if base != None and base != 10:
+            try:
+                return int(x, base)
+            except e:
+                rtError("invalid number")
+        ok = len(body) > 0
+        for ch in body:
+            if not (ch >= "0" and ch <= "9"):
+                ok = False
+        if not ok:
+            rtError("invalid number")
+        return numbersModule.intFromText(t)
+    rtError("invalid number")
+
+
+func nusaFloat(x = 0):
+    if numKind(x) != 9:
+        return numbersModule.toFloat(x)
+    if tipe(x) == "teks":
+        try:
+            return numbersModule.floatFromText(x)
+        except e:
+            rtError("invalid number")
+    rtError("invalid number")
+
+
+func nusaAbs(x):
+    r = numbersModule.absolute(x)
+    if r == None:
+        rtError("abs(): butuh angka")
+    return r
+
+
+func nusaRound(x, digits = None):
+    if numKind(x) == 9:
+        rtError("round(): butuh angka")
+    return numbersModule.roundValue(x, digits)
+
+
+func nusaMin(first, *rest):
+    items = rest
+    if len(rest) == 0:
+        items = nusaList(first)
+    else:
+        items = [first] + rest
+    if len(items) == 0:
+        rtError("min() arg is an empty sequence")
+    best = items[0]
+    for item in items:
+        if nusaCompareItems(item, best) < 0:
+            best = item
+    return best
+
+
+func nusaMax(first, *rest):
+    items = rest
+    if len(rest) == 0:
+        items = nusaList(first)
+    else:
+        items = [first] + rest
+    if len(items) == 0:
+        rtError("max() arg is an empty sequence")
+    best = items[0]
+    for item in items:
+        if nusaCompareItems(item, best) > 0:
+            best = item
+    return best
+
+
+func nusaDivmod(a, b):
+    return [numBinary("//", a, b), numBinary("%", a, b)]
+
+
+func nusaPow(a, b):
+    return numBinary("**", a, b)
+
+
+func nusaSum(items, start = 0):
+    total = start
+    for item in nusaList(items):
+        if numKind(total) != 9 and numKind(item) != 9:
+            total = numBinary("+", total, item)
+        else:
+            total = total + item
+    return total
+

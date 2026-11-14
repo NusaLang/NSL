@@ -1,0 +1,121 @@
+# The engine's own builtins, bound once under camelCase names, and the wrapper that lets the host call back into interpreted functions.
+
+# The host engine names its builtins in snake_case. Each one is bound once here
+# and used under a camelCase name below.
+hostJalankanPerintah = jalankan_perintah
+
+hostAmbilEnv = ambil_env
+
+hostKeAngka = ke_angka
+
+hostCallMethod = _callmeth
+
+hostPetaBaru = peta_baru
+
+hostBacaFile = baca_file
+
+hostTulisFile = tulis_file
+
+hostFileAda = file_ada
+
+hostGcInfo = gc_info
+
+hostGcPaksa = gc_paksa
+
+hostHapusAkhir = hapus_akhir
+
+hostJsonEncode = json_encode
+
+hostJsonDecode = json_decode
+
+hostJsonDecodeAman = json_decode_aman
+
+hostBase64Encode = base64_encode
+
+hostBase64Decode = base64_decode
+
+hostSha256Hex = sha256_hex
+
+hostHmacSha256Hex = hmac_sha256_hex
+
+hostJwtBuat = jwt_buat
+
+hostJwtVerifikasi = jwt_verifikasi
+
+hostTcpKonek = tcp_konek
+
+hostTcpKirim = tcp_kirim
+
+hostTcpTerima = tcp_terima
+
+hostTcpTutup = tcp_tutup
+
+hostHttpGet = http_get
+
+hostHttpPost = http_post
+
+hostHttpDengar = http_dengar
+
+hostEmailKirim = email_kirim
+
+hostKanalBaru = kanal_baru
+
+hostKanalKirim = kanal_kirim
+
+hostKanalTerima = kanal_terima
+
+hostKanalTutup = kanal_tutup
+
+hostKanalPanjang = kanal_panjang
+
+hostWgBaru = wg_baru
+
+hostWgTambah = wg_tambah
+
+hostWgSelesai = wg_selesai
+
+hostWgTunggu = wg_tunggu
+
+hostPilihKanal = pilih_kanal
+
+hostMuatPlugin = muat_plugin
+
+hostByteDi = byte_di
+
+hostTeksDari = teks_dari
+
+hostHurufBesar = huruf_besar
+
+hostHurufKecil = huruf_kecil
+
+hostProcStreamMulai = proc_stream_mulai
+
+hostProcStreamBaca = proc_stream_baca
+
+hostProcStreamTutup = proc_stream_tutup
+
+hostQrBaca = qr_baca
+
+hostPetaKunci = peta_kunci
+
+hostBacaInput = baca_input
+
+
+
+HOSTNOARG = {"noArg": True}
+
+
+func makeHostCallback(interp, fn):
+    func callback(a = HOSTNOARG, b = HOSTNOARG, c = HOSTNOARG, d = HOSTNOARG):
+        items = []
+        if a != HOSTNOARG:
+            items.append(a)
+        if b != HOSTNOARG:
+            items.append(b)
+        if c != HOSTNOARG:
+            items.append(c)
+        if d != HOSTNOARG:
+            items.append(d)
+        return interp.callUserFunction(fn, items, {})
+    return callback
+

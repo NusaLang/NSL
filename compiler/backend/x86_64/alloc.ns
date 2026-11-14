@@ -1,19 +1,82 @@
 ALLOC_RUNTIME = """rtAlloc:
-    add rdi, 7
-    and rdi, -8
+    lea rdx, [rdi+7]
+    cmp rdx, rdi
+    jb rtAllocFail
+    and rdx, -8
+    mov rax, [heapEnd]
+    sub rax, [heapPtr]
+    cmp rdx, rax
+    ja rtAllocFail
     mov rax, [heapPtr]
-    lea rdx, [rax+rdi]
+    add rdx, rax
     mov [heapPtr], rdx
     ret
+rtAllocFail:
+    mov rax, [heapLimit]
+    mov [heapEnd], rax
+    lea rdi, [strOutOfMemory]
+    jmp rtFail
 rtInit:
+    mov rsi, 8589934592
+    mov rdx, [gEnvp]
+rtHeapEnv:
+    mov rdi, [rdx]
+    test rdi, rdi
+    jz rtInitTry
+    cmp dword ptr [rdi], 0x6173754e
+    jne rtHeapNext
+    cmp dword ptr [rdi+4], 0x70616548
+    jne rtHeapNext
+    cmp byte ptr [rdi+8], 61
+    jne rtHeapNext
+    lea rdi, [rdi+9]
+    xor rax, rax
+rtHeapDig:
+    movzx ecx, byte ptr [rdi]
+    sub ecx, 48
+    cmp ecx, 9
+    ja rtHeapEnd
+    imul rax, rax, 10
+    add rax, rcx
+    inc rdi
+    jmp rtHeapDig
+rtHeapEnd:
+    test rax, rax
+    jz rtInitTry
+    cmp rax, 1048576
+    ja rtInitTry
+    shl rax, 20
+    mov rsi, rax
+    jmp rtInitTry
+rtHeapNext:
+    add rdx, 8
+    jmp rtHeapEnv
+rtInitTry:
     mov rax, 9
     xor rdi, rdi
-    mov rsi, 17179869184
     mov rdx, 3
     mov r10, 16418
     mov r8, -1
     xor r9, r9
     syscall
+    cmp rax, -4095
+    jb rtInitOk
+    shr rsi, 1
+    cmp rsi, 16777216
+    jae rtInitTry
+    mov rax, 1
+    mov rdi, 2
+    lea rsi, [strNoMemory+16]
+    mov rdx, [strNoMemory+8]
+    syscall
+    mov rax, 231
+    mov rdi, 1
+    syscall
+rtInitOk:
     mov [heapPtr], rax
+    add rax, rsi
+    mov [heapLimit], rax
+    sub rax, 1048576
+    mov [heapEnd], rax
     ret
 """

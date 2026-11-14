@@ -24,7 +24,7 @@ rtTrFloat:
     ret
 rtEq:
     cmp rdi, rsi
-    je rtEqYes
+    je rtEqSame
     test dil, 1
     jnz rtEqIntLeft
     test sil, 1
@@ -34,6 +34,10 @@ rtEq:
     cmp rsi, 4
     jbe rtEqNo
     mov rax, [rdi]
+    cmp rax, 7
+    je rtEqNum
+    cmp qword ptr [rsi], 7
+    je rtEqNum
     cmp rax, [rsi]
     jne rtEqNo
     cmp rax, 6
@@ -51,6 +55,16 @@ rtEq:
     jne rtEqNo
     repe cmpsb
     jne rtEqNo
+rtEqSame:
+    test dil, 1
+    jnz rtEqYes
+    cmp rdi, 4
+    jbe rtEqYes
+    cmp qword ptr [rdi], 6
+    jne rtEqYes
+    movsd xmm0, [rdi+8]
+    ucomisd xmm0, xmm0
+    jp rtEqNo
 rtEqYes:
     mov rax, 1
     ret
@@ -63,26 +77,58 @@ rtEqIntLeft:
     cmp rsi, 4
     jbe rtEqNo
     cmp qword ptr [rsi], 6
-    jne rtEqNo
-    jmp rtEqMixed
+    je rtEqMixed
+    cmp qword ptr [rsi], 7
+    je rtEqNum
+    jmp rtEqNo
 rtEqIntRight:
     cmp rdi, 4
     jbe rtEqNo
     cmp qword ptr [rdi], 6
-    jne rtEqNo
+    je rtEqMixed
+    cmp qword ptr [rdi], 7
+    je rtEqNum
+    jmp rtEqNo
 rtEqMixed:
+    mov rax, rdi
+    test al, 1
+    jnz rtEqMixTag
+    mov rax, rsi
+rtEqMixTag:
+    sar rax, 1
+    mov rdx, 9007199254740992
+    add rax, rdx
+    shr rax, 54
+    jnz rtEqNum
     call rtToFloat2
     ucomisd xmm0, xmm1
+    jp rtEqNo
+    sete al
+    movzx eax, al
+    ret
+rtEqNum:
+    call rtNumCmp
+    cmp rax, 0
     sete al
     movzx eax, al
     ret
 rtEqFloat:
     movsd xmm0, [rdi+8]
     ucomisd xmm0, [rsi+8]
+    jp rtEqNo
     sete al
     movzx eax, al
     ret
+rtNumCmp:
+    push rdi
+    push rsi
+    call fnnsRtNumCmp
+    add rsp, 16
+    sar rax, 1
+    ret
 rtEqArr:
+    cmp rsp, [stackLimit]
+    jb rtStackOverflow
     mov rax, [rdi+8]
     cmp rax, [rsi+8]
     jne rtEqNo
@@ -120,6 +166,8 @@ rtEqArrNo:
     xor eax, eax
     ret
 rtEqMap:
+    cmp rsp, [stackLimit]
+    jb rtStackOverflow
     mov rax, [rdi+8]
     cmp rax, [rsi+8]
     jne rtEqNo
@@ -194,7 +242,7 @@ rtCmpPos:
     ret
 rtCmpSlow:
     cmp rdi, rsi
-    je rtCmpEq
+    je rtCmpSame
     test dil, 1
     jnz rtCmpMixed
     test sil, 1
@@ -204,6 +252,10 @@ rtCmpSlow:
     cmp rsi, 4
     jbe rtCmpOne
     mov rax, [rdi]
+    cmp rax, 7
+    je rtNumCmp
+    cmp qword ptr [rsi], 7
+    je rtNumCmp
     cmp rax, [rsi]
     jne rtCmpOne
     cmp rax, 6
@@ -234,15 +286,58 @@ rtCmpLen:
 rtCmpByte:
     ja rtCmpNeg
     jmp rtCmpPos
+rtCmpSame:
+    test dil, 1
+    jnz rtCmpEq
+    cmp rdi, 4
+    jbe rtCmpEq
+    cmp qword ptr [rdi], 6
+    jne rtCmpEq
+    movsd xmm0, [rdi+8]
+    ucomisd xmm0, xmm0
+    jp rtCmpNan
 rtCmpEq:
     xor eax, eax
     ret
-rtCmpOne:
-    mov rax, 1
+rtCmpNan:
+    mov rax, 2
     ret
+rtCmpOne:
+    mov rax, 3
+    ret
+rtCmpTypeError:
+    lea rdi, [strBadCmp]
+    jmp rtFail
 rtCmpMixed:
+    mov rax, rdi
+    test al, 1
+    jnz rtCmpMixTag
+    mov rax, rsi
+rtCmpMixTag:
+    mov rcx, rdi
+    mov rdx, rsi
+    test cl, 1
+    jz rtCmpMixPtr
+    mov rdx, rsi
+    jmp rtCmpMixKind
+rtCmpMixPtr:
+    mov rdx, rdi
+rtCmpMixKind:
+    cmp rdx, 4
+    jbe rtCmpOne
+    mov rcx, [rdx]
+    cmp rcx, 7
+    je rtNumCmp
+    cmp rcx, 6
+    jne rtCmpOne
+    sar rax, 1
+    mov rdx, 9007199254740992
+    add rax, rdx
+    shr rax, 54
+    jnz rtNumCmp
     call rtToFloat2
     ucomisd xmm0, xmm1
+    jp rtCmpNan
     mov eax, 0
     jb rtCmpNeg
     ja rtCmpPos
@@ -251,6 +346,7 @@ rtCmpFloat:
     movsd xmm0, [rdi+8]
     movsd xmm1, [rsi+8]
     ucomisd xmm0, xmm1
+    jp rtCmpNan
     mov eax, 0
     jb rtCmpNeg
     ja rtCmpPos
@@ -311,10 +407,36 @@ rtIsNumYes:
 rtIsNumNo:
     xor eax, eax
     ret
+rtNumSlow:
+    lea rax, [r10*2+1]
+    push rax
+    push r8
+    push r9
+    call fnnsRtNumOp
+    add rsp, 24
+    ret
 rtArith:
     mov r10, rdx
     mov r8, rdi
     mov r9, rsi
+    mov rax, r8
+    and rax, r9
+    test al, 1
+    jnz rtNumSlow
+    test r8b, 1
+    jnz rtArithChkB
+    cmp r8, 4
+    jbe rtArithChkB
+    cmp qword ptr [r8], 7
+    je rtNumSlow
+rtArithChkB:
+    test r9b, 1
+    jnz rtArithGo
+    cmp r9, 4
+    jbe rtArithGo
+    cmp qword ptr [r9], 7
+    je rtNumSlow
+rtArithGo:
     mov rdi, r8
     call rtIsNum
     test eax, eax
@@ -323,6 +445,8 @@ rtArith:
     call rtIsNum
     test eax, eax
     jz rtArithOther
+    cmp r10, 4
+    jae rtNumSlow
     mov rdi, r8
     mov rsi, r9
     call rtToFloat2
@@ -334,13 +458,7 @@ rtArith:
     je rtArMul
     cmp r10, 3
     je rtArDiv
-    cmp r10, 5
-    je rtArFloorDiv
     jmp rtArMod
-rtArFloorDiv:
-    divsd xmm0, xmm1
-    roundsd xmm0, xmm0, 9
-    jmp rtBoxFloat
 rtFloorDiv:
     mov rax, rdi
     and rax, rsi
@@ -358,6 +476,11 @@ rtArMul:
     mulsd xmm0, xmm1
     jmp rtBoxFloat
 rtArDiv:
+    xorpd xmm2, xmm2
+    ucomisd xmm1, xmm2
+    jp rtArDivOk
+    je rtDivZero
+rtArDivOk:
     divsd xmm0, xmm1
     jmp rtBoxFloat
 rtArMod:
@@ -597,11 +720,6 @@ rtAdd:
     sub rax, 1
     add rax, rdi
     jo rtAddSlow
-    mov rcx, rax
-    sar rcx, 54
-    add rcx, 1
-    cmp rcx, 1
-    ja rtAddSlow
     ret
 rtAddSlow:
     xor edx, edx
@@ -616,11 +734,6 @@ rtSub:
     jo rtSubSlow
     add rax, 1
     jo rtSubSlow
-    mov rcx, rax
-    sar rcx, 54
-    add rcx, 1
-    cmp rcx, 1
-    ja rtSubSlow
     ret
 rtSubSlow:
     mov edx, 1
@@ -637,11 +750,6 @@ rtMul:
     imul rax, rdx
     jo rtMulSlow
     inc rax
-    mov rcx, rax
-    sar rcx, 54
-    add rcx, 1
-    cmp rcx, 1
-    ja rtMulSlow
     ret
 rtMulSlow:
     mov edx, 2
@@ -655,6 +763,17 @@ rtDiv:
     sar rcx, 1
     test rcx, rcx
     jz rtDivZero
+    mov rax, rdi
+    sar rax, 1
+    mov rdx, 9007199254740992
+    add rax, rdx
+    shr rax, 54
+    jnz rtDivSlow
+    mov rax, rsi
+    sar rax, 1
+    add rax, rdx
+    shr rax, 54
+    jnz rtDivSlow
     sar rdi, 1
     sar rsi, 1
     cvtsi2sd xmm0, rdi
@@ -697,8 +816,19 @@ rtNeg:
     jz rtNegSlow
     mov rax, 2
     sub rax, rdi
+    jo rtNegBig
     ret
+rtNegBig:
+    mov r10, 6
+    mov r8, rdi
+    mov r9, 1
+    jmp rtNumSlow
 rtNegSlow:
+    cmp rdi, 4
+    jbe rtNegFloat
+    cmp qword ptr [rdi], 7
+    je rtNegBig
+rtNegFloat:
     call rtToDouble
     mov rax, 0x8000000000000000
     movq xmm1, rax
@@ -711,7 +841,7 @@ rtBitAnd:
     jz rtBitAndSlow
     ret
 rtBitAndSlow:
-    mov r10, 0
+    mov r10, 9
     jmp rtBitSlow
 rtBitOr:
     mov rax, rdi
@@ -722,7 +852,7 @@ rtBitOr:
     or rax, rsi
     ret
 rtBitOrSlow:
-    mov r10, 1
+    mov r10, 10
     jmp rtBitSlow
 rtBitXor:
     mov rax, rdi
@@ -734,87 +864,76 @@ rtBitXor:
     or rax, 1
     ret
 rtBitXorSlow:
-    mov r10, 2
+    mov r10, 11
     jmp rtBitSlow
 rtShl:
     mov rax, rdi
     and rax, rsi
     test al, 1
     jz rtShlSlow
-    mov rax, rdi
-    sar rax, 1
     mov rcx, rsi
     sar rcx, 1
-    cmp rcx, 62
-    ja rtShlSlow
     cmp rcx, 0
     jl rtShlSlow
-    shl rax, cl
-    mov rdx, rax
-    sar rdx, 53
-    add rdx, 1
-    cmp rdx, 1
+    cmp rcx, 62
     ja rtShlSlow
-    lea rax, [rax*2+1]
+    mov rax, rdi
+    sar rax, 1
+    mov rdx, rax
+    shl rax, cl
+    mov r8, rax
+    sar r8, cl
+    cmp r8, rdx
+    jne rtShlSlow
+    mov rdx, rax
+    add rdx, rdx
+    jo rtShlSlow
+    lea rax, [rdx+1]
     ret
 rtShlSlow:
-    mov r10, 3
+    mov r10, 7
     jmp rtBitSlow
 rtShr:
     mov rax, rdi
     and rax, rsi
     test al, 1
     jz rtShrSlow
-    mov rax, rdi
-    sar rax, 1
     mov rcx, rsi
     sar rcx, 1
+    cmp rcx, 0
+    jl rtShrSlow
+    cmp rcx, 63
+    jbe rtShrGo
+    mov rcx, 63
+rtShrGo:
+    mov rax, rdi
+    sar rax, 1
     sar rax, cl
     lea rax, [rax*2+1]
     ret
 rtShrSlow:
-    mov r10, 4
+    mov r10, 8
     jmp rtBitSlow
 rtBitSlow:
-    call rtToFloat2
-    cvttsd2si r8, xmm0
-    cvttsd2si r9, xmm1
-    cmp r10, 0
-    je rtBsAnd
-    cmp r10, 1
-    je rtBsOr
-    cmp r10, 2
-    je rtBsXor
-    cmp r10, 3
-    je rtBsShl
-    jmp rtBsShr
-rtBsAnd:
-    and r8, r9
-    jmp rtBsDone
-rtBsOr:
-    or r8, r9
-    jmp rtBsDone
-rtBsXor:
-    xor r8, r9
-    jmp rtBsDone
-rtBsShl:
-    mov rcx, r9
-    shl r8, cl
-    jmp rtBsDone
-rtBsShr:
-    mov rcx, r9
-    sar r8, cl
-rtBsDone:
-    mov rax, r8
-    sar rax, 53
-    add rax, 1
-    cmp rax, 1
-    ja rtBsFloat
-    lea rax, [r8*2+1]
+    mov r8, rdi
+    mov r9, rsi
+    mov rdi, r8
+    call rtBitOperandOk
+    mov rdi, r9
+    call rtBitOperandOk
+    jmp rtNumSlow
+rtBitOperandOk:
+    test dil, 1
+    jnz rtBoOk
+    cmp rdi, 4
+    jbe rtBoBad
+    cmp qword ptr [rdi], 7
+    jne rtBoBad
+rtBoOk:
     ret
-rtBsFloat:
-    cvtsi2sd xmm0, r8
-    jmp rtBoxFloat
+rtBoBad:
+    lea rdi, [strBadBitwise]
+    jmp rtFail
 rtBitNot:
     test dil, 1
     jz rtBitNotSlow
@@ -824,11 +943,14 @@ rtBitNot:
     lea rax, [rax*2+1]
     ret
 rtBitNotSlow:
-    call rtToDouble
-    cvttsd2si r8, xmm0
-    not r8
-    jmp rtBsDone
+    mov r8, rdi
+    call rtBitOperandOk
+    mov r10, 12
+    mov r9, 1
+    jmp rtNumSlow
 rtIntDiv:
+    cmp rsi, -1
+    je rtNeg
     sar rdi, 1
     sar rsi, 1
     test rsi, rsi
@@ -911,19 +1033,38 @@ rtInt:
     jnz rtIntSelf
     cmp rdi, 4
     jbe rtIntSelf
-    cmp qword ptr [rdi], 6
+    mov rax, [rdi]
+    cmp rax, 7
+    je rtIntSelf
+    cmp rax, 6
     je rtIntFloat
-    cmp qword ptr [rdi], 2
+    cmp rax, 2
     je rtIntParse
 rtIntSelf:
     mov rax, rdi
     ret
 rtIntFloat:
-    cvttsd2si rax, [rdi+8]
-    lea rax, [rax*2+1]
+    movsd xmm0, [rdi+8]
+    cvttsd2si rax, xmm0
+    mov rdx, rax
+    add rdx, rdx
+    jo rtIntFloatBig
+    lea rax, [rdx+1]
+    ret
+rtIntFloatBig:
+    push rdi
+    call fnnsRtFloatToInt
+    add rsp, 8
+    ret
+rtIntParseBig:
+    push rdi
+    call fnnsRtIntFromText
+    add rsp, 8
     ret
 rtIntParse:
     mov rcx, [rdi+8]
+    cmp rcx, 18
+    ja rtIntParseBig
     lea rsi, [rdi+16]
     xor rax, rax
     xor r8, r8
@@ -989,10 +1130,18 @@ rtFloat:
     jnz rtFloatNum
     cmp rdi, 4
     jbe rtFloatNum
-    cmp qword ptr [rdi], 2
+    mov rax, [rdi]
+    cmp rax, 7
+    je rtFloatBig
+    cmp rax, 2
     jne rtFloatNum
     call rtStrToDouble
     jmp rtBoxFloat
+rtFloatBig:
+    push rdi
+    call fnnsRtToFloat
+    add rsp, 8
+    ret
 rtFloatNum:
     call rtToDouble
     jmp rtBoxFloat
@@ -1149,4 +1298,67 @@ rtSdRet:
 rtSdBad:
     lea rdi, [strBadNum]
     jmp rtFail
+rtKind:
+    test dil, 1
+    jnz rtKindInt
+    cmp rdi, 4
+    jbe rtKindOther
+    mov rax, [rdi]
+    cmp rax, 6
+    je rtKindFloat
+    cmp rax, 7
+    je rtKindBig
+rtKindOther:
+    mov rax, 19
+    ret
+rtKindInt:
+    mov rax, 1
+    ret
+rtKindFloat:
+    mov rax, 3
+    ret
+rtKindBig:
+    mov rax, 13
+    ret
+rtBigLen:
+    mov rax, [rdi+16]
+    lea rax, [rax*2+1]
+    ret
+rtBigSign:
+    mov rax, [rdi+8]
+    lea rax, [rax*2+1]
+    ret
+rtBigGet:
+    sar rsi, 1
+    mov rax, [rdi+rsi*8+24]
+    lea rax, [rax*2+1]
+    ret
+rtBigBox:
+    push r12
+    push r13
+    push r14
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, [r13+8]
+    lea rdi, [r14*8+24]
+    call rtAlloc
+    mov qword ptr [rax], 7
+    sar r12, 1
+    mov [rax+8], r12
+    mov [rax+16], r14
+    mov r8, [r13+24]
+    xor rcx, rcx
+rtBbLoop:
+    cmp rcx, r14
+    jae rtBbDone
+    mov rdx, [r8+rcx*8]
+    sar rdx, 1
+    mov [rax+rcx*8+24], rdx
+    inc rcx
+    jmp rtBbLoop
+rtBbDone:
+    pop r14
+    pop r13
+    pop r12
+    ret
 """

@@ -50,7 +50,18 @@ class Arm64Encoder:
             return 1 << a
         return 8
 
+    # `ldr xN, =symbol` becomes adrp + add so the image can load at any address;
+    # `ldr xN, =number` still reads a literal pool entry.
+    func isSymbolLoad(self, st):
+        if st["mnem"] != "ldr" or len(st["ops"]) != 2 or not st["ops"][1].startswith("="):
+            return False
+        key = st["ops"][1][1:]
+        c = key[0]
+        return (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or c == "_"
+
     func layoutInstruction(self, st, off):
+        if self.isSymbolLoad(st):
+            return 8
         if st["mnem"] == "ldr" and len(st["ops"]) == 2 and st["ops"][1].startswith("="):
             self.pool.add(st)
         return 4
@@ -66,7 +77,25 @@ class Arm64Encoder:
     func emitTrailer(self, code):
         self.pool.emitTrailer(code)
 
+    func word(self, w):
+        return [w % 256, (w // 256) % 256, (w // 65536) % 256, (w // 16777216) % 256]
+
+    func encodeSymbolLoad(self, st):
+        rd = regNum(st["ops"][0])
+        v = self.asm.evalExpr(st["ops"][1][1:])
+        target = v[0] + v[1] * 4294967296
+        pc = self.asm.textBase + st["off"]
+        pages = target // 4096 - pc // 4096
+        if pages >= 1048576 or pages < 0 - 1048576:
+            asmFail("symbol out of adrp range")
+        imm = pages % 2097152
+        first = 0x90000000 + (imm % 4) * 0x20000000 + (imm // 4) * 32 + rd
+        second = 0x91000000 + (target % 4096) * 1024 + rd * 32 + rd
+        return self.word(first) + self.word(second)
+
     func encodeBytes(self, st):
+        if self.isSymbolLoad(st):
+            return self.encodeSymbolLoad(st)
         w = self.encodeInstruction(st)
         return [w % 256, (w // 256) % 256, (w // 65536) % 256, (w // 16777216) % 256]
 

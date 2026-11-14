@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$installDir = if ($env:NUSA_INSTALL_DIR) { $env:NUSA_INSTALL_DIR } else { "$env:LOCALAPPDATA\nusa" }
+$installDir = if ($env:NusaInstallDir) { $env:NusaInstallDir } else { "$env:LOCALAPPDATA\nusa" }
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 
 Write-Host "Nusantara -- Windows (PowerShell)"

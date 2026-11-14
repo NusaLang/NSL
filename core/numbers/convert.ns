@@ -1,0 +1,110 @@
+// Conversions between ints, floats and text.
+
+func load(name):
+    candidates = [name, "numbers/" + name, "core/numbers/" + name, "../core/numbers/" + name]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/numbers/" + name)
+
+kinds = load("kinds.ns")
+intops = load("intops.ns")
+
+bigLib = kinds.bigLib
+fail = kinds.fail
+kindOf = kinds.kindOf
+mkFloat = kinds.mkFloat
+mkIntFromMag = kinds.mkIntFromMag
+toDouble = kinds.toDouble
+intFromDouble = intops.intFromDouble
+
+// ---------------------------------------------------------------- conversions
+
+func toInt(a):
+    k = kindOf(a)
+    if k == 0 or k == 3:
+        return a
+    x = toDouble(a)
+    if x != x:
+        fail("ValueError: cannot convert float NaN to integer")
+    if x - x != 0:
+        fail("OverflowError: cannot convert float infinity to integer")
+    if x % 1 != 0:
+        if x > 0:
+            x = x - (x % 1)
+        else:
+            x = x - (x % 1) + 1
+    return intFromDouble(x)
+
+func toFloat(a):
+    k = kindOf(a)
+    if k == 1 or k == 2:
+        return a
+    return mkFloat(toDouble(a))
+
+// ---------------------------------------------------------------- text
+
+func intFromText(t):
+    neg = False
+    if t.startswith("-"):
+        neg = True
+        t = t[1:]
+    elif t.startswith("+"):
+        t = t[1:]
+    m = bigLib.nsRtMagFromStr(t)
+    if neg:
+        return mkIntFromMag(-1, m)
+    return mkIntFromMag(1, m)
+
+func intToText(v):
+    if str(tipe(v)) == "BigInt":
+        s = bigLib.nsRtMagToStr(v.mag)
+        if v.sign < 0:
+            return "-" + s
+        return s
+    return str(v)
+
+func floatFromText(t):
+    s = t.strip()
+    low = s.lower()
+    if low == "inf" or low == "+inf" or low == "infinity" or low == "+infinity":
+        return 1e308 * 10
+    if low == "-inf" or low == "-infinity":
+        return -1e308 * 10
+    if low == "nan" or low == "+nan" or low == "-nan":
+        big = 1e308 * 10
+        return big - big
+    // beyond the host's own range the text still has to give inf or 0.0 as Python does
+    body = low
+    if body.startswith("-") or body.startswith("+"):
+        body = body[1:]
+    ePos = body.find("e")
+    if ePos >= 0:
+        expText = body[ePos + 1:]
+        expText2 = expText
+        if expText2.startswith("-") or expText2.startswith("+"):
+            expText2 = expText2[1:]
+        if len(expText2) > 3:
+            mant = body[:ePos]
+            allZero = True
+            for ch in mant:
+                if ch != "0" and ch != ".":
+                    allZero = False
+            if allZero:
+                return mkFloat(0.0)
+            if expText.startswith("-"):
+                return mkFloat(0.0)
+            if s.startswith("-"):
+                return -1e308 * 10
+            return 1e308 * 10
+    exp = 0
+    if ePos >= 0:
+        exp = int(body[ePos + 1:])
+    if exp < -300:
+        mantText = s.lower()
+        cut = mantText.find("e")
+        base = float(mantText[:cut] + "e-300")
+        return mkFloat(base / (10.0 ** (0 - exp - 300)))
+    return mkFloat(float(s))

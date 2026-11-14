@@ -1,4 +1,6 @@
 MAP_RUNTIME = """rtMapStr:
+    cmp rsp, [stackLimit]
+    jb rtStackOverflow
     push r12
     push r13
     push r14
@@ -68,6 +70,8 @@ rtHash:
     shr rax, 20
     ret
 rtHashPtr:
+    cmp rdi, 4
+    jbe rtHashSmall
     cmp qword ptr [rdi], 2
     jne rtHashAddr
     mov rcx, [rdi+8]
@@ -88,6 +92,9 @@ rtHDone:
 rtHashAddr:
     mov rax, rdi
     shr rax, 3
+    ret
+rtHashSmall:
+    lea rax, [rdi+1000003]
     ret
 rtMapFind:
     push r12

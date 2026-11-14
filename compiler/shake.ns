@@ -1,0 +1,109 @@
+// Drops what a program can never reach. The assembly text is cut into blocks at
+// every label; a block is kept when the entry point can get to it through a
+// name it mentions or by falling into it from the block above. What is left is
+// the runtime the program really needs, which keeps small programs small.
+
+PUNCTUATION = [",", "[", "]", "+", "-", "*", "(", ")", "=", "#", ":", "!"]
+
+func splitWords(line):
+    cut = line.find("\"")
+    if cut >= 0:
+        line = line[:cut]
+    for mark in PUNCTUATION:
+        if mark in line:
+            line = line.replace(mark, " ")
+    return line.split(" ")
+
+func labelOf(line):
+    if len(line) == 0 or line[0] == " " or line[0] == "." or line[0] == "\t":
+        return None
+    colon = line.find(":")
+    if colon <= 0:
+        return None
+    name = line[:colon]
+    if " " in name:
+        return None
+    return name
+
+# the mnemonic of the last instruction of a block, or "" when it has none
+func lastInstruction(lines):
+    i = len(lines) - 1
+    while i >= 0:
+        t = lines[i].strip()
+        if len(t) > 0 and t[0] != "." and not t.endswith(":"):
+            return t
+        i -= 1
+    return ""
+
+func endsControl(lines):
+    last = lastInstruction(lines)
+    if last == "":
+        return False
+    words = last.split(" ")
+    m = words[0]
+    if m == "ret" or m == "jmp" or m == "b" or m == "br":
+        return True
+    if (m == "call" or m == "bl") and len(words) > 1:
+        target = words[1]
+        if target == "rtFail" or target == "rtThrow" or target == "rtStackOverflow" or target == "rtUncaught":
+            return True
+    return False
+
+func shake(text):
+    lines = text.split("\n")
+    blocks = []
+    names = {}
+    current = {"name": None, "lines": [], "text": True}
+    inText = True
+    for line in lines:
+        t = line.strip()
+        if t == ".text":
+            inText = True
+        elif t == ".data" or t == ".bss":
+            inText = False
+        name = labelOf(line)
+        if name != None:
+            blocks.append(current)
+            if name in names:
+                failure = {"pesan": "duplicate label " + name}
+                lempar failure
+            current = {"name": name, "lines": [line], "text": inText}
+            names[name] = len(blocks)
+        else:
+            current["lines"].append(line)
+    blocks.append(current)
+    # the first block has no label and always stays
+    keep = {}
+    queue = [0]
+    keep[0] = True
+    qi = 0
+    while qi < len(queue):
+        idx = queue[qi]
+        qi += 1
+        block = blocks[idx]
+        for line in block["lines"]:
+            for w in splitWords(line):
+                if w in names:
+                    target = names[w]
+                    if not (target in keep):
+                        keep[target] = True
+                        queue.append(target)
+        if block["text"] and idx + 1 < len(blocks) and not endsControl(block["lines"]):
+            nxt = idx + 1
+            if not (nxt in keep):
+                keep[nxt] = True
+                queue.append(nxt)
+    out = []
+    i = 0
+    while i < len(blocks):
+        if i in keep:
+            for line in blocks[i]["lines"]:
+                out.append(line)
+        else:
+            # a dropped block may still hold the line that switches sections
+            for line in blocks[i]["lines"]:
+                t = line.strip()
+                if t == ".text" or t == ".data" or t == ".bss":
+                    out.append(line)
+        i += 1
+    return "\n".join(out)

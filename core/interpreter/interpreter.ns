@@ -1,57 +1,130 @@
 import sys
 
-# The host engine names its builtins in snake_case. Each one is bound once here
-# and used under a camelCase name below.
-hostJalankanPerintah = jalankan_perintah
-hostAmbilEnv = ambil_env
-hostKeAngka = ke_angka
-hostCallMethod = _callmeth
-hostPetaBaru = peta_baru
-hostBacaFile = baca_file
-hostTulisFile = tulis_file
-hostFileAda = file_ada
-hostGcInfo = gc_info
-hostGcPaksa = gc_paksa
-hostHapusAkhir = hapus_akhir
-hostJsonEncode = json_encode
-hostJsonDecode = json_decode
-hostJsonDecodeAman = json_decode_aman
-hostBase64Encode = base64_encode
-hostBase64Decode = base64_decode
-hostSha256Hex = sha256_hex
-hostHmacSha256Hex = hmac_sha256_hex
-hostJwtBuat = jwt_buat
-hostJwtVerifikasi = jwt_verifikasi
-hostTcpKonek = tcp_konek
-hostTcpKirim = tcp_kirim
-hostTcpTerima = tcp_terima
-hostTcpTutup = tcp_tutup
-hostHttpGet = http_get
-hostHttpPost = http_post
-hostHttpDengar = http_dengar
-hostEmailKirim = email_kirim
-hostKanalBaru = kanal_baru
-hostKanalKirim = kanal_kirim
-hostKanalTerima = kanal_terima
-hostKanalTutup = kanal_tutup
-hostKanalPanjang = kanal_panjang
-hostWgBaru = wg_baru
-hostWgTambah = wg_tambah
-hostWgSelesai = wg_selesai
-hostWgTunggu = wg_tunggu
-hostPilihKanal = pilih_kanal
-hostMuatPlugin = muat_plugin
-hostByteDi = byte_di
-hostTeksDari = teks_dari
-hostHurufBesar = huruf_besar
-hostHurufKecil = huruf_kecil
-hostProcStreamMulai = proc_stream_mulai
-hostProcStreamBaca = proc_stream_baca
-hostProcStreamTutup = proc_stream_tutup
-hostQrBaca = qr_baca
-hostPetaKunci = peta_kunci
-hostBacaInput = baca_input
 
+func loadPart(name):
+    candidates = [name, "interpreter/" + name, "core/interpreter/" + name, "../core/interpreter/" + name]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/interpreter/" + name)
+
+hostPart = loadPart("host.ns")
+numericPart = loadPart("numeric.ns")
+errorsPart = loadPart("errors.ns")
+objectsPart = loadPart("objects.ns")
+hosttextPart = loadPart("hosttext.ns")
+collectionsPart = loadPart("collections.ns")
+numberFunctionsPart = loadPart("numberFunctions.ns")
+filesPart = loadPart("files.ns")
+formatPart = loadPart("format.ns")
+
+hostJalankanPerintah = hostPart.hostJalankanPerintah
+hostAmbilEnv = hostPart.hostAmbilEnv
+hostPetaBaru = hostPart.hostPetaBaru
+hostBacaFile = hostPart.hostBacaFile
+hostFileAda = hostPart.hostFileAda
+hostGcInfo = hostPart.hostGcInfo
+hostGcPaksa = hostPart.hostGcPaksa
+hostHapusAkhir = hostPart.hostHapusAkhir
+hostJsonEncode = hostPart.hostJsonEncode
+hostJsonDecode = hostPart.hostJsonDecode
+hostJsonDecodeAman = hostPart.hostJsonDecodeAman
+hostBase64Encode = hostPart.hostBase64Encode
+hostBase64Decode = hostPart.hostBase64Decode
+hostSha256Hex = hostPart.hostSha256Hex
+hostHmacSha256Hex = hostPart.hostHmacSha256Hex
+hostJwtBuat = hostPart.hostJwtBuat
+hostJwtVerifikasi = hostPart.hostJwtVerifikasi
+hostTcpKonek = hostPart.hostTcpKonek
+hostTcpKirim = hostPart.hostTcpKirim
+hostTcpTerima = hostPart.hostTcpTerima
+hostTcpTutup = hostPart.hostTcpTutup
+hostHttpGet = hostPart.hostHttpGet
+hostHttpPost = hostPart.hostHttpPost
+hostHttpDengar = hostPart.hostHttpDengar
+hostEmailKirim = hostPart.hostEmailKirim
+hostKanalBaru = hostPart.hostKanalBaru
+hostKanalKirim = hostPart.hostKanalKirim
+hostKanalTerima = hostPart.hostKanalTerima
+hostKanalTutup = hostPart.hostKanalTutup
+hostKanalPanjang = hostPart.hostKanalPanjang
+hostWgBaru = hostPart.hostWgBaru
+hostWgTambah = hostPart.hostWgTambah
+hostWgSelesai = hostPart.hostWgSelesai
+hostWgTunggu = hostPart.hostWgTunggu
+hostPilihKanal = hostPart.hostPilihKanal
+hostMuatPlugin = hostPart.hostMuatPlugin
+hostByteDi = hostPart.hostByteDi
+hostTeksDari = hostPart.hostTeksDari
+hostHurufBesar = hostPart.hostHurufBesar
+hostHurufKecil = hostPart.hostHurufKecil
+hostProcStreamMulai = hostPart.hostProcStreamMulai
+hostProcStreamBaca = hostPart.hostProcStreamBaca
+hostProcStreamTutup = hostPart.hostProcStreamTutup
+hostQrBaca = hostPart.hostQrBaca
+hostPetaKunci = hostPart.hostPetaKunci
+hostBacaInput = hostPart.hostBacaInput
+HOSTNOARG = hostPart.HOSTNOARG
+makeHostCallback = hostPart.makeHostCallback
+numbersModule = numericPart.numbersModule
+numKind = numericPart.numKind
+numBinary = numericPart.numBinary
+numCompare = numericPart.numCompare
+numText = numericPart.numText
+lineState = errorsPart.lineState
+rtError = errorsPart.rtError
+normalizeError = errorsPart.normalizeError
+runtimeErrorMatches = errorsPart.runtimeErrorMatches
+EXCEPTIONSOURCE = errorsPart.EXCEPTIONSOURCE
+ReturnSignal = objectsPart.ReturnSignal
+BREAKSIGNAL = objectsPart.BREAKSIGNAL
+CONTINUESIGNAL = objectsPart.CONTINUESIGNAL
+UserFunction = objectsPart.UserFunction
+makeMethodCaller = objectsPart.makeMethodCaller
+newClass = objectsPart.newClass
+BINARYDUNDERS = objectsPart.BINARYDUNDERS
+REFLECTEDDUNDERS = objectsPart.REFLECTEDDUNDERS
+isSignal = objectsPart.isSignal
+isRange = objectsPart.isRange
+isInstance = objectsPart.isInstance
+isClass = objectsPart.isClass
+replaceText = hosttextPart.replaceText
+countText = hosttextPart.countText
+padLeft = hosttextPart.padLeft
+padRight = hosttextPart.padRight
+makeStrFind = hosttextPart.makeStrFind
+joinChecked = hosttextPart.joinChecked
+makeLazyRange = collectionsPart.makeLazyRange
+rangeCount = collectionsPart.rangeCount
+nusaLen = collectionsPart.nusaLen
+nusaList = collectionsPart.nusaList
+nusaEnumerate = collectionsPart.nusaEnumerate
+nusaPeta = collectionsPart.nusaPeta
+nusaGetenv = collectionsPart.nusaGetenv
+nusaSleep = collectionsPart.nusaSleep
+sortList = collectionsPart.sortList
+nusaSorted = collectionsPart.nusaSorted
+listIndex = collectionsPart.listIndex
+listRemove = collectionsPart.listRemove
+listRemoveAt = collectionsPart.listRemoveAt
+listInsert = collectionsPart.listInsert
+listReverse = collectionsPart.listReverse
+listExtend = collectionsPart.listExtend
+mapPop = collectionsPart.mapPop
+nusaInt = numberFunctionsPart.nusaInt
+nusaFloat = numberFunctionsPart.nusaFloat
+nusaAbs = numberFunctionsPart.nusaAbs
+nusaRound = numberFunctionsPart.nusaRound
+nusaMin = numberFunctionsPart.nusaMin
+nusaMax = numberFunctionsPart.nusaMax
+nusaDivmod = numberFunctionsPart.nusaDivmod
+nusaPow = numberFunctionsPart.nusaPow
+nusaSum = numberFunctionsPart.nusaSum
+readFileChecked = filesPart.readFileChecked
+writeFileChecked = filesPart.writeFileChecked
+fmtValue = formatPart.fmtValue
 
 func loadModule(name):
     base = name if name.endswith(".ns") else name + ".ns"
@@ -72,486 +145,23 @@ func loadModule(name):
             pass
     return impor(name)
 
+
 Scope = loadModule("env").Scope
+
 Lexer = loadModule("parser/lexer").Lexer
+
 Parser = loadModule("parser/parser").Parser
+
 resolverModule = loadModule("resolver")
+
 resolveModuleFile = resolverModule.resolveModuleFile
+
 isStdlibFile = resolverModule.isStdlibFile
+
 directoryOf = resolverModule.directoryOf
+
 scriptDirectory = resolverModule.scriptDirectory
 
-# The statement being run, so errors can say where they happened.
-lineState = {"line": 0, "file": ""}
-
-func rtError(msg):
-    err = {"pesan": msg, "line": lineState["line"], "file": lineState["file"]}
-    lempar err
-
-# Statements hand back None, or one of these when control leaves them.
-class ReturnSignal:
-    func __init__(self, val):
-        self.kind = 3
-        self.val = val
-
-class LoopSignal:
-    func __init__(self, kind):
-        self.kind = kind
-
-BREAKSIGNAL = LoopSignal(1)
-CONTINUESIGNAL = LoopSignal(2)
-
-class UserFunction:
-    func __init__(self, name, params, body, closure, defaults = None, restName = None, kwName = None):
-        self.isFunction = True
-        self.file = lineState["file"]
-        self.restName = restName
-        self.kwName = kwName
-        self.name = name
-        self.params = params
-        self.body = body
-        self.closure = closure
-        self.defaults = defaults if defaults != None else {}
-
-func makeMethodCaller(target, name):
-    func caller(*items):
-        return hostCallMethod(target, name, items)
-    return caller
-
-# Errors raised inside the host engine arrive as a map whose `pesan` carries a
-# call trace. Cut the trace so they look like the runtime's own errors.
-func cleanErrorText(text):
-    cut = text.find("\n  di dalam")
-    fromHost = cut >= 0 or text.startswith("nusantara: error: ")
-    if cut >= 0:
-        text = text[:cut]
-    if not fromHost:
-        return text
-    pos = text.rfind(" (line ")
-    if pos >= 0 and text.endswith(")"):
-        text = text[:pos]
-    if text.startswith("nusantara: error: "):
-        text = text[18:]
-    return text
-
-func normalizeError(e):
-    if tipe(e) == "peta" and "pesan" in e and tipe(e["pesan"]) == "teks":
-        cleaned = cleanErrorText(e["pesan"])
-        if cleaned != e["pesan"]:
-            return {"pesan": cleaned}
-    elif tipe(e) == "teks":
-        cleaned = cleanErrorText(e)
-        if cleaned != e:
-            return {"pesan": cleaned}
-    return e
-
-# Errors raised by the runtime are plain maps; this says which builtin
-# exception class names they count as for `catch Name`.
-func runtimeErrorMatches(text, name):
-    if name == "Exception" or name == "BaseException" or name == "RuntimeError":
-        return True
-    if name == "ValueError":
-        return text == "invalid number"
-    if name == "ZeroDivisionError" or name == "ArithmeticError":
-        return text == "division by zero"
-    if name == "IndexError" or name == "LookupError":
-        return text == "index out of range"
-    if name == "NameError":
-        return text.startswith("undefined variable")
-    if name == "TypeError":
-        return text.startswith("value is not callable") or text.startswith("Tipe ")
-    return False
-
-EXCEPTIONSOURCE = """class BaseException:
-    func __init__(self, pesan = "", detail = None):
-        self.pesan = pesan
-        self.detail = detail
-    func __str__(self):
-        return str(self.pesan)
-class Exception(BaseException):
-    pass
-class RuntimeError(Exception):
-    pass
-class ValueError(Exception):
-    pass
-class TypeError(Exception):
-    pass
-class NameError(Exception):
-    pass
-class AttributeError(Exception):
-    pass
-class LookupError(Exception):
-    pass
-class IndexError(LookupError):
-    pass
-class KeyError(LookupError):
-    pass
-class ArithmeticError(Exception):
-    pass
-class ZeroDivisionError(ArithmeticError):
-    pass
-class NotImplementedError(RuntimeError):
-    pass
-class AssertionError(Exception):
-    pass
-class OSError(Exception):
-    pass
-class IOError(OSError):
-    pass
-class StopIteration(Exception):
-    pass
-"""
-
-func newClass(name, parent):
-    return {"isClass": True, "name": name, "parent": parent, "parentClass": None, "methods": {}, "attrs": {}, "statics": {}, "classMethods": {}, "props": {}, "setters": {}}
-
-BINARYDUNDERS = {"+": "__add__", "-": "__sub__", "*": "__mul__", "/": "__truediv__", "//": "__floordiv__", "%": "__mod__", "**": "__pow__", "<": "__lt__", "<=": "__le__", ">": "__gt__", ">=": "__ge__", "&": "__and__", "|": "__or__", "^": "__xor__", "<<": "__lshift__", ">>": "__rshift__"}
-REFLECTEDDUNDERS = {"+": "__radd__", "-": "__rsub__", "*": "__rmul__", "/": "__rtruediv__", "//": "__rfloordiv__", "%": "__rmod__"}
-
-func isSignal(e):
-    return hasattr(e, "isReturn") or hasattr(e, "isBreak") or hasattr(e, "isContinue")
-
-func isRange(x):
-    return tipe(x) == "peta" and "isRange" in x
-
-func isInstance(x):
-    return tipe(x) == "peta" and "isInstance" in x
-
-func isClass(x):
-    return tipe(x) == "peta" and "isClass" in x
-
-func makeLazyRange(a, b = None, c = None):
-    start = 0
-    stop = 0
-    step = 1
-    if b == None:
-        stop = a
-    elif c == None:
-        start = a
-        stop = b
-    else:
-        start = a
-        stop = b
-        step = c
-    if step == 0:
-        rtError("range() arg 3 must not be zero")
-    return {"isRange": True, "start": start, "stop": stop, "step": step}
-
-func rangeCount(x):
-    start = x["start"]
-    stop = x["stop"]
-    step = x["step"]
-    if step > 0:
-        if start >= stop:
-            return 0
-        return (stop - start + step - 1) // step
-    if start <= stop:
-        return 0
-    return (start - stop - step - 1) // (-step)
-
-func nusaLen(x):
-    if isRange(x):
-        return rangeCount(x)
-    return panjang(x)
-
-func nusaList(arg = None):
-    if arg == None:
-        return []
-    if isRange(arg):
-        if rangeCount(arg) > 10000000:
-            rtError("rentang(): terlalu besar untuk dialokasikan sebagai list")
-        res = []
-        cur = arg["start"]
-        step = arg["step"]
-        stop = arg["stop"]
-        if step > 0:
-            while cur < stop:
-                res.append(cur)
-                cur += step
-        else:
-            while cur > stop:
-                res.append(cur)
-                cur += step
-        return res
-    res = []
-    for item in arg:
-        res.append(item)
-    return res
-
-func nusaInt(x):
-    try:
-        return int(x)
-    except e:
-        rtError("invalid number")
-
-func nusaFloat(x):
-    try:
-        return float(x)
-    except e:
-        rtError("invalid number")
-
-func nusaEnumerate(items, start = 0):
-    res = []
-    n = start
-    for item in nusaList(items):
-        res.append([n, item])
-        n += 1
-    return res
-
-func nusaSum(items, start = 0):
-    total = start
-    for item in nusaList(items):
-        total = total + item
-    return total
-
-func nusaSleep(seconds):
-    hostJalankanPerintah("sleep", [str(seconds)])
-    return None
-
-func nusaGetenv(name, fallback = None):
-    val = hostAmbilEnv(name)
-    if val == None:
-        return fallback
-    return val
-
-func nusaPeta():
-    return {}
-
-func groupDigits(digits):
-    out = ""
-    n = len(digits)
-    i = 0
-    while i < n:
-        if i > 0 and (n - i) % 3 == 0:
-            out += ","
-        out += digits[i]
-        i += 1
-    return out
-
-func fixedText(v, prec):
-    neg = v < 0
-    scaled = int(round(abs(v) * (10 ** prec)))
-    text = str(scaled)
-    while len(text) <= prec:
-        text = "0" + text
-    whole = text[:len(text) - prec]
-    frac = text[len(text) - prec:]
-    out = whole
-    if prec > 0:
-        out = whole + "." + frac
-    if neg and scaled != 0:
-        out = "-" + out
-    return out
-
-# Format spec: [[fill]align][0][width][,][.precision][type]
-func fmtValue(v, spec):
-    fill = " "
-    align = ""
-    i = 0
-    n = len(spec)
-    if n >= 2 and (spec[1] == "<" or spec[1] == ">" or spec[1] == "^"):
-        fill = spec[0]
-        align = spec[1]
-        i = 2
-    elif n >= 1 and (spec[0] == "<" or spec[0] == ">" or spec[0] == "^"):
-        align = spec[0]
-        i = 1
-    if i < n and spec[i] == "0" and align == "":
-        fill = "0"
-        align = ">"
-        i += 1
-    width = 0
-    while i < n and spec[i] >= "0" and spec[i] <= "9":
-        width = width * 10 + int(spec[i])
-        i += 1
-    comma = False
-    if i < n and spec[i] == ",":
-        comma = True
-        i += 1
-    prec = -1
-    if i < n and spec[i] == ".":
-        i += 1
-        prec = 0
-        while i < n and spec[i] >= "0" and spec[i] <= "9":
-            prec = prec * 10 + int(spec[i])
-            i += 1
-    kind = spec[i:] if i < n else ""
-    text = ""
-    isNum = tipe(v) == "angka"
-    if kind == "f" or (kind == "" and prec >= 0 and isNum):
-        text = fixedText(v, 6 if prec < 0 else prec)
-    elif kind == "d":
-        text = str(int(v))
-    elif kind == "%":
-        text = fixedText(v * 100, 6 if prec < 0 else prec) + "%"
-    else:
-        text = str(v)
-        if prec >= 0 and not isNum:
-            text = text[:prec]
-    if comma and isNum:
-        sign = ""
-        body = text
-        if body.startswith("-"):
-            sign = "-"
-            body = body[1:]
-        dot = body.find(".")
-        if dot >= 0:
-            body = groupDigits(body[:dot]) + body[dot:]
-        else:
-            body = groupDigits(body)
-        text = sign + body
-    if len(text) < width:
-        pad = width - len(text)
-        if align == "":
-            align = ">" if isNum else "<"
-        if align == "<":
-            text = text + fill * pad
-        elif align == ">":
-            if fill == "0" and text.startswith("-"):
-                text = "-" + fill * pad + text[1:]
-            else:
-                text = fill * pad + text
-        else:
-            left = pad // 2
-            text = fill * left + text + fill * (pad - left)
-    return text
-
-func replaceText(text, old, new):
-    if old == "":
-        return text
-    return gabung(pisah(text, old), new)
-
-func countText(text, sub):
-    if sub == "":
-        return len(text) + 1
-    return len(pisah(text, sub)) - 1
-
-func padLeft(text):
-    i = 0
-    while i < len(text) and (text[i] == " " or text[i] == "\t" or text[i] == "\n" or text[i] == "\r"):
-        i += 1
-    return text[i:]
-
-func padRight(text):
-    j = len(text)
-    while j > 0 and (text[j - 1] == " " or text[j - 1] == "\t" or text[j - 1] == "\n" or text[j - 1] == "\r"):
-        j -= 1
-    return text[:j]
-
-func sortList(items, rev):
-    res = sorted(items)
-    if rev:
-        res = sorted(items, reverse=True)
-    n = len(items)
-    i = 0
-    while i < n:
-        items[i] = res[i]
-        i += 1
-    return None
-
-func listIndex(items, val):
-    i = 0
-    n = len(items)
-    while i < n:
-        if items[i] == val:
-            return i
-        i += 1
-    rtError("ValueError: nilai tidak ada di larik")
-
-func listRemove(items, val):
-    idx = listIndex(items, val)
-    k = idx
-    n = len(items)
-    while k < n - 1:
-        items[k] = items[k + 1]
-        k += 1
-    items.pop()
-    return None
-
-func listRemoveAt(items, idx):
-    n = len(items)
-    if idx < 0:
-        idx = idx + n
-    if idx < 0 or idx >= n:
-        rtError("index out of range")
-    k = idx
-    while k < n - 1:
-        items[k] = items[k + 1]
-        k += 1
-    items.pop()
-    return None
-
-func listInsert(items, idx, val):
-    n = len(items)
-    if idx < 0:
-        idx = idx + n
-        if idx < 0:
-            idx = 0
-    if idx > n:
-        idx = n
-    items.append(None)
-    k = n
-    while k > idx:
-        items[k] = items[k - 1]
-        k -= 1
-    items[idx] = val
-    return None
-
-func listReverse(items):
-    n = len(items)
-    i = 0
-    while i < n // 2:
-        tmp = items[i]
-        items[i] = items[n - 1 - i]
-        items[n - 1 - i] = tmp
-        i += 1
-    return None
-
-func listExtend(items, more):
-    for m in nusaList(more):
-        items.append(m)
-    return None
-
-func mapPop(m, key, fallback = None):
-    if key in m:
-        val = m[key]
-        remaining = {}
-        for k in m:
-            if k != key:
-                remaining[k] = m[k]
-        for k in nusaList(m.keys()):
-            del m[k]
-        for k in remaining:
-            m[k] = remaining[k]
-        return val
-    return fallback
-
-HOSTNOARG = {"noArg": True}
-
-func makeHostCallback(interp, fn):
-    func callback(a = HOSTNOARG, b = HOSTNOARG, c = HOSTNOARG, d = HOSTNOARG):
-        items = []
-        if a != HOSTNOARG:
-            items.append(a)
-        if b != HOSTNOARG:
-            items.append(b)
-        if c != HOSTNOARG:
-            items.append(c)
-        if d != HOSTNOARG:
-            items.append(d)
-        return interp.callUserFunction(fn, items, {})
-    return callback
-
-func makeStrFind(text):
-    func finder(sub, start = 0):
-        if start <= 0:
-            return text.find(sub)
-        rest = text[start:]
-        found = rest.find(sub)
-        if found < 0:
-            return -1
-        return found + start
-    return finder
 
 class Interpreter:
     func __init__(self):
@@ -691,13 +301,13 @@ class Interpreter:
         g.define("larik", nusaList)
         g.define("enumerate", nusaEnumerate)
         g.define("sum", nusaSum)
-        g.define("abs", abs)
-        g.define("min", min)
-        g.define("max", max)
-        g.define("round", round)
-        g.define("pow", pow)
-        g.define("divmod", divmod)
-        g.define("sorted", sorted)
+        g.define("abs", nusaAbs)
+        g.define("min", nusaMin)
+        g.define("max", nusaMax)
+        g.define("round", nusaRound)
+        g.define("pow", nusaPow)
+        g.define("divmod", nusaDivmod)
+        g.define("sorted", nusaSorted)
         g.define("zip", zip)
         g.define("map", map)
         g.define("filter", filter)
@@ -717,10 +327,10 @@ class Interpreter:
         g.define("petaBaru", hostPetaBaru)
         g.define("peta_baru", hostPetaBaru)
         g.define("newMap", hostPetaBaru)
-        g.define("readFile", hostBacaFile)
-        g.define("baca_file", hostBacaFile)
-        g.define("writeFile", hostTulisFile)
-        g.define("tulis_file", hostTulisFile)
+        g.define("readFile", readFileChecked)
+        g.define("baca_file", readFileChecked)
+        g.define("writeFile", writeFileChecked)
+        g.define("tulis_file", writeFileChecked)
         g.define("fileExists", hostFileAda)
         g.define("file_ada", hostFileAda)
         func importFn(name):
@@ -807,6 +417,16 @@ class Interpreter:
         g.define("elemen", elemen)
         g.define("teks", teks)
 
+        # Every builtin whose host name has underscores also answers to its
+        # camelCase name (baca_file is BacaFile, ke_teks is KeTeks).
+        for hostName in list(g.vars.keys()):
+            if "_" in hostName and not hostName.startswith("_"):
+                pieces = hostName.split("_")
+                camel = ""
+                for piece in pieces:
+                    camel += piece[0].upper() + piece[1:]
+                g.define(camel, g.vars[hostName])
+
     func run(self, program):
         lastResult = None
         for stmt in program:
@@ -832,6 +452,10 @@ class Interpreter:
 
     func show(self, v, top):
         t = tipe(v)
+        if t == "angka":
+            return numText(v)
+        if numKind(v) != 9:
+            return numText(v)
         if t == "teks":
             if top:
                 return v
@@ -1354,6 +978,8 @@ class Interpreter:
         if val == None or val == False or val == 0 or val == "":
             return False
         t = tipe(val)
+        if str(t) == "FloatBox":
+            return val.v != 0
         if t == "larik":
             return len(val) > 0
         if t == "peta":
@@ -1411,7 +1037,11 @@ class Interpreter:
             if name == "super":
                 return {"isSuperProxy": True, "self": env.get("self"), "fromClass": env.get("__kelasAktif__")}
             return env.get(name)
-        elif t == "NUMBER" or t == "STRING" or t == "BOOL":
+        elif t == "NUMBER":
+            if expr.isFloat or expr.big != None:
+                return self.numberLiteral(expr)
+            return expr.value
+        elif t == "STRING" or t == "BOOL":
             return expr.value
         elif t == "BINARY":
             op = expr.op
@@ -1462,10 +1092,14 @@ class Interpreter:
         elif t == "UNARY":
             val = self.evaluate(expr.operand, env)
             if expr.op == "-":
+                if numKind(val) != 9:
+                    return numbersModule.negate(val)
                 return -val
             elif expr.op == "not":
                 return not self.isTruthy(val)
             elif expr.op == "~":
+                if numKind(val) != 9:
+                    return numbersModule.invert(val)
                 return ~val
             return val
         elif t == "MEMBER":
@@ -1541,6 +1175,8 @@ class Interpreter:
                 r = self.callDunder(target, "__getitem__", [idx])
                 if r[0]:
                     return r[1]
+            if isInstance(target) and tipe(idx) != "teks":
+                rtError("objek tidak bisa di-index")
             if isInstance(target) or isClass(target):
                 return self.getMember(target, idx, self.globalScope)
             if idx in target:
@@ -1548,8 +1184,8 @@ class Interpreter:
             return None
         if tt == "larik" or tt == "teks":
             n = len(target)
-            if tipe(idx) != "angka":
-                rtError("index harus angka")
+            if tipe(idx) != "angka" or idx != int(idx):
+                rtError("index harus bilangan bulat")
             if idx < -n or idx >= n:
                 rtError("index out of range")
             return target[idx]
@@ -1753,7 +1389,7 @@ class Interpreter:
         elif name == "find":
             return makeStrFind(target)
         elif name == "join":
-            return lambda items: gabung(items, target)
+            return lambda items: joinChecked(items, target)
         elif name == "strip":
             return lambda: target.strip()
         elif name == "lstrip":
@@ -1794,6 +1430,14 @@ class Interpreter:
         elif name == "copy":
             return lambda: target[0:len(target)]
         return None
+
+    func numberLiteral(self, expr):
+        if expr.cached == None:
+            if expr.big != None:
+                expr.cached = numbersModule.intFromText(expr.big)
+            else:
+                expr.cached = numbersModule.mkFloat(expr.value)
+        return expr.cached
 
     func callDunder(self, inst, name, args):
         found = self.findMethod(inst["class"], name)
@@ -1871,6 +1515,28 @@ class Interpreter:
         return nusaList(value)
 
     func binaryValue(self, op, leftVal, rightVal):
+        ka = numKind(leftVal)
+        if ka != 9:
+            kb = numKind(rightVal)
+            if kb != 9:
+                if op == "+" or op == "-" or op == "*" or op == "/" or op == "//" or op == "%" or op == "**":
+                    return numBinary(op, leftVal, rightVal)
+                if op == "<" or op == "<=" or op == ">" or op == ">=" or op == "==" or op == "!=":
+                    return numCompare(op, leftVal, rightVal)
+                if op == "&" or op == "|" or op == "^":
+                    return numbersModule.bitOp(op, leftVal, rightVal)
+                if op == "<<":
+                    return numbersModule.shiftLeft(leftVal, rightVal)
+                if op == ">>":
+                    return numbersModule.shiftRight(leftVal, rightVal)
+            elif op == "==":
+                return False
+            elif op == "!=":
+                return True
+        elif op == "==" and numKind(rightVal) != 9:
+            return False
+        elif op == "!=" and numKind(rightVal) != 9:
+            return True
         if op == "+":
             return leftVal + rightVal
         elif op == "-":
@@ -1949,3 +1615,4 @@ class Interpreter:
                 items.append(d)
             return interp.callValue(bound, items, {})
         return callback
+

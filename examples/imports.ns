@@ -1,5 +1,5 @@
 # Modules. `import shop.cart` finds shop/cart.ns (or shop/cart/index.ns) next to
-# this file, then in nusa_packages folders, then in NUSA_PATH, then the standard library.
+# this file, then in nusa_packages folders, then in NusaPath, then the standard library.
 import shop.cart
 from shop.cart import add, total
 import shop.price as price

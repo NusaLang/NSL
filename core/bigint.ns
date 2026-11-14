@@ -1,0 +1,343 @@
+// Whole numbers without a limit. A magnitude is a list of limbs in base 10000000,
+// least significant first, with no zeros at the top; zero is the empty list.
+// A signed number travels as sign (1 or -1) and magnitude. The same source is
+// loaded by the interpreter and compiled into every native program, so it keeps
+// to what both can do: lists, whole numbers below 2^53, and loops.
+
+func nsRtMagTrim(m):
+    while len(m) > 0 and m[len(m) - 1] == 0:
+        pop(m)
+    return m
+
+func nsRtMagFromInt(n):
+    m = []
+    while n > 0:
+        push(m, n % 10000000)
+        n = n // 10000000
+    return m
+
+func nsRtMagCmp(a, b):
+    la = len(a)
+    lb = len(b)
+    if la != lb:
+        if la < lb:
+            return -1
+        return 1
+    i = la - 1
+    while i >= 0:
+        if a[i] != b[i]:
+            if a[i] < b[i]:
+                return -1
+            return 1
+        i -= 1
+    return 0
+
+func nsRtMagAdd(a, b):
+    out = []
+    carry = 0
+    i = 0
+    la = len(a)
+    lb = len(b)
+    n = la
+    if lb > n:
+        n = lb
+    while i < n:
+        t = carry
+        if i < la:
+            t += a[i]
+        if i < lb:
+            t += b[i]
+        if t >= 10000000:
+            push(out, t - 10000000)
+            carry = 1
+        else:
+            push(out, t)
+            carry = 0
+        i += 1
+    if carry > 0:
+        push(out, carry)
+    return out
+
+// a - b with a >= b
+func nsRtMagSub(a, b):
+    out = []
+    borrow = 0
+    i = 0
+    la = len(a)
+    lb = len(b)
+    while i < la:
+        t = a[i] - borrow
+        if i < lb:
+            t -= b[i]
+        if t < 0:
+            push(out, t + 10000000)
+            borrow = 1
+        else:
+            push(out, t)
+            borrow = 0
+        i += 1
+    return nsRtMagTrim(out)
+
+func nsRtMagMulSmall(a, k):
+    if k == 0 or len(a) == 0:
+        return []
+    out = []
+    carry = 0
+    i = 0
+    n = len(a)
+    while i < n:
+        t = a[i] * k + carry
+        r = t % 10000000
+        push(out, r)
+        carry = (t - r) // 10000000
+        i += 1
+    while carry > 0:
+        push(out, carry % 10000000)
+        carry = carry // 10000000
+    return out
+
+func nsRtMagMul(a, b):
+    la = len(a)
+    lb = len(b)
+    if la == 0 or lb == 0:
+        return []
+    out = []
+    i = 0
+    while i < la + lb:
+        push(out, 0)
+        i += 1
+    i = 0
+    while i < la:
+        carry = 0
+        ai = a[i]
+        j = 0
+        while j < lb:
+            t = out[i + j] + ai * b[j] + carry
+            r = t % 10000000
+            out[i + j] = r
+            carry = (t - r) // 10000000
+            j += 1
+        k = i + lb
+        while carry > 0:
+            t = out[k] + carry
+            r = t % 10000000
+            out[k] = r
+            carry = (t - r) // 10000000
+            k += 1
+        i += 1
+    return nsRtMagTrim(out)
+
+// [quotient, remainder] for a divisor below 10000000
+func nsRtMagDivSmall(a, k):
+    q = []
+    r = 0
+    i = len(a) - 1
+    while i >= 0:
+        cur = r * 10000000 + a[i]
+        d = cur // k
+        r = cur - d * k
+        push(q, d)
+        i -= 1
+    out = []
+    i = len(q) - 1
+    while i >= 0:
+        push(out, q[i])
+        i -= 1
+    return [nsRtMagTrim(out), r]
+
+// [quotient, remainder], both truncated, divisor not zero
+func nsRtMagDivMod(a, b):
+    if nsRtMagCmp(a, b) < 0:
+        return [[], a]
+    if len(b) == 1:
+        qr = nsRtMagDivSmall(a, b[0])
+        if qr[1] == 0:
+            return [qr[0], []]
+        return [qr[0], [qr[1]]]
+    rem = []
+    qdigits = []
+    i = len(a) - 1
+    while i >= 0:
+        shifted = [a[i]]
+        for limb in rem:
+            push(shifted, limb)
+        rem = nsRtMagTrim(shifted)
+        lo = 0
+        hi = 9999999
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if nsRtMagCmp(nsRtMagMulSmall(b, mid), rem) <= 0:
+                lo = mid
+            else:
+                hi = mid - 1
+        push(qdigits, lo)
+        if lo > 0:
+            rem = nsRtMagSub(rem, nsRtMagMulSmall(b, lo))
+        i -= 1
+    q = []
+    i = len(qdigits) - 1
+    while i >= 0:
+        push(q, qdigits[i])
+        i -= 1
+    return [nsRtMagTrim(q), rem]
+
+func nsRtMagToStr(m):
+    n = len(m)
+    if n == 0:
+        return "0"
+    out = str(m[n - 1])
+    i = n - 2
+    while i >= 0:
+        part = str(m[i])
+        pad = 7 - len(part)
+        if pad > 0:
+            out += "0" * pad
+        out += part
+        i -= 1
+    return out
+
+// digits only; the caller has checked the text
+func nsRtMagFromStr(s):
+    m = []
+    end = len(s)
+    while end > 0:
+        start = end - 7
+        if start < 0:
+            start = 0
+        push(m, int(s[start:end]))
+        end = start
+    return nsRtMagTrim(m)
+
+func nsRtMagPow(a, e):
+    result = [1]
+    base = a
+    while e > 0:
+        if e % 2 == 1:
+            result = nsRtMagMul(result, base)
+        e = e // 2
+        if e > 0:
+            base = nsRtMagMul(base, base)
+    return result
+
+// ---- signed numbers: [sign, magnitude]
+
+func nsRtBigNorm(s, m):
+    if len(m) == 0:
+        return [1, m]
+    return [s, m]
+
+func nsRtBigAdd(sa, ma, sb, mb):
+    if sa == sb:
+        return nsRtBigNorm(sa, nsRtMagAdd(ma, mb))
+    c = nsRtMagCmp(ma, mb)
+    if c == 0:
+        return [1, []]
+    if c > 0:
+        return nsRtBigNorm(sa, nsRtMagSub(ma, mb))
+    return nsRtBigNorm(sb, nsRtMagSub(mb, ma))
+
+func nsRtBigSub(sa, ma, sb, mb):
+    return nsRtBigAdd(sa, ma, 0 - sb, mb)
+
+func nsRtBigMul(sa, ma, sb, mb):
+    return nsRtBigNorm(sa * sb, nsRtMagMul(ma, mb))
+
+// floor division and remainder as Python does them: [qSign, q, rSign, r]
+func nsRtBigDivMod(sa, ma, sb, mb):
+    qr = nsRtMagDivMod(ma, mb)
+    q = qr[0]
+    r = qr[1]
+    if sa != sb and len(r) > 0:
+        q = nsRtMagAdd(q, [1])
+        r = nsRtMagSub(mb, r)
+    qs = sa * sb
+    if len(q) == 0:
+        qs = 1
+    rs = sb
+    if len(r) == 0:
+        rs = 1
+    return [qs, q, rs, r]
+
+func nsRtBigCmp(sa, ma, sb, mb):
+    if sa != sb:
+        if sa < sb:
+            return -1
+        return 1
+    c = nsRtMagCmp(ma, mb)
+    if sa < 0:
+        return 0 - c
+    return c
+
+func nsRtBigPow(sa, ma, e):
+    s = 1
+    if sa < 0 and e % 2 == 1:
+        s = -1
+    return nsRtBigNorm(s, nsRtMagPow(ma, e))
+
+// ---- the nearest double, rounding half to even
+
+func nsRtPow2(k):
+    r = 1.0
+    while k >= 30:
+        r = r * 1073741824.0
+        k -= 30
+    while k > 0:
+        r = r * 2.0
+        k -= 1
+    return r
+
+func nsRtMagToFloat(m):
+    n = len(m)
+    if n == 0:
+        return 0.0
+    if n <= 2:
+        v = 0.0
+        i = n - 1
+        while i >= 0:
+            v = v * 10000000.0 + float(m[i])
+            i -= 1
+        return v
+    work = m
+    shift = 0
+    sticky = False
+    limit = nsRtMagFromStr("18014398509481984")
+    while len(work) > 4:
+        qr = nsRtMagDivSmall(work, 4096)
+        if qr[1] != 0:
+            sticky = True
+        work = qr[0]
+        shift += 12
+    while nsRtMagCmp(work, limit) >= 0:
+        qr = nsRtMagDivSmall(work, 2)
+        if qr[1] != 0:
+            sticky = True
+        work = qr[0]
+        shift += 1
+    // work is below 2^54. From 2^53 up, the lowest bit is the rounding bit and is
+    // split off first, so the part that is added up as a double stays below 2^53.
+    low = 0
+    if nsRtMagCmp(work, nsRtMagFromStr("9007199254740992")) >= 0:
+        qr = nsRtMagDivSmall(work, 2)
+        low = qr[1]
+        work = qr[0]
+        shift += 1
+    v = 0
+    i = len(work) - 1
+    while i >= 0:
+        v = v * 10000000 + work[i]
+        i -= 1
+    if low == 1:
+        if sticky or v % 2 == 1:
+            v += 1
+    return float(v) * nsRtPow2(shift)
+
+// the whole part of a double that already holds a whole number, as a magnitude
+func nsRtMagFromFloat(x):
+    e = 0
+    while x >= 9007199254740992.0:
+        x = x / 2.0
+        e += 1
+    m = nsRtMagFromInt(int(x))
+    if e > 0:
+        m = nsRtMagMul(m, nsRtMagPow([2], e))
+    return m

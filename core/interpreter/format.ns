@@ -1,0 +1,103 @@
+# Format specs for f-strings: widths, precision, thousands separators.
+
+func groupDigits(digits):
+    out = ""
+    n = len(digits)
+    i = 0
+    while i < n:
+        if i > 0 and (n - i) % 3 == 0:
+            out += ","
+        out += digits[i]
+        i += 1
+    return out
+
+
+func fixedText(v, prec):
+    neg = v < 0
+    scaled = int(round(abs(v) * (10 ** prec)))
+    text = str(scaled)
+    while len(text) <= prec:
+        text = "0" + text
+    whole = text[:len(text) - prec]
+    frac = text[len(text) - prec:]
+    out = whole
+    if prec > 0:
+        out = whole + "." + frac
+    if neg and scaled != 0:
+        out = "-" + out
+    return out
+
+
+# Format spec: [[fill]align][0][width][,][.precision][type]
+func fmtValue(v, spec):
+    fill = " "
+    align = ""
+    i = 0
+    n = len(spec)
+    if n >= 2 and (spec[1] == "<" or spec[1] == ">" or spec[1] == "^"):
+        fill = spec[0]
+        align = spec[1]
+        i = 2
+    elif n >= 1 and (spec[0] == "<" or spec[0] == ">" or spec[0] == "^"):
+        align = spec[0]
+        i = 1
+    if i < n and spec[i] == "0" and align == "":
+        fill = "0"
+        align = ">"
+        i += 1
+    width = 0
+    while i < n and spec[i] >= "0" and spec[i] <= "9":
+        width = width * 10 + int(spec[i])
+        i += 1
+    comma = False
+    if i < n and spec[i] == ",":
+        comma = True
+        i += 1
+    prec = -1
+    if i < n and spec[i] == ".":
+        i += 1
+        prec = 0
+        while i < n and spec[i] >= "0" and spec[i] <= "9":
+            prec = prec * 10 + int(spec[i])
+            i += 1
+    kind = spec[i:] if i < n else ""
+    text = ""
+    isNum = tipe(v) == "angka"
+    if kind == "f" or (kind == "" and prec >= 0 and isNum):
+        text = fixedText(v, 6 if prec < 0 else prec)
+    elif kind == "d":
+        text = str(int(v))
+    elif kind == "%":
+        text = fixedText(v * 100, 6 if prec < 0 else prec) + "%"
+    else:
+        text = str(v)
+        if prec >= 0 and not isNum:
+            text = text[:prec]
+    if comma and isNum:
+        sign = ""
+        body = text
+        if body.startswith("-"):
+            sign = "-"
+            body = body[1:]
+        dot = body.find(".")
+        if dot >= 0:
+            body = groupDigits(body[:dot]) + body[dot:]
+        else:
+            body = groupDigits(body)
+        text = sign + body
+    if len(text) < width:
+        pad = width - len(text)
+        if align == "":
+            align = ">" if isNum else "<"
+        if align == "<":
+            text = text + fill * pad
+        elif align == ">":
+            if fill == "0" and text.startswith("-"):
+                text = "-" + fill * pad + text[1:]
+            else:
+                text = fill * pad + text
+        else:
+            left = pad // 2
+            text = fill * left + text + fill * (pad - left)
+    return text
+

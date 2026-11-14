@@ -1,0 +1,71 @@
+# Bit operations on ints of any size.
+# The text below is Nusantara source that is compiled into every program that needs it.
+
+TEXT = """func nsRtBitTwos(sign, mag, count):
+    limbs = []
+    work = mag
+    while len(work) > 0:
+        qr = nsRtMagDivSmall(work, 16777216)
+        push(limbs, qr[1])
+        work = qr[0]
+    while len(limbs) < count:
+        push(limbs, 0)
+    if sign < 0:
+        i = 0
+        carry = 1
+        while i < len(limbs):
+            t = (16777215 - limbs[i]) + carry
+            if t >= 16777216:
+                limbs[i] = t - 16777216
+                carry = 1
+            else:
+                limbs[i] = t
+                carry = 0
+            i += 1
+    return limbs
+
+func nsRtBitFromTwos(limbs):
+    n = len(limbs)
+    negative = limbs[n - 1] >= 8388608
+    work = limbs
+    if negative:
+        work = []
+        carry = 1
+        i = 0
+        while i < n:
+            t = (16777215 - limbs[i]) + carry
+            if t >= 16777216:
+                push(work, t - 16777216)
+                carry = 1
+            else:
+                push(work, t)
+                carry = 0
+            i += 1
+    mag = []
+    i = n - 1
+    while i >= 0:
+        mag = nsRtMagAdd(nsRtMagMulSmall(mag, 16777216), nsRtMagFromInt(work[i]))
+        i -= 1
+    if negative:
+        return nsRtMakeInt(-1, mag)
+    return nsRtMakeInt(1, mag)
+
+func nsRtBitOp(op, pa, pb):
+    count = len(pa[1])
+    if len(pb[1]) > count:
+        count = len(pb[1])
+    count = count * 2 + 3
+    la = nsRtBitTwos(pa[0], pa[1], count)
+    lb = nsRtBitTwos(pb[0], pb[1], count)
+    out = []
+    i = 0
+    while i < count:
+        if op == 9:
+            push(out, la[i] & lb[i])
+        elif op == 10:
+            push(out, la[i] | lb[i])
+        else:
+            push(out, la[i] ^ lb[i])
+        i += 1
+    return nsRtBitFromTwos(out)
+"""

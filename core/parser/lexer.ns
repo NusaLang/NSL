@@ -99,6 +99,49 @@ ONECHAR = {"+": TokenType.PLUS, "-": TokenType.MINUS, "*": TokenType.STAR, "/": 
 
 MAXEXACT = 9007199254740992
 
+func loadBigLib():
+    candidates = ["bigint.ns", "core/bigint.ns", "../core/bigint.ns", "experiment/core/bigint.ns"]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/bigint.ns")
+
+# The decimal text of a number written as digits in some base.
+func digitsToDecimal(digitList, base):
+    lib = loadBigLib()
+    mag = []
+    for d in digitList:
+        mag = lib.nsRtMagAdd(lib.nsRtMagMulSmall(mag, base), lib.nsRtMagFromInt(d))
+    return lib.nsRtMagToStr(mag)
+
+# A float literal; the host cannot read the extremes, so those are decided here.
+func floatLiteral(text, line, col):
+    t = text.lower()
+    ePos = t.find("e")
+    if ePos >= 0:
+        expText = t[ePos + 1:]
+        if expText.startswith("-") or expText.startswith("+"):
+            expText = expText[1:]
+        if len(expText) > 3:
+            mant = t[:ePos]
+            allZero = True
+            for ch in mant:
+                if ch != "0" and ch != ".":
+                    allZero = False
+            if allZero or t[ePos + 1:].startswith("-"):
+                return 0.0
+            return 1e308 * 10
+        if t[ePos + 1:].startswith("-") and int(expText) < 300:
+            pass
+        expValue = int(t[ePos + 1:])
+        if expValue < -300:
+            # denormals: the host cannot read them, so scale from a normal number
+            base = float(t[:ePos] + "e-300")
+            return base / (10.0 ** (0 - expValue - 300))
+    return float(text)
+
 func lexFail(msg, line, col):
     err = {"pesan": msg + " (line " + str(line) + ", col " + str(col) + ")", "line": line, "col": col, "isLexError": True}
     lempar err
@@ -699,6 +742,7 @@ class Lexer:
                 self.advance()
                 self.advance()
                 val = 0
+                digitList = []
                 while self.pos < self.length:
                     c = self.source[self.pos]
                     if c == "_":
@@ -707,14 +751,18 @@ class Lexer:
                     dv = self.digitValue(c, base)
                     if dv < 0:
                         break
-                    val = val * base + dv
-                    if val > MAXEXACT:
-                        lexFail("Angka kegedean", line, col)
+                    digitList.append(dv)
+                    if val <= MAXEXACT:
+                        val = val * base + dv
                     self.advance()
                 tok = self.make(TokenType.NUMBER, self.source[start:self.pos], line, col)
+                tok.isFloat = False
+                tok.big = None
+                if val > MAXEXACT:
+                    tok.big = digitsToDecimal(digitList, base)
+                    val = 0
                 tok.number = val
                 tok.angka = val
-                tok.isFloat = False
                 return tok
         isInteger = True
         if self.source[self.pos] == ".":
@@ -738,13 +786,17 @@ class Lexer:
                 while isDigitCh(self.peek(0)):
                     self.advance()
         text = self.source[start:self.pos].replace("_", "")
-        if isInteger and len(text) >= 16:
-            if len(text) > 16 or text > "9007199254740992":
-                lexFail("Angka integer " + text + " kegedean -- 'angka' (double) cuma presisi exact sampe 9007199254740992, pake teks buat angka segede ini", line, col)
         tok = self.make(TokenType.NUMBER, text, line, col)
-        tok.number = int(text) if isInteger else float(text)
-        tok.angka = tok.number
+        tok.big = None
         tok.isFloat = not isInteger
+        if isInteger and len(text) >= 16 and (len(text) > 16 or text > "9007199254740992"):
+            tok.number = 0
+            tok.big = text
+        elif isInteger:
+            tok.number = int(text)
+        else:
+            tok.number = floatLiteral(text, line, col)
+        tok.angka = tok.number
         return tok
 
     func skipDigits(self):

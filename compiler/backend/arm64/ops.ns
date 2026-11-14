@@ -200,11 +200,26 @@ rtTypeMap:
     ldr x0, =strTypePeta
     ret
 rtOrd:
+    tbnz x0, 0, rtOrdBad
+    cmp x0, 4
+    b.ls rtOrdBad
+    ldr x1, [x0]
+    cmp x1, 2
+    b.ne rtOrdBad
+    ldr x1, [x0, 8]
+    cbz x1, rtOrdBad
     ldrb w0, [x0, 16]
     lsl x0, x0, 1
     add x0, x0, 1
     ret
+rtOrdBad:
+    ldr x0, =strBadOrd
+    b rtFail
+rtChrBad:
+    ldr x0, =strBadChr
+    b rtFail
 rtChr:
+    tbz x0, 0, rtChrBad
     asr x1, x0, 1
     stp lr, x1, [sp, -16]!
     mov x0, 24

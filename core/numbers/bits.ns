@@ -1,0 +1,136 @@
+// Bit operations and shifts on ints of any size.
+
+func load(name):
+    candidates = [name, "numbers/" + name, "core/numbers/" + name, "../core/numbers/" + name]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/numbers/" + name)
+
+kinds = load("kinds.ns")
+intops = load("intops.ns")
+arith = load("arith.ns")
+
+bigLib = kinds.bigLib
+fail = kinds.fail
+kindOf = kinds.kindOf
+isIntKind = kinds.isIntKind
+mkIntFromMag = kinds.mkIntFromMag
+parts = kinds.parts
+subInts = intops.subInts
+mulInts = intops.mulInts
+divModInts = intops.divModInts
+negInt = intops.negInt
+powInts = intops.powInts
+isNegative = arith.isNegative
+
+// ---------------------------------------------------------------- bit operations
+
+// two's complement of a signed number in base 2^24, little endian, `count` limbs
+func twos(sign, mag, count):
+    limbs = []
+    work = mag
+    while len(work) > 0:
+        qr = bigLib.nsRtMagDivSmall(work, 16777216)
+        push(limbs, qr[1])
+        work = qr[0]
+    while len(limbs) < count:
+        push(limbs, 0)
+    if sign < 0:
+        i = 0
+        carry = 1
+        while i < len(limbs):
+            t = (16777215 - limbs[i]) + carry
+            if t >= 16777216:
+                limbs[i] = t - 16777216
+                carry = 1
+            else:
+                limbs[i] = t
+                carry = 0
+            i += 1
+    return limbs
+
+func fromTwos(limbs):
+    n = len(limbs)
+    negative = limbs[n - 1] >= 8388608
+    work = limbs
+    if negative:
+        work = []
+        carry = 1
+        i = 0
+        while i < n:
+            t = (16777215 - limbs[i]) + carry
+            if t >= 16777216:
+                push(work, t - 16777216)
+                carry = 1
+            else:
+                push(work, t)
+                carry = 0
+            i += 1
+    mag = []
+    i = n - 1
+    while i >= 0:
+        mag = bigLib.nsRtMagAdd(bigLib.nsRtMagMulSmall(mag, 16777216), bigLib.nsRtMagFromInt(work[i]))
+        i -= 1
+    if negative:
+        return mkIntFromMag(-1, mag)
+    return mkIntFromMag(1, mag)
+
+func bitOp(op, a, b):
+    ka = kindOf(a)
+    kb = kindOf(b)
+    if not isIntKind(ka) or not isIntKind(kb):
+        fail("unsupported operand type for bitwise operation")
+    if ka == 0 and kb == 0:
+        r = None
+        if op == "&":
+            r = a & b
+        elif op == "|":
+            r = a | b
+        else:
+            r = a ^ b
+        return r
+    pa = parts(a)
+    pb = parts(b)
+    count = len(pa[1])
+    if len(pb[1]) > count:
+        count = len(pb[1])
+    count = count * 2 + 3
+    la = twos(pa[0], pa[1], count)
+    lb = twos(pb[0], pb[1], count)
+    out = []
+    i = 0
+    while i < count:
+        if op == "&":
+            push(out, la[i] & lb[i])
+        elif op == "|":
+            push(out, la[i] | lb[i])
+        else:
+            push(out, la[i] ^ lb[i])
+        i += 1
+    return fromTwos(out)
+
+func shiftLeft(a, n):
+    if not isIntKind(kindOf(a)) or kindOf(n) != 0:
+        fail("unsupported operand type for <<")
+    if n < 0:
+        fail("negative shift count")
+    if n > 100000000:
+        fail("shift count too large")
+    return mulInts(a, powInts(2, n))
+
+func shiftRight(a, n):
+    if not isIntKind(kindOf(a)) or kindOf(n) != 0:
+        fail("unsupported operand type for >>")
+    if n < 0:
+        fail("negative shift count")
+    if n > 100000000:
+        if isNegative(a):
+            return -1
+        return 0
+    return divModInts(a, powInts(2, n))[0]
+
+func invert(a):
+    return subInts(negInt(a), 1)

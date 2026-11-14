@@ -1,0 +1,160 @@
+// The operators: + - * / // % ** on any mix of ints and floats, plus negation and abs.
+
+func load(name):
+    candidates = [name, "numbers/" + name, "core/numbers/" + name, "../core/numbers/" + name]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/numbers/" + name)
+
+kinds = load("kinds.ns")
+intops = load("intops.ns")
+floatops = load("floatops.ns")
+
+bigLib = kinds.bigLib
+fail = kinds.fail
+BigInt = kinds.BigInt
+FloatBox = kinds.FloatBox
+kindOf = kinds.kindOf
+isIntKind = kinds.isIntKind
+isFloatKind = kinds.isFloatKind
+mkFloat = kinds.mkFloat
+parts = kinds.parts
+toDouble = kinds.toDouble
+addInts = intops.addInts
+subInts = intops.subInts
+mulInts = intops.mulInts
+isZeroInt = intops.isZeroInt
+divModInts = intops.divModInts
+negInt = intops.negInt
+powInts = intops.powInts
+zeroWithSign = floatops.zeroWithSign
+floatOp = floatops.floatOp
+
+// exact a / b as a double, rounded once
+func trueDiv(a, b):
+    ka = kindOf(a)
+    kb = kindOf(b)
+    if ka == 0 and kb == 0:
+        if b == 0:
+            fail("division by zero")
+        if a == 0:
+            return mkFloat(zeroWithSign(b < 0))
+        return mkFloat(a / b)
+    if isZeroInt(b):
+        fail("division by zero")
+    pa = parts(a)
+    pb = parts(b)
+    ma = pa[1]
+    mb = pb[1]
+    sign = pa[0] * pb[0]
+    if len(ma) == 0:
+        return mkFloat(zeroWithSign(sign < 0))
+    if len(ma) <= 2 and len(mb) <= 2:
+        x = bigLib.nsRtMagToFloat(ma)
+        y = bigLib.nsRtMagToFloat(mb)
+        return mkFloat(sign * (x / y))
+    // scale the numerator so the quotient carries at least 70 bits, keep a sticky bit
+    want = len(mb) * 24 - (len(ma) - 1) * 23 + 70
+    shift = 0
+    scaled = ma
+    if want > 0:
+        scaled = bigLib.nsRtMagMul(ma, bigLib.nsRtMagPow([2], want))
+        shift = want
+    qr = bigLib.nsRtMagDivMod(scaled, mb)
+    q = qr[0]
+    if len(qr[1]) > 0:
+        q = bigLib.nsRtMagAdd(bigLib.nsRtMagMulSmall(q, 2), [1])
+        shift += 1
+    f = bigLib.nsRtMagToFloat(q)
+    if f - f != 0:
+        fail("OverflowError: integer division result too large for a float")
+    while shift >= 30:
+        f = f / 1073741824.0
+        shift -= 30
+    while shift > 0:
+        f = f / 2.0
+        shift -= 1
+    if sign < 0:
+        f = 0.0 - f
+    return mkFloat(f)
+
+func binary(op, a, b):
+    ka = kindOf(a)
+    kb = kindOf(b)
+    if ka == 9 or kb == 9:
+        return None
+    if isFloatKind(ka) or isFloatKind(kb):
+        if op == "**" and isIntKind(ka) and isFloatKind(kb):
+            return floatOp(op, toDouble(a), toDouble(b))
+        return floatOp(op, toDouble(a), toDouble(b))
+    // both ints
+    if op == "+":
+        return addInts(a, b)
+    if op == "-":
+        return subInts(a, b)
+    if op == "*":
+        return mulInts(a, b)
+    if op == "/":
+        return trueDiv(a, b)
+    if op == "//":
+        return divModInts(a, b)[0]
+    if op == "%":
+        return divModInts(a, b)[1]
+    if op == "**":
+        if kb == 0 and b >= 0:
+            return powInts(a, b)
+        if kb == 3 and b.sign > 0:
+            if isZeroInt(a) or (str(tipe(a)) == "angka" and (a == 1 or a == 0)):
+                return a
+            fail("exponent too large")
+        if isZeroInt(a):
+            fail("0.0 cannot be raised to a negative power")
+        return mkFloat(toDouble(a) ** toDouble(b))
+    return None
+
+func negate(a):
+    k = kindOf(a)
+    if k == 0:
+        return 0 - a
+    if k == 1:
+        return -a
+    if k == 2:
+        return FloatBox(-a.v)
+    if k == 3:
+        return negInt(a)
+    return None
+
+func absolute(a):
+    k = kindOf(a)
+    if k == 0 or k == 1:
+        if a < 0:
+            return -a
+        return a
+    if k == 2:
+        if a.v < 0:
+            return FloatBox(-a.v)
+        if a.v == 0:
+            return FloatBox(0.0)
+        return a
+    if k == 3:
+        return BigInt(1, a.mag)
+    return None
+
+func isNegative(a):
+    k = kindOf(a)
+    if k == 3:
+        return a.sign < 0
+    if k == 2:
+        return a.v < 0
+    return a < 0
+
+func isZero(a):
+    k = kindOf(a)
+    if k == 3:
+        return False
+    if k == 2:
+        return a.v == 0
+    return a == 0

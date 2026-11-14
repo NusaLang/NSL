@@ -1,0 +1,54 @@
+// The interpreter's numbers. The host engine only has doubles, so:
+//   a whole number up to 2^53 in magnitude is an int and stays a plain host number;
+//   a larger int is a BigInt object;
+//   a float with a fraction (or inf or nan) stays a plain host number;
+//   a float that happens to be whole is a FloatBox, so 1.0 and 1 stay apart.
+// The arithmetic follows Python. The work is split by task under core/numbers/.
+
+func load(name):
+    candidates = [name, "numbers/" + name, "core/numbers/" + name, "../core/numbers/" + name]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/numbers/" + name)
+
+kindsPart = load("kinds.ns")
+arithPart = load("arith.ns")
+comparePart = load("compare.ns")
+convertPart = load("convert.ns")
+textPart = load("text.ns")
+bitsPart = load("bits.ns")
+roundingPart = load("rounding.ns")
+
+kindOf = kindsPart.kindOf
+isNumber = kindsPart.isNumber
+isIntKind = kindsPart.isIntKind
+isFloatKind = kindsPart.isFloatKind
+mkFloat = kindsPart.mkFloat
+mkIntFromMag = kindsPart.mkIntFromMag
+hooks = kindsPart.hooks
+BigInt = kindsPart.BigInt
+FloatBox = kindsPart.FloatBox
+binary = arithPart.binary
+compare = comparePart.compare
+cmpValues = comparePart.cmpValues
+negate = arithPart.negate
+absolute = arithPart.absolute
+isNegative = arithPart.isNegative
+isZero = arithPart.isZero
+toInt = convertPart.toInt
+toFloat = convertPart.toFloat
+intFromText = convertPart.intFromText
+intToText = convertPart.intToText
+floatFromText = convertPart.floatFromText
+toText = textPart.toText
+digitsOf = textPart.digitsOf
+invert = bitsPart.invert
+bitOp = bitsPart.bitOp
+shiftLeft = bitsPart.shiftLeft
+shiftRight = bitsPart.shiftRight
+roundValue = roundingPart.roundValue
+parts = kindsPart.parts
+toDouble = kindsPart.toDouble

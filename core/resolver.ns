@@ -6,7 +6,7 @@ RunCommand = jalankan_perintah
 #   1. "./x" and "../x" only next to the file that imports them; "/x" as is.
 #   2. a bare name: next to the importing file, next to the main script,
 #      then every `nusa_packages` folder from there up to the root, then each
-#      folder of NUSA_PATH (colon separated), then the standard library.
+#      folder of NusaPath (colon separated), then the standard library.
 # For each place the name is tried as `x.ns`, `x/index.ns`, `x/main.ns`.
 # Dots stand for folders: `shop.cart` is `shop/cart`, `.sub` is `./sub`.
 
@@ -31,7 +31,9 @@ func scriptDirectory():
     return currentDirectory()
 
 func stdlibHome():
-    home = GetEnv("NUSA_HOME")
+    home = GetEnv("NusaHome")
+    if home == None:
+        home = GetEnv("NUSA_HOME")
     if home == None:
         return ""
     return home
@@ -113,7 +115,7 @@ func searchRoots(importerDir):
         roots.append(scriptDir)
     for r in packageRoots(importerDir):
         roots.append(r)
-    extra = GetEnv("NUSA_PATH")
+    extra = GetEnv("NusaPath")
     if extra != None and extra != "":
         for r in extra.split(":"):
             if r != "":

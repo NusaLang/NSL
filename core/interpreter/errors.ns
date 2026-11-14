@@ -1,0 +1,114 @@
+# Runtime errors: where they happened, cleaning the engine's traces, and the builtin exception classes.
+
+func loadPart(name):
+    candidates = [name, "interpreter/" + name, "core/interpreter/" + name, "../core/interpreter/" + name]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/interpreter/" + name)
+
+numericPart = loadPart("numeric.ns")
+
+numbersModule = numericPart.numbersModule
+
+# The statement being run, so errors can say where they happened.
+lineState = {"line": 0, "file": ""}
+
+
+func rtError(msg):
+    err = {"pesan": msg, "line": lineState["line"], "file": lineState["file"]}
+    lempar err
+
+
+# Errors raised inside the host engine arrive as a map whose `pesan` carries a
+# call trace. Cut the trace so they look like the runtime's own errors.
+func cleanErrorText(text):
+    cut = text.find("\n  di dalam")
+    fromHost = cut >= 0 or text.startswith("nusantara: error: ")
+    if cut >= 0:
+        text = text[:cut]
+    if not fromHost:
+        return text
+    pos = text.rfind(" (line ")
+    if pos >= 0 and text.endswith(")"):
+        text = text[:pos]
+    if text.startswith("nusantara: error: "):
+        text = text[18:]
+    return text
+
+
+func normalizeError(e):
+    if tipe(e) == "peta" and "pesan" in e and tipe(e["pesan"]) == "teks":
+        cleaned = cleanErrorText(e["pesan"])
+        if cleaned != e["pesan"]:
+            return {"pesan": cleaned}
+    elif tipe(e) == "teks":
+        cleaned = cleanErrorText(e)
+        if cleaned != e:
+            return {"pesan": cleaned}
+    return e
+
+
+# Errors raised by the runtime are plain maps; this says which builtin
+# exception class names they count as for `catch Name`.
+func runtimeErrorMatches(text, name):
+    if name == "Exception" or name == "BaseException" or name == "RuntimeError":
+        return True
+    if name == "ValueError":
+        return text == "invalid number"
+    if name == "ZeroDivisionError" or name == "ArithmeticError":
+        return text == "division by zero"
+    if name == "IndexError" or name == "LookupError":
+        return text == "index out of range"
+    if name == "NameError":
+        return text.startswith("undefined variable")
+    if name == "TypeError":
+        return text.startswith("value is not callable") or text.startswith("Tipe ")
+    return False
+
+
+EXCEPTIONSOURCE = """class BaseException:
+    func __init__(self, pesan = "", detail = None):
+        self.pesan = pesan
+        self.detail = detail
+    func __str__(self):
+        return str(self.pesan)
+class Exception(BaseException):
+    pass
+class RuntimeError(Exception):
+    pass
+class ValueError(Exception):
+    pass
+class TypeError(Exception):
+    pass
+class NameError(Exception):
+    pass
+class AttributeError(Exception):
+    pass
+class LookupError(Exception):
+    pass
+class IndexError(LookupError):
+    pass
+class KeyError(LookupError):
+    pass
+class ArithmeticError(Exception):
+    pass
+class ZeroDivisionError(ArithmeticError):
+    pass
+class NotImplementedError(RuntimeError):
+    pass
+class AssertionError(Exception):
+    pass
+class OSError(Exception):
+    pass
+class IOError(OSError):
+    pass
+class StopIteration(Exception):
+    pass
+"""
+
+
+numbersModule.hooks["fail"] = rtError
+

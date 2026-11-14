@@ -1,0 +1,137 @@
+// Float arithmetic as Python does it: an exact fmod, floor division with signed zeros.
+
+func load(name):
+    candidates = [name, "numbers/" + name, "core/numbers/" + name, "../core/numbers/" + name]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/numbers/" + name)
+
+kinds = load("kinds.ns")
+
+fail = kinds.fail
+mkFloat = kinds.mkFloat
+
+POSZERO = 0.0
+
+NEGZERO = -POSZERO
+
+func signBit(v):
+    if v < 0:
+        return True
+    if v == 0:
+        return v ** -1 < 0
+    return False
+
+func zeroWithSign(negative):
+    if negative:
+        return NEGZERO
+    return POSZERO
+
+# x = m * 2^e with m a whole number of at most 53 bits; x must be finite and not zero
+func decompose(x):
+    e = 0
+    m = x
+    if m < 0:
+        m = -m
+    while m >= 9007199254740992.0:
+        m = m / 2.0
+        e += 1
+    while m < 4503599627370496.0:
+        m = m * 2.0
+        e -= 1
+    return [m, e]
+
+# the exact remainder of x / y with the sign of x, like C's fmod
+func fmodTrunc(x, y):
+    if x != x or y != y:
+        return x + y
+    if x - x != 0:
+        return x - x
+    if y - y != 0:
+        return x
+    if x == 0:
+        return x
+    dx = decompose(x)
+    dy = decompose(y)
+    mx = dx[0]
+    ex = dx[1]
+    my = dy[0]
+    ey = dy[1]
+    neg = x < 0
+    r = 0.0
+    if ex < ey or (ex == ey and mx < my):
+        r = mx
+    else:
+        while ex > ey:
+            d = mx - my
+            if d >= 0:
+                mx = d
+            mx = mx * 2.0
+            ex -= 1
+        if mx >= my:
+            mx = mx - my
+        r = mx
+    while ex <= -30:
+        r = r / 1073741824.0
+        ex += 30
+    while ex < 0:
+        r = r / 2.0
+        ex += 1
+    while ex >= 30:
+        r = r * 1073741824.0
+        ex -= 30
+    while ex > 0:
+        r = r * 2.0
+        ex -= 1
+    if neg:
+        r = -r
+    return r
+
+func floorFloat(x, y):
+    mod = fmodTrunc(x, y)
+    div = (x - mod) / y
+    if mod != 0:
+        if (y < 0) != (mod < 0):
+            div = div - 1.0
+    if div == 0:
+        return zeroWithSign(signBit(x) != signBit(y))
+    fl = div - (div % 1)
+    if div - fl > 0.5:
+        fl = fl + 1
+    return fl
+
+func modFloat(x, y):
+    mod = fmodTrunc(x, y)
+    if mod != 0:
+        if (y < 0) != (mod < 0):
+            mod = mod + y
+        return mod
+    return zeroWithSign(signBit(y))
+
+func floatOp(op, x, y):
+    if op == "+":
+        return mkFloat(x + y)
+    if op == "-":
+        return mkFloat(x - y)
+    if op == "*":
+        return mkFloat(x * y)
+    if op == "/":
+        if y == 0:
+            fail("division by zero")
+        return mkFloat(x / y)
+    if op == "//":
+        if y == 0:
+            fail("division by zero")
+        return mkFloat(floorFloat(x, y))
+    if op == "%":
+        if y == 0:
+            fail("division by zero")
+        return mkFloat(modFloat(x, y))
+    if op == "**":
+        if x == 0 and y < 0:
+            fail("0.0 cannot be raised to a negative power")
+        return mkFloat(x ** y)
+    fail("unsupported operand")

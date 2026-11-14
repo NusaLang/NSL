@@ -1,0 +1,62 @@
+# The slow path of the arithmetic operators, for what the inline code cannot do.
+# The text below is Nusantara source that is compiled into every program that needs it.
+
+TEXT = """func nsRtNumOp(op, a, b):
+    ka = nsKind(a)
+    kb = nsKind(b)
+    if op == 6:
+        pa = nsRtParts(a)
+        return nsRtMakeInt(0 - pa[0], pa[1])
+    if op == 12:
+        pa = nsRtParts(a)
+        s = nsRtBigAdd(pa[0], pa[1], 1, [1])
+        return nsRtMakeInt(0 - s[0], s[1])
+    if ka == 1 or kb == 1:
+        if op >= 7:
+            lempar {"pesan": "unsupported operand type for bitwise operation"}
+        return nsRtFloatOp(op, nsRtToFloat(a), nsRtToFloat(b))
+    pa = nsRtParts(a)
+    pb = nsRtParts(b)
+    if op == 0:
+        r = nsRtBigAdd(pa[0], pa[1], pb[0], pb[1])
+        return nsRtMakeInt(r[0], r[1])
+    if op == 1:
+        r = nsRtBigSub(pa[0], pa[1], pb[0], pb[1])
+        return nsRtMakeInt(r[0], r[1])
+    if op == 2:
+        r = nsRtBigMul(pa[0], pa[1], pb[0], pb[1])
+        return nsRtMakeInt(r[0], r[1])
+    if op == 3:
+        return nsRtTrueDiv(pa, pb)
+    if op == 4 or op == 5:
+        if len(pb[1]) == 0:
+            lempar {"pesan": "division by zero"}
+        r = nsRtBigDivMod(pa[0], pa[1], pb[0], pb[1])
+        if op == 5:
+            return nsRtMakeInt(r[0], r[1])
+        return nsRtMakeInt(r[2], r[3])
+    if op == 7 or op == 8:
+        if nsKind(b) == 6:
+            if pb[0] < 0:
+                lempar {"pesan": "negative shift count"}
+            if op == 8:
+                if pa[0] < 0:
+                    return -1
+                return 0
+            lempar {"pesan": "shift count too large"}
+        if b < 0:
+            lempar {"pesan": "negative shift count"}
+        if b > 100000000:
+            if op == 8:
+                if pa[0] < 0:
+                    return -1
+                return 0
+            lempar {"pesan": "shift count too large"}
+        two = nsRtMagPow([2], b)
+        if op == 7:
+            r = nsRtBigMul(pa[0], pa[1], 1, two)
+            return nsRtMakeInt(r[0], r[1])
+        r = nsRtBigDivMod(pa[0], pa[1], 1, two)
+        return nsRtMakeInt(r[0], r[1])
+    return nsRtBitOp(op, pa, pb)
+"""

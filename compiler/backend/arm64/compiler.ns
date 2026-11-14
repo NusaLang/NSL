@@ -492,6 +492,7 @@ class Arm64Compiler:
         self.loops = []
         self.tryDepth = 0
         self.exactInts = False
+        self.compact = False
         self.forceLocal = False
         self.moduleAssigned = {}
         self.externalFields = {}
@@ -569,6 +570,14 @@ class Arm64Compiler:
         if name in self.aliasOf:
             return self.aliasOf[name]
         return name
+
+    func bigintSource(self):
+        home = resolverModule.stdlibHome()
+        candidates = [home + "/core/bigint.ns", "core/bigint.ns", "../core/bigint.ns", "experiment/core/bigint.ns"]
+        for c in candidates:
+            if FileAda(c):
+                return BacaFile(c)
+        fail("cannot find core/bigint.ns")
 
     func processImports(self, tree):
         self.importIndex = {}
@@ -752,7 +761,7 @@ class Arm64Compiler:
             self.emit("ldr " + reg + ", =" + str(value))
 
     func smallInt(self, e):
-        if e.type != "NUMBER" or e.isFloat:
+        if e.type != "NUMBER" or e.isFloat or e.big != None:
             return False
         v = e.value
         return v == int(v) and int(v) < 1000000000 and int(v) > -1000000000
@@ -870,7 +879,7 @@ class Arm64Compiler:
             for c in info["classStmts"]:
                 self.registerClass(c)
                 classStmts.append(c)
-        preludeParser = Parser(Lexer(preludeModule.PRELUDE).tokenize())
+        preludeParser = Parser(Lexer(preludeModule.PRELUDE + "\n" + preludeModule.PRELUDEGLUE + "\n" + self.bigintSource()).tokenize())
         for pf in preludeParser.parse():
             if pf.type == "FUNC":
                 self.funcs[pf.name] = len(pf.params)
@@ -925,21 +934,45 @@ class Arm64Compiler:
         self.emit("add x3, x3, x2, lsl 3")
         self.emit("ldr x1, =gEnvp")
         self.emit("str x3, [x1]")
+        tryLbl = self.newLabel()
+        okLbl = self.newLabel()
+        doneLbl = self.newLabel()
+        self.emit("ldr x9, =1073741824")
+        self.label(tryLbl)
         self.emit("mov x0, 0")
-        self.emit("ldr x1, =1073741824")
+        self.emit("mov x1, x9")
         self.emit("mov x2, 3")
         self.emit("ldr x3, =16418")
         self.emit("mov x4, -1")
         self.emit("mov x5, 0")
         self.emit("mov x8, 222")
         self.emit("svc #0")
-        self.emit("ldr x2, =262144")
-        self.emit("add x2, x0, x2")
+        self.emit("mov x10, -4095")
+        self.emit("cmp x0, x10")
+        self.emit("b.lo " + okLbl)
+        self.emit("lsr x9, x9, 1")
+        self.emit("ldr x2, =1048576")
+        self.emit("cmp x9, x2")
+        self.emit("b.hs " + tryLbl)
+        self.emit("mov x2, sp")
+        self.emit("ldr x3, =2097152")
+        self.emit("sub x2, x2, x3")
         self.emit("ldr x1, =stackLimit")
         self.emit("str x2, [x1]")
-        self.emit("ldr x2, =1073741824")
-        self.emit("add x2, x0, x2")
+        self.emit("b " + doneLbl)
+        self.label(okLbl)
+        self.emit("mov x10, x0")
+        self.emit("mov x1, 65536")
+        self.emit("mov x2, 0")
+        self.emit("mov x8, 226")
+        self.emit("svc #0")
+        self.emit("ldr x2, =262144")
+        self.emit("add x2, x10, x2")
+        self.emit("ldr x1, =stackLimit")
+        self.emit("str x2, [x1]")
+        self.emit("add x2, x10, x9")
         self.emit("mov sp, x2")
+        self.label(doneLbl)
         self.emit("bl rtInit")
         self.emit("bl rtSysInit")
         for s in mainStmts:
@@ -991,6 +1024,7 @@ class Arm64Compiler:
 
     func genFunc(self, f, label, plainName):
         self.exactInts = plainName.startswith("nsRt")
+        self.compact = self.exactInts
         self.inFn = True
         self.fnName = label
         self.params = {}
@@ -1044,6 +1078,7 @@ class Arm64Compiler:
         tail.append("    ret")
         self.inFn = False
         self.exactInts = False
+        self.compact = False
         return "\n".join(head + loads + bodyLines + tail + self.cold + ["    .ltorg"])
 
     func genBlock(self, node):
@@ -1078,6 +1113,21 @@ class Arm64Compiler:
                 self.emit("mov x1, x0")
                 self.pop("x0")
             cold = self.newLabel()
+            if self.compact:
+                # the runtime's own code favours size: one call, no inline fast path
+                compactOp = e.op
+                if e.op == ">" or e.op == ">=":
+                    self.emit("mov x2, x0")
+                    self.emit("mov x0, x1")
+                    self.emit("mov x1, x2")
+                    compactOp = "<" if e.op == ">" else "<="
+                self.emit("bl rtCmp")
+                if e.op != "==" and e.op != "!=":
+                    self.emit("cmp x0, 3")
+                    self.emit("b.eq rtCmpTypeError")
+                self.emit("cmp x0, 0")
+                self.emit(JUMPS[compactOp] + " " + falseLabel)
+                return None
             back = self.newLabel()
             self.emit("and x2, x0, x1")
             self.emit("tbz x2, 0, " + cold)
@@ -1085,9 +1135,19 @@ class Arm64Compiler:
             self.emit(JUMPS[e.op] + " " + falseLabel)
             self.label(back)
             self.cold.append(cold + ":")
+            jumpOp = e.op
+            if e.op == ">" or e.op == ">=":
+                # b < a and b <= a keep an unordered nan on the false side
+                self.cold.append("    mov x2, x0")
+                self.cold.append("    mov x0, x1")
+                self.cold.append("    mov x1, x2")
+                jumpOp = "<" if e.op == ">" else "<="
             self.cold.append("    bl rtCmp")
+            if e.op != "==" and e.op != "!=":
+                self.cold.append("    cmp x0, 3")
+                self.cold.append("    b.eq rtCmpTypeError")
             self.cold.append("    cmp x0, 0")
-            self.cold.append("    " + JUMPS[e.op] + " " + falseLabel)
+            self.cold.append("    " + JUMPS[jumpOp] + " " + falseLabel)
             self.cold.append("    b " + back)
         elif e.type == "BINARY" and (e.op == "and" or e.op == "&&"):
             self.genCond(e.left, falseLabel)
@@ -1275,6 +1335,14 @@ class Arm64Compiler:
                 self.varStore(curName, "x0")
                 self.genExpr(rangeArgs[1])
                 self.varStore(stopName, "x0")
+            rangeOk = self.newLabel()
+            self.varLoad(curName, "x0")
+            self.varLoad(stopName, "x1")
+            self.emit("and x2, x0, x1")
+            self.emit("tbnz x2, 0, " + rangeOk)
+            self.emit("ldr x0, =strRangeInt")
+            self.emit("bl rtFail")
+            self.label(rangeOk)
             self.loops.append([cont, end, self.tryDepth])
             self.label(top)
             self.varLoad(curName, "x0")
@@ -1414,7 +1482,7 @@ class Arm64Compiler:
 
     func genArith(self, op, e):
         self.genOperands(e)
-        if op == "+" or op == "-":
+        if (op == "+" or op == "-") and not self.compact:
             cold = self.newLabel()
             back = self.newLabel()
             self.emit("and x2, x0, x1")
@@ -1461,8 +1529,11 @@ class Arm64Compiler:
             v = e.value
             if e.isFloat:
                 self.emit("ldr x0, =" + self.floatConst(v))
-            elif v == int(v) and (int(v) >= INTLIMIT or int(v) <= 0 - INTLIMIT):
-                self.emit("ldr x0, =" + self.floatConst(v))
+            elif e.big != None:
+                self.emit("ldr x0, =" + self.internString(e.big))
+                self.push("x0")
+                self.emit("bl fnnsRtBigLit")
+                self.emit("add sp, sp, 16")
             elif v == int(v) and (int(v) > 1000000000000000 or int(v) < -1000000000000000):
                 self.emit("ldr x0, =" + str(int(v)))
                 self.emit("lsl x0, x0, 1")
@@ -1954,6 +2025,21 @@ class Arm64Compiler:
         elif name == "floatParts":
             self.genExpr(args[0])
             self.emit("bl rtFloatParts")
+        elif name == "nsKind" or name == "nsBigLen" or name == "nsBigSign":
+            self.genExpr(args[0])
+            helper = "rtKind"
+            if name == "nsBigLen":
+                helper = "rtBigLen"
+            elif name == "nsBigSign":
+                helper = "rtBigSign"
+            self.emit("bl " + helper)
+        elif name == "nsBigGet" or name == "nsBigBox":
+            self.genExpr(args[0])
+            self.push("x0")
+            self.genExpr(args[1])
+            self.emit("mov x1, x0")
+            self.pop("x0")
+            self.emit("bl " + ("rtBigGet" if name == "nsBigGet" else "rtBigBox"))
         elif name == "intDiv":
             self.genExpr(args[0])
             self.push("x0")

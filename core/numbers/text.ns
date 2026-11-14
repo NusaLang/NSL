@@ -1,0 +1,202 @@
+// Printing numbers: the shortest digits that read back, and exact digits for denormals.
+
+func load(name):
+    candidates = [name, "numbers/" + name, "core/numbers/" + name, "../core/numbers/" + name]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/numbers/" + name)
+
+kinds = load("kinds.ns")
+floatops = load("floatops.ns")
+convert = load("convert.ns")
+
+bigLib = kinds.bigLib
+kindOf = kinds.kindOf
+decompose = floatops.decompose
+intToText = convert.intToText
+
+// digits and decimal point position of the shortest text that reads back as x:
+// the value is 0.DIGITS * 10^point
+func digitsOf(x):
+    ax = x
+    if ax < 0:
+        ax = -ax
+    if ax != 0 and ax < 2.2250738585072014e-308:
+        d = denormalDigits(ax)
+        return [x < 0, d[0], d[1]]
+    s = str(x)
+    neg = False
+    if s.startswith("-"):
+        neg = True
+        s = s[1:]
+    exp = 0
+    ePos = s.find("e")
+    if ePos >= 0:
+        exp = int(s[ePos + 1:])
+        s = s[:ePos]
+    dot = s.find(".")
+    intPart = s
+    frac = ""
+    if dot >= 0:
+        intPart = s[:dot]
+        frac = s[dot + 1:]
+    digits = intPart + frac
+    point = len(intPart) + exp
+    // drop leading zeros
+    lead = 0
+    while lead < len(digits) - 1 and digits[lead] == "0":
+        lead += 1
+    digits = digits[lead:]
+    point -= lead
+    // drop trailing zeros
+    while len(digits) > 1 and digits[len(digits) - 1] == "0":
+        digits = digits[:len(digits) - 1]
+    if digits == "0":
+        point = 1
+    if len(digits) > 15:
+        short = shortest(x, digits, point)
+        digits = short[0]
+        point = short[1]
+    return [neg, digits, point]
+
+// Exact digits of a denormal, which the host cannot print or read back.
+// x = m * 2^e, so x = m * 5^k / 10^k with k = -e.
+func denormalDigits(x):
+    d = decompose(x)
+    k = 0 - d[1]
+    m = bigLib.nsRtMagFromStr(str(d[0]))
+    exact = bigLib.nsRtMagMul(m, bigLib.nsRtMagPow([5], k))
+    ds = bigLib.nsRtMagToStr(exact)
+    point = len(ds) - k
+    # the half spacing between denormals is 2^-1075
+    half = bigLib.nsRtMagPow([2], 1075)
+    n = 1
+    while n <= len(ds):
+        r = roundDigits(ds, n)
+        cand = r[0]
+        t = n - (point + r[1])
+        c = bigLib.nsRtMagFromStr(cand)
+        left = bigLib.nsRtMagMul(c, bigLib.nsRtMagPow([10], k))
+        right = bigLib.nsRtMagMul(exact, bigLib.nsRtMagPow([10], t))
+        diff = []
+        if bigLib.nsRtMagCmp(left, right) >= 0:
+            diff = bigLib.nsRtMagSub(left, right)
+        else:
+            diff = bigLib.nsRtMagSub(right, left)
+        scaledDiff = bigLib.nsRtMagMul(diff, half)
+        bound = bigLib.nsRtMagPow([10], t + k)
+        if bigLib.nsRtMagCmp(scaledDiff, bound) <= 0:
+            while len(cand) > 1 and cand[len(cand) - 1] == "0":
+                cand = cand[:len(cand) - 1]
+            return [cand, point + r[1]]
+        n += 1
+    return [ds, point]
+
+// The first n digits of ds, rounded half up. Returns [digits, point change].
+func roundDigits(ds, n):
+    head = ds[:n]
+    if len(ds) > n and ds[n] >= "5":
+        # add one at the last kept digit
+        chars = []
+        for ch in head:
+            chars.append(int(ch))
+        i = n - 1
+        while i >= 0:
+            if chars[i] == 9:
+                chars[i] = 0
+                i -= 1
+            else:
+                chars[i] += 1
+                break
+        out = ""
+        for d in chars:
+            out += str(d)
+        if i < 0:
+            return ["1" + out[:n - 1], 1]
+        return [out, 0]
+    return [head, 0]
+
+// the fewest digits that still read back as the same double
+func shortest(x, ds, point):
+    target = x
+    if target < 0:
+        target = -target
+    if target < 2.3e-308:
+        # the host cannot read denormals back, so its own digits stand
+        return [ds, point]
+    lo = 1
+    hi = len(ds)
+    if hi > 17:
+        hi = 17
+    best = None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        r = roundDigits(ds, mid)
+        cand = r[0]
+        p = point + r[1]
+        text = cand + "e" + str(p - len(cand))
+        if float(text) == target:
+            best = [cand, p]
+            hi = mid - 1
+        else:
+            lo = mid + 1
+    if best == None:
+        r = roundDigits(ds, 17)
+        best = [r[0], point + r[1]]
+    cand = best[0]
+    while len(cand) > 1 and cand[len(cand) - 1] == "0":
+        cand = cand[:len(cand) - 1]
+    return [cand, best[1]]
+
+func floatText(x):
+    if x != x:
+        return "nan"
+    if x - x != 0:
+        if x < 0:
+            return "-inf"
+        return "inf"
+    if x == 0:
+        // the host prints -0.0 as 0, but x ** -1 shows the sign
+        if x ** -1 < 0:
+            return "-0.0"
+        return "0.0"
+    d = digitsOf(x)
+    neg = d[0]
+    digits = d[1]
+    point = d[2]
+    out = ""
+    if point > 16 or point < -3:
+        out = digits[0]
+        if len(digits) > 1:
+            out += "." + digits[1:]
+        e = point - 1
+        sign = "+"
+        if e < 0:
+            sign = "-"
+            e = 0 - e
+        es = str(e)
+        if len(es) < 2:
+            es = "0" + es
+        out += "e" + sign + es
+    elif point <= 0:
+        out = "0." + "0" * (0 - point) + digits
+    elif point >= len(digits):
+        out = digits + "0" * (point - len(digits)) + ".0"
+    else:
+        out = digits[:point] + "." + digits[point:]
+    if neg:
+        return "-" + out
+    return out
+
+func toText(v):
+    k = kindOf(v)
+    if k == 0:
+        return str(v)
+    if k == 3:
+        return intToText(v)
+    if k == 2:
+        return floatText(v.v)
+    return floatText(v)

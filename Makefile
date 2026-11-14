@@ -56,7 +56,7 @@ test: $(BIN)
 		case "$$f" in *webServer.ns) continue ;; esac; \
 		echo "=== $$f ==="; \
 		./$(BIN) $$f > .out.native 2>&1 || { cat .out.native; rm -f .out.native .out.interp; exit 1; }; \
-		NUSA_INTERP=1 ./$(BIN) $$f > .out.interp 2>&1 || { cat .out.interp; rm -f .out.native .out.interp; exit 1; }; \
+		NusaInterp=1 ./$(BIN) $$f > .out.interp 2>&1 || { cat .out.interp; rm -f .out.native .out.interp; exit 1; }; \
 		cmp -s .out.native .out.interp || { echo "native and interpreter output differ for $$f"; diff .out.native .out.interp; rm -f .out.native .out.interp; exit 1; }; \
 	done; rm -f .out.native .out.interp
 	@echo "All examples ran, native and interpreter output match."

@@ -116,6 +116,10 @@ class X86Encoder:
         rexX = 0
         rexB = 0
         if base == -1 and index == -1:
+            if hasSym:
+                # Position independent: the address is relative to the next instruction.
+                self.ripTarget = disp
+                return {"rexX": 0, "rexB": 0, "bytes": [low * 8 + 5, 0, 0, 0, 0], "rip": True}
             return {"rexX": 0, "rexB": 0, "bytes": [low * 8 + 4, 37] + le(disp, 4)}
         if base == -1:
             rexX = index // 8
@@ -158,6 +162,8 @@ class X86Encoder:
             rexX = mb["rexX"]
             rexB = mb["rexB"]
             tail = mb["bytes"]
+            if "rip" in mb:
+                self.ripFrom = len(prefix) + len(opc) + 1 + (1 if (64 + w * 8 + rexR * 4 + rexX * 2 + rexB != 64 or force) else 0)
         out = []
         out.extend(prefix)
         rex = 64 + w * 8 + rexR * 4 + rexX * 2 + rexB
@@ -168,6 +174,18 @@ class X86Encoder:
         return out
 
     func encodeAt(self, st):
+        self.ripFrom = -1
+        bs = self.encodeRaw(st)
+        if self.ripFrom >= 0 and not self.sizing:
+            next = self.asm.textBase + st["off"] + len(bs)
+            d = le(self.ripTarget - next, 4)
+            k = 0
+            while k < 4:
+                bs[self.ripFrom + k] = d[k]
+                k += 1
+        return bs
+
+    func encodeRaw(self, st):
         m = st["mnem"]
         ops = []
         for o in st["ops"]:

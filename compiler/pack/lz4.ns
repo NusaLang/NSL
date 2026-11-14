@@ -1,0 +1,78 @@
+# LZ4 block compression in plain Nusantara. The stubs that unpack the result are
+# a few dozen instructions, which is what makes packing worth it for small programs.
+
+HASHSIZE = 65536
+
+func key4(data, i):
+    return data[i] + data[i + 1] * 256 + data[i + 2] * 65536 + data[i + 3] * 16777216
+
+func hash4(k):
+    return ((k * 2654435761) // 65536) % HASHSIZE
+
+# Appends the length bytes that continue a nibble that reached 15.
+func putExtra(out, n):
+    while n >= 255:
+        out.append(255)
+        n -= 255
+    out.append(n)
+
+func emit(out, data, litStart, litEnd, offset, matchLen):
+    litLen = litEnd - litStart
+    token = 0
+    if litLen >= 15:
+        token = 15 * 16
+    else:
+        token = litLen * 16
+    if matchLen > 0:
+        m = matchLen - 4
+        if m >= 15:
+            token += 15
+        else:
+            token += m
+    out.append(token)
+    if litLen >= 15:
+        putExtra(out, litLen - 15)
+    i = litStart
+    while i < litEnd:
+        out.append(data[i])
+        i += 1
+    if matchLen > 0:
+        out.append(offset % 256)
+        out.append(offset // 256)
+        if matchLen - 4 >= 15:
+            putExtra(out, matchLen - 4 - 15)
+
+# data is a list of byte values; the result is a list of byte values
+func compress(data):
+    n = len(data)
+    out = []
+    table = {}
+    anchor = 0
+    i = 0
+    limit = n - 8
+    while i < limit:
+        k = key4(data, i)
+        h = hash4(k)
+        cand = -1
+        if h in table:
+            cand = table[h]
+        table[h] = i
+        if cand >= 0 and i - cand < 65536 and key4(data, cand) == k:
+            length = 4
+            while i + length < n and data[cand + length] == data[i + length]:
+                length += 1
+            emit(out, data, anchor, i, i - cand, length)
+            # index a few positions inside the match so later text can find them
+            j = i + 1
+            stop = i + length
+            if stop > limit:
+                stop = limit
+            while j < stop:
+                table[hash4(key4(data, j))] = j
+                j += 2
+            i += length
+            anchor = i
+        else:
+            i += 1
+    emit(out, data, anchor, n, 0, 0)
+    return out

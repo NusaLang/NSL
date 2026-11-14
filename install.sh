@@ -17,8 +17,8 @@ install_prebuilt() {
     ASSET="$1"
     PLUGIN_ASSET="$2"
     command -v curl >/dev/null 2>&1 || fail "curl tidak ditemukan."
-    INSTALL_DIR="${NUSA_INSTALL_DIR:-$HOME/.local/bin}"
-    DATA_DIR="${NUSA_DATA_DIR:-$HOME/.local/share/nusa}"
+    INSTALL_DIR="${NusaInstallDir:-$HOME/.local/bin}"
+    DATA_DIR="${NusaDataDir:-$HOME/.local/share/nusa}"
     mkdir -p "$INSTALL_DIR"
 
     info "Ambil bundle ($ASSET.tar.gz) ..."
@@ -65,7 +65,7 @@ UNAME_M="$(uname -m)"
 case "$UNAME_S" in
     MINGW*|MSYS*|CYGWIN*)
         bold "Nusantara -- Windows"
-        INSTALL_DIR="${NUSA_INSTALL_DIR:-$HOME/.nusa}"
+        INSTALL_DIR="${NusaInstallDir:-$HOME/.nusa}"
         mkdir -p "$INSTALL_DIR"
         info "Ambil bundle ($RELEASE_BASE/nusa-windows-x86_64.tar.gz) ..."
         TMP_TGZ="$(mktemp)"
@@ -103,7 +103,7 @@ else
     info "Belum ada binary jadi buat $UNAME_S/$UNAME_M -- build dari source ..."
     make -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"
     make plugins || info "Sebagian/semua plugin gagal dibuild -- nusa tetap jalan, cuma fitur muat_plugin() yang kena."
-    INSTALL_DIR="${NUSA_INSTALL_DIR:-$HOME/.local/bin}"
+    INSTALL_DIR="${NusaInstallDir:-$HOME/.local/bin}"
     mkdir -p "$INSTALL_DIR"
     cp nusantara "$INSTALL_DIR/nusa.new"
     mv "$INSTALL_DIR/nusa.new" "$INSTALL_DIR/nusa"

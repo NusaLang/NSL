@@ -1,0 +1,139 @@
+# Float remainder and floor division with Python's rules, and exact int / int.
+# The text below is Nusantara source that is compiled into every program that needs it.
+
+TEXT = """# Exact remainder of two doubles with the sign of the divisor, like fmod plus
+# the usual sign fix. Long division on the mantissas, so it stays exact for any
+# magnitude.
+func nsRtFmod(x, y):
+    px = floatParts(x)
+    py = floatParts(y)
+    if px[3] == 2:
+        return x
+    if py[3] == 2:
+        return y
+    if px[3] == 1:
+        return x - x
+    if py[3] != 0:
+        return x
+    mx = px[1]
+    ex = px[2]
+    my = py[1]
+    ey = py[2]
+    if my == 0:
+        lempar {"pesan": "division by zero"}
+    if mx == 0:
+        return nsRtZero(y < 0)
+    while mx < 4503599627370496:
+        mx = mx * 2
+        ex = ex - 1
+    while my < 4503599627370496:
+        my = my * 2
+        ey = ey - 1
+    neg = px[0] == 1
+    if ex < ey or (ex == ey and mx < my):
+        r = float(mx)
+    else:
+        while ex > ey:
+            d = mx - my
+            if d >= 0:
+                mx = d
+            mx = mx * 2
+            ex = ex - 1
+        if mx >= my:
+            mx = mx - my
+        r = float(mx)
+    step = 1073741824.0
+    while ex <= -30:
+        r = r / step
+        ex = ex + 30
+    while ex < 0:
+        r = r / 2.0
+        ex = ex + 1
+    while ex >= 30:
+        r = r * step
+        ex = ex - 30
+    while ex > 0:
+        r = r * 2.0
+        ex = ex - 1
+    if neg:
+        r = -r
+    if r == 0:
+        return nsRtZero(y < 0)
+    if (y < 0) != (r < 0):
+        r = r + y
+    return r
+
+func nsRtZero(negative):
+    if negative:
+        return -0.0
+    return 0.0
+
+func nsRtSignBit(v):
+    return floatParts(v)[0] == 1
+
+func nsRtFloatFloorDiv(x, y):
+    if y == 0.0:
+        lempar {"pesan": "division by zero"}
+    r = nsRtFmod(x, y)
+    div = (x - r) / y
+    if div == 0.0:
+        return nsRtZero(nsRtSignBit(x) != nsRtSignBit(y))
+    fl = div - nsRtFmod(div, 1.0)
+    if div - fl > 0.5:
+        fl = fl + 1.0
+    return fl
+
+func nsRtFloatOp(op, x, y):
+    if op == 0:
+        return x + y
+    if op == 1:
+        return x - y
+    if op == 2:
+        return x * y
+    if op == 3:
+        if y == 0.0:
+            lempar {"pesan": "division by zero"}
+        return x / y
+    if op == 4:
+        if y == 0.0:
+            lempar {"pesan": "division by zero"}
+        return nsRtFmod(x, y)
+    return nsRtFloatFloorDiv(x, y)
+
+func nsRtTrueDiv(pa, pb):
+    ma = pa[1]
+    mb = pb[1]
+    sign = pa[0] * pb[0]
+    if len(mb) == 0:
+        lempar {"pesan": "division by zero"}
+    if len(ma) == 0:
+        return nsRtZero(sign < 0)
+    if len(ma) <= 2 and len(mb) <= 2:
+        r = nsRtMagToFloat(ma) / nsRtMagToFloat(mb)
+        if sign < 0:
+            return -r
+        return r
+    want = len(mb) * 24 - (len(ma) - 1) * 23 + 70
+    shift = 0
+    scaled = ma
+    if want > 0:
+        scaled = nsRtMagMul(ma, nsRtMagPow([2], want))
+        shift = want
+    qr = nsRtMagDivMod(scaled, mb)
+    q = qr[0]
+    if len(qr[1]) > 0:
+        q = nsRtMagAdd(nsRtMagMulSmall(q, 2), [1])
+        shift += 1
+    f = nsRtMagToFloat(q)
+    if f - f != 0:
+        lempar {"pesan": "integer division result too large for a float"}
+    while shift >= 30:
+        f = f / 1073741824.0
+        shift -= 30
+    while shift > 0:
+        f = f / 2.0
+        shift -= 1
+    if sign < 0:
+        return -f
+    return f
+"""

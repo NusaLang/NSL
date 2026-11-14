@@ -1,0 +1,89 @@
+# Packs a finished program: the image is compressed and put behind a small
+# unpacker (see stubs.ns). The result is still an ordinary position independent
+# executable, with a read-only, executable segment and no writable one.
+
+func loadSibling(name):
+    candidates = [name, "pack/" + name, "compiler/pack/" + name, "../compiler/pack/" + name]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("compiler/pack/" + name)
+
+lz4 = loadSibling("lz4.ns")
+stubs = loadSibling("stubs.ns")
+
+func loadAssembler(name):
+    candidates = ["compiler/assembler/" + name, "assembler/" + name, "../compiler/assembler/" + name, "../assembler/" + name, name]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("compiler/assembler/" + name)
+
+elf = loadAssembler("elf.ns")
+core = loadAssembler("core.ns")
+
+func readLe(bytes, at, count):
+    v = 0
+    i = count - 1
+    while i >= 0:
+        v = v * 256 + bytes[at + i]
+        i -= 1
+    return v
+
+func writeLe(bytes, at, count, value):
+    i = 0
+    while i < count:
+        bytes[at + i] = value % 256
+        value = value // 256
+        i += 1
+
+func pageUp(n):
+    return (n + 4095) // 4096 * 4096
+
+func makeEncoder(arch):
+    if arch == "arm64":
+        return loadAssembler("arm64.ns").Arm64Encoder()
+    return loadAssembler("x86_64.ns").X86Encoder()
+
+# image: the bytes of a finished executable, arch: "x86_64" or "arm64"
+func packImage(image, arch):
+    entry = readLe(image, 24, 8) - elf.BASE
+    textFile = readLe(image, 64 + 32, 8)
+    dataOffset = readLe(image, 64 + 56 + 8, 8)
+    dataFile = readLe(image, 64 + 56 + 32, 8)
+    dataMem = readLe(image, 64 + 56 + 40, 8)
+    packedLength = dataOffset + dataFile
+    memSize = pageUp(dataOffset + dataMem)
+    textSize = pageUp(textFile)
+    body = []
+    i = 0
+    while i < packedLength:
+        body.append(image[i])
+        i += 1
+    payload = lz4.compress(body)
+    text = ""
+    if arch == "arm64":
+        text = stubs.arm64Stub(memSize, textSize, entry, len(payload))
+    else:
+        text = stubs.x86Stub(memSize, textSize, entry, len(payload))
+    assembler = core.Assembler(makeEncoder(arch))
+    stub = assembler.assemble(text)
+    codeEnd = elf.HEADER + assembler.sizes["text"]
+    out = []
+    i = 0
+    while i < codeEnd:
+        out.append(stub[i])
+        i += 1
+    for b in payload:
+        out.append(b)
+    total = len(out)
+    writeLe(out, 64 + 32, 8, total)
+    writeLe(out, 64 + 40, 8, total)
+    # the second segment is not needed: nothing in a packed file has to be writable
+    writeLe(out, 64 + 56 + 32, 8, 0)
+    writeLe(out, 64 + 56 + 40, 8, 0)
+    return out

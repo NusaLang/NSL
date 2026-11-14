@@ -1,8 +1,10 @@
 class NumberExpr:
-    func __init__(self, value, isFloat = False):
+    func __init__(self, value, isFloat = False, big = None):
         self.type = "NUMBER"
         self.value = value
         self.isFloat = isFloat
+        self.big = big
+        self.cached = None
         self.jenis = "ANGKA"
         self.nilai = value
 

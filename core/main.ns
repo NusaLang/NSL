@@ -106,7 +106,7 @@ func readSource(path, skipFirst):
     if not FileAda(path):
         fail("cannot open " + path)
     src = BacaFile(path)
-    marker = "# --- NUSA_CODE ---\n"
+    marker = "# --- NusaCode ---\n"
     pos = src.find(marker)
     if pos != -1:
         return src[pos + len(marker):]

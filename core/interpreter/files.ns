@@ -1,0 +1,34 @@
+# Reading and writing files with the same errors the native runtime gives.
+
+func loadPart(name):
+    candidates = [name, "interpreter/" + name, "core/interpreter/" + name, "../core/interpreter/" + name]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/interpreter/" + name)
+
+hostPart = loadPart("host.ns")
+errorsPart = loadPart("errors.ns")
+
+hostBacaFile = hostPart.hostBacaFile
+hostTulisFile = hostPart.hostTulisFile
+rtError = errorsPart.rtError
+
+func readFileChecked(path):
+    try:
+        return hostBacaFile(path)
+    except e:
+        rtError("BacaFile(): file tidak bisa dibuka")
+
+
+func writeFileChecked(path, text):
+    try:
+        done = hostTulisFile(path, text)
+    except e:
+        rtError("TulisFile(): file tidak bisa ditulis")
+    if done == False:
+        rtError("TulisFile(): file tidak bisa ditulis")
+    return None
+

@@ -1,0 +1,112 @@
+// round() with and without digits, rounding half to even.
+
+func load(name):
+    candidates = [name, "numbers/" + name, "core/numbers/" + name, "../core/numbers/" + name]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/numbers/" + name)
+
+kinds = load("kinds.ns")
+intops = load("intops.ns")
+convert = load("convert.ns")
+text = load("text.ns")
+arith = load("arith.ns")
+
+fail = kinds.fail
+kindOf = kinds.kindOf
+mkFloat = kinds.mkFloat
+toDouble = kinds.toDouble
+addInts = intops.addInts
+mulInts = intops.mulInts
+divModInts = intops.divModInts
+cmpInts = intops.cmpInts
+powInts = intops.powInts
+intFromDouble = intops.intFromDouble
+intFromText = convert.intFromText
+intToText = convert.intToText
+floatFromText = convert.floatFromText
+digitsOf = text.digitsOf
+negate = arith.negate
+isZero = arith.isZero
+
+// ---------------------------------------------------------------- rounding
+
+func roundHalfEven(x):
+    f = x - (x % 1)
+    d = x - f
+    if d < 0.5:
+        return f
+    if d > 0.5:
+        return f + 1
+    if f % 2 == 0:
+        return f
+    return f + 1
+
+func roundValue(a, digits = None):
+    k = kindOf(a)
+    if digits == None:
+        if k == 0 or k == 3:
+            return a
+        x = toDouble(a)
+        if x != x:
+            fail("ValueError: cannot convert float NaN to integer")
+        if x - x != 0:
+            fail("OverflowError: cannot convert float infinity to integer")
+        return intFromDouble(roundHalfEven(x))
+    if k == 0 or k == 3:
+        if digits >= 0:
+            return a
+        p = powInts(10, 0 - digits)
+        qr = divModInts(a, p)
+        twice = mulInts(qr[1], 2)
+        c = cmpInts(twice, p)
+        q = qr[0]
+        if c > 0:
+            q = addInts(q, 1)
+        elif c == 0 and not isZero(divModInts(q, 2)[1]):
+            q = addInts(q, 1)
+        return mulInts(q, p)
+    x = toDouble(a)
+    if x != x or x - x != 0:
+        return a
+    return roundFloatDigits(x, digits)
+
+// round(x, n) for a float, working from the decimal digits of the shortest text
+func roundFloatDigits(x, digits):
+    d = digitsOf(x)
+    neg = d[0]
+    ds = d[1]
+    point = d[2]
+    keep = point + digits
+    if keep >= len(ds):
+        return mkFloat(x)
+    if keep < 0:
+        return mkFloat(0.0)
+    head = ds[:keep]
+    rest = ds[keep:]
+    up = False
+    if rest[0] > "5":
+        up = True
+    elif rest[0] == "5":
+        if len(rest) > 1:
+            up = True
+        else:
+            if keep == 0:
+                up = False
+            else:
+                up = (int(head[len(head) - 1]) % 2) == 1
+    n = 0
+    if keep > 0:
+        n = intFromText(head)
+    if up:
+        n = addInts(n, 1)
+    text = intToText(n)
+    // value = n * 10^(point - keep)
+    exp10 = point - keep
+    result = floatFromText(text + "e" + str(exp10))
+    if neg:
+        return negate(result)
+    return result

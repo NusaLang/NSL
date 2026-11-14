@@ -1,0 +1,245 @@
+# Lists, ranges, maps, comparing and sorting.
+
+func loadPart(name):
+    candidates = [name, "interpreter/" + name, "core/interpreter/" + name, "../core/interpreter/" + name]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/interpreter/" + name)
+
+hostPart = loadPart("host.ns")
+numericPart = loadPart("numeric.ns")
+errorsPart = loadPart("errors.ns")
+objectsPart = loadPart("objects.ns")
+
+hostJalankanPerintah = hostPart.hostJalankanPerintah
+hostAmbilEnv = hostPart.hostAmbilEnv
+numKind = numericPart.numKind
+numCmp = numericPart.numCmp
+rtError = errorsPart.rtError
+isRange = objectsPart.isRange
+
+func makeLazyRange(a, b = None, c = None):
+    start = 0
+    stop = 0
+    step = 1
+    if b == None:
+        stop = a
+    elif c == None:
+        start = a
+        stop = b
+    else:
+        start = a
+        stop = b
+        step = c
+    if step == 0:
+        rtError("range() arg 3 must not be zero")
+    return {"isRange": True, "start": start, "stop": stop, "step": step}
+
+
+func rangeCount(x):
+    start = x["start"]
+    stop = x["stop"]
+    step = x["step"]
+    if step > 0:
+        if start >= stop:
+            return 0
+        return (stop - start + step - 1) // step
+    if start <= stop:
+        return 0
+    return (start - stop - step - 1) // (-step)
+
+
+func nusaLen(x):
+    if isRange(x):
+        return rangeCount(x)
+    return panjang(x)
+
+
+func nusaList(arg = None):
+    if arg == None:
+        return []
+    if isRange(arg):
+        if rangeCount(arg) > 10000000:
+            rtError("rentang(): terlalu besar untuk dialokasikan sebagai list")
+        res = []
+        cur = arg["start"]
+        step = arg["step"]
+        stop = arg["stop"]
+        if step > 0:
+            while cur < stop:
+                res.append(cur)
+                cur += step
+        else:
+            while cur > stop:
+                res.append(cur)
+                cur += step
+        return res
+    res = []
+    for item in arg:
+        res.append(item)
+    return res
+
+
+func nusaEnumerate(items, start = 0):
+    res = []
+    n = start
+    for item in nusaList(items):
+        res.append([n, item])
+        n += 1
+    return res
+
+
+func nusaPeta():
+    return {}
+
+
+func nusaGetenv(name, fallback = None):
+    val = hostAmbilEnv(name)
+    if val == None:
+        return fallback
+    return val
+
+
+func nusaSleep(seconds):
+    hostJalankanPerintah("sleep", [str(seconds)])
+    return None
+
+
+func nusaCompareItems(a, b):
+    if numKind(a) != 9 and numKind(b) != 9:
+        return numCmp(a, b)
+    if a < b:
+        return -1
+    if a > b:
+        return 1
+    return 0
+
+
+func sortKeyed(items, rev):
+    n = len(items)
+    # insertion into a merge sort keeps the order of equal items
+    if n < 2:
+        return items
+    mid = n // 2
+    left = sortKeyed(items[:mid], rev)
+    right = sortKeyed(items[mid:], rev)
+    out = []
+    i = 0
+    j = 0
+    while i < len(left) and j < len(right):
+        c = nusaCompareItems(right[j], left[i])
+        if (c < 0 and not rev) or (c > 0 and rev):
+            out.append(right[j])
+            j += 1
+        else:
+            out.append(left[i])
+            i += 1
+    while i < len(left):
+        out.append(left[i])
+        i += 1
+    while j < len(right):
+        out.append(right[j])
+        j += 1
+    return out
+
+
+func sortList(items, rev):
+    res = sortKeyed(items, rev)
+    n = len(items)
+    i = 0
+    while i < n:
+        items[i] = res[i]
+        i += 1
+    return None
+
+
+func nusaSorted(items, reverse = False):
+    return sortKeyed(list(nusaList(items)), reverse)
+
+
+func listIndex(items, val):
+    i = 0
+    n = len(items)
+    while i < n:
+        if items[i] == val:
+            return i
+        i += 1
+    rtError("ValueError: nilai tidak ada di larik")
+
+
+func listRemove(items, val):
+    idx = listIndex(items, val)
+    k = idx
+    n = len(items)
+    while k < n - 1:
+        items[k] = items[k + 1]
+        k += 1
+    items.pop()
+    return None
+
+
+func listRemoveAt(items, idx):
+    n = len(items)
+    if idx < 0:
+        idx = idx + n
+    if idx < 0 or idx >= n:
+        rtError("index out of range")
+    k = idx
+    while k < n - 1:
+        items[k] = items[k + 1]
+        k += 1
+    items.pop()
+    return None
+
+
+func listInsert(items, idx, val):
+    n = len(items)
+    if idx < 0:
+        idx = idx + n
+        if idx < 0:
+            idx = 0
+    if idx > n:
+        idx = n
+    items.append(None)
+    k = n
+    while k > idx:
+        items[k] = items[k - 1]
+        k -= 1
+    items[idx] = val
+    return None
+
+
+func listReverse(items):
+    n = len(items)
+    i = 0
+    while i < n // 2:
+        tmp = items[i]
+        items[i] = items[n - 1 - i]
+        items[n - 1 - i] = tmp
+        i += 1
+    return None
+
+
+func listExtend(items, more):
+    for m in nusaList(more):
+        items.append(m)
+    return None
+
+
+func mapPop(m, key, fallback = None):
+    if key in m:
+        val = m[key]
+        remaining = {}
+        for k in m:
+            if k != key:
+                remaining[k] = m[k]
+        for k in nusaList(m.keys()):
+            del m[k]
+        for k in remaining:
+            m[k] = remaining[k]
+        return val
+    return fallback
+

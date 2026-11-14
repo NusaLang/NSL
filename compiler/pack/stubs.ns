@@ -1,0 +1,31 @@
+# The unpackers. Each is the whole program a packed binary starts with: it maps
+# memory, expands the LZ4 data that follows it, makes the code part read-only
+# and executable, and jumps to the real entry point with the original stack.
+
+func x86Stub(memSize, textSize, entry, compLen):
+    t = ".intel_syntax noprefix\n.globl _start\n.text\n_start:\n"
+    t += "    mov r15, rsp\n    mov rax, 9\n    xor rdi, rdi\n    mov rsi, " + str(memSize) + "\n"
+    t += "    mov rdx, 3\n    mov r10, 34\n    mov r8, -1\n    xor r9, r9\n    syscall\n"
+    t += "    mov r12, rax\n    lea rsi, [payload]\n    lea rbx, [payload+" + str(compLen) + "]\n    mov rdi, r12\n"
+    t += "decode:\n    movzx rax, byte ptr [rsi]\n    inc rsi\n    mov rcx, rax\n    shr rcx, 4\n    cmp rcx, 15\n    jne lit\n"
+    t += "litx:\n    movzx rdx, byte ptr [rsi]\n    inc rsi\n    add rcx, rdx\n    cmp rdx, 255\n    je litx\n"
+    t += "lit:\n    rep movsb\n    cmp rsi, rbx\n    jae done\n    movzx rdx, word ptr [rsi]\n    add rsi, 2\n    and rax, 15\n    cmp rax, 15\n    jne mt\n"
+    t += "mtx:\n    movzx r8, byte ptr [rsi]\n    inc rsi\n    add rax, r8\n    cmp r8, 255\n    je mtx\n"
+    t += "mt:\n    lea rcx, [rax+4]\n    mov r9, rsi\n    mov rsi, rdi\n    sub rsi, rdx\n    rep movsb\n    mov rsi, r9\n    jmp decode\n"
+    t += "done:\n    mov rax, 10\n    mov rdi, r12\n    mov rsi, " + str(textSize) + "\n    mov rdx, 5\n    syscall\n"
+    t += "    mov rsp, r15\n    lea rax, [r12+" + str(entry) + "]\n    xor rdx, rdx\n    jmp rax\npayload:\n"
+    return t
+
+func arm64Stub(memSize, textSize, entry, compLen):
+    t = ".globl _start\n.text\n_start:\n"
+    t += "    mov x19, sp\n    mov x0, 0\n    ldr x1, =" + str(memSize) + "\n    mov x2, 3\n    mov x3, 34\n    mov x4, -1\n    mov x5, 0\n    mov x8, 222\n    svc #0\n"
+    t += "    mov x20, x0\n    adr x1, payload\n    ldr x5, =" + str(compLen) + "\n    add x5, x1, x5\n    mov x4, x20\n"
+    t += "decode:\n    ldrb w0, [x1]\n    add x1, x1, 1\n    lsr x2, x0, 4\n    cmp x2, 15\n    b.ne lit\n"
+    t += "litx:\n    ldrb w3, [x1]\n    add x1, x1, 1\n    add x2, x2, x3\n    cmp x3, 255\n    b.eq litx\n"
+    t += "lit:\n    cbz x2, litdone\nlitcp:\n    ldrb w3, [x1]\n    add x1, x1, 1\n    strb w3, [x4]\n    add x4, x4, 1\n    sub x2, x2, 1\n    cbnz x2, litcp\n"
+    t += "litdone:\n    cmp x1, x5\n    b.hs done\n    ldrb w3, [x1]\n    ldrb w6, [x1, 1]\n    add x1, x1, 2\n    lsl x6, x6, 8\n    orr x3, x3, x6\n    and x0, x0, 15\n    cmp x0, 15\n    b.ne mt\n"
+    t += "mtx:\n    ldrb w6, [x1]\n    add x1, x1, 1\n    add x0, x0, x6\n    cmp x6, 255\n    b.eq mtx\n"
+    t += "mt:\n    add x0, x0, 4\n    sub x7, x4, x3\nmtcp:\n    ldrb w6, [x7]\n    add x7, x7, 1\n    strb w6, [x4]\n    add x4, x4, 1\n    sub x0, x0, 1\n    cbnz x0, mtcp\n    b decode\n"
+    t += "done:\n    mov x0, x20\n    ldr x1, =" + str(textSize) + "\n    mov x2, 5\n    mov x8, 226\n    svc #0\n"
+    t += "    mov sp, x19\n    ldr x1, =" + str(entry) + "\n    add x0, x20, x1\n    br x0\n    .ltorg\npayload:\n"
+    return t

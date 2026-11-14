@@ -1,0 +1,107 @@
+// Whole-number arithmetic. Plain ints stay host numbers while exact; past 2^53 the work moves to bigint limbs.
+
+func load(name):
+    candidates = [name, "numbers/" + name, "core/numbers/" + name, "../core/numbers/" + name]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/numbers/" + name)
+
+kinds = load("kinds.ns")
+
+bigLib = kinds.bigLib
+TWO53 = kinds.TWO53
+fail = kinds.fail
+kindOf = kinds.kindOf
+mkIntFromMag = kinds.mkIntFromMag
+parts = kinds.parts
+bigResult = kinds.bigResult
+
+func floorDivInts(a, b):
+    // both plain ints
+    r = a % b
+    return (a - r) / b + 0
+
+func addInts(a, b):
+    if kindOf(a) == 0 and kindOf(b) == 0:
+        r = a + b
+        if r < TWO53 and r > 0 - TWO53:
+            return r
+    pa = parts(a)
+    pb = parts(b)
+    return bigResult(bigLib.nsRtBigAdd(pa[0], pa[1], pb[0], pb[1]))
+
+func subInts(a, b):
+    if kindOf(a) == 0 and kindOf(b) == 0:
+        r = a - b
+        if r < TWO53 and r > 0 - TWO53:
+            return r
+    pa = parts(a)
+    pb = parts(b)
+    return bigResult(bigLib.nsRtBigSub(pa[0], pa[1], pb[0], pb[1]))
+
+func mulInts(a, b):
+    if kindOf(a) == 0 and kindOf(b) == 0:
+        r = a * b
+        if r < TWO53 and r > 0 - TWO53:
+            return r + 0
+    pa = parts(a)
+    pb = parts(b)
+    return bigResult(bigLib.nsRtBigMul(pa[0], pa[1], pb[0], pb[1]))
+
+func isZeroInt(v):
+    return str(tipe(v)) == "angka" and v == 0
+
+// [quotient, remainder] floored
+func divModInts(a, b):
+    if isZeroInt(b):
+        fail("division by zero")
+    if kindOf(a) == 0 and kindOf(b) == 0:
+        r = a % b
+        t = a - r
+        if t < TWO53 and t > 0 - TWO53:
+            return [t / b + 0, r + 0]
+    pa = parts(a)
+    pb = parts(b)
+    r = bigLib.nsRtBigDivMod(pa[0], pa[1], pb[0], pb[1])
+    return [mkIntFromMag(r[0], r[1]), mkIntFromMag(r[2], r[3])]
+
+func cmpInts(a, b):
+    if kindOf(a) == 0 and kindOf(b) == 0:
+        if a < b:
+            return -1
+        if a > b:
+            return 1
+        return 0
+    pa = parts(a)
+    pb = parts(b)
+    return bigLib.nsRtBigCmp(pa[0], pa[1], pb[0], pb[1])
+
+func negInt(a):
+    if str(tipe(a)) == "BigInt":
+        return mkIntFromMag(0 - a.sign, a.mag)
+    return 0 - a
+
+func powInts(a, e):
+    // e is a non-negative plain int
+    if str(tipe(e)) != "angka":
+        fail("exponent too large")
+    pa = parts(a)
+    if len(pa[1]) > 0 and e > 100000 and not (len(pa[1]) == 1 and pa[1][0] == 1):
+        fail("exponent too large")
+    r = bigLib.nsRtBigPow(pa[0], pa[1], e)
+    return bigResult(r)
+
+func intFromDouble(x):
+    // x is whole and finite
+    if x < TWO53 and x > 0 - TWO53:
+        return x + 0
+    neg = x < 0
+    if neg:
+        x = 0.0 - x
+    m = bigLib.nsRtMagFromFloat(x)
+    if neg:
+        return mkIntFromMag(-1, m)
+    return mkIntFromMag(1, m)

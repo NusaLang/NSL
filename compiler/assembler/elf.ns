@@ -18,7 +18,7 @@ text = loadAsm("text.ns")
 asmFail = text.asmFail
 
 BASE = 4194304
-HEADER = 176
+HEADER = 232
 B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
 func le(v, n):
@@ -32,7 +32,7 @@ func le(v, n):
 
 func elfHeader(machine, entry):
     h = [127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-    h.extend(le(2, 2))
+    h.extend(le(3, 2))
     h.extend(le(machine, 2))
     h.extend(le(1, 4))
     h.extend(le(entry, 8))
@@ -41,15 +41,15 @@ func elfHeader(machine, entry):
     h.extend(le(0, 4))
     h.extend(le(64, 2))
     h.extend(le(56, 2))
-    h.extend(le(2, 2))
+    h.extend(le(3, 2))
     h.extend(le(64, 2))
     h.extend(le(0, 2))
     h.extend(le(0, 2))
     return h
 
-func progHeader(flags, off, vaddr, filesz, memsz):
+func progHeader(flags, off, vaddr, filesz, memsz, kind = 1):
     h = []
-    h.extend(le(1, 4))
+    h.extend(le(kind, 4))
     h.extend(le(flags, 4))
     h.extend(le(off, 8))
     h.extend(le(vaddr, 8))
@@ -69,6 +69,7 @@ func buildElf(machine, entry, code, data, dataSize, bssSize):
     out.extend(elfHeader(machine, entry))
     out.extend(progHeader(5, 0, BASE, fileText, fileText))
     out.extend(progHeader(6, dataOff, BASE + dataOff, len(data), (dataSize + 7) // 8 * 8 + bssSize))
+    out.extend(progHeader(6, 0, 0, 0, 0, 1685382481))
     while len(out) < HEADER:
         out.append(0)
     out.extend(code)

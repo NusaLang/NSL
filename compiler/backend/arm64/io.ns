@@ -328,7 +328,7 @@ rtFileExists:
     bl rtToCStr
     mov x1, x0
     mov x0, -100
-    mov x2, 0
+    mov x2, 4
     mov x3, 0
     mov x8, 48
     svc #0
@@ -342,6 +342,7 @@ rtFeTrue:
 rtReadFile:
     stp lr, x19, [sp, -16]!
     stp x20, x21, [sp, -16]!
+    stp x22, xzr, [sp, -16]!
     bl rtToCStr
     mov x1, x0
     mov x0, -100
@@ -352,34 +353,61 @@ rtReadFile:
     cmp x0, 0
     b.lt rtRfEmpty
     mov x19, x0
-    mov x0, x19
-    mov x1, 0
-    mov x2, 2
-    mov x8, 62
-    svc #0
-    mov x20, x0
-    mov x0, x19
-    mov x1, 0
-    mov x2, 0
-    mov x8, 62
-    svc #0
-    mov x0, x20
-    bl rtStrNew
+    mov x22, 4096
+    add x0, x22, 16
+    bl rtAlloc
     mov x21, x0
+    mov x20, 0
+rtRfLoop:
+    subs x2, x22, x20
+    b.eq rtRfGrow
     mov x0, x19
     add x1, x21, 16
-    mov x2, x20
+    add x1, x1, x20
     mov x8, 63
     svc #0
+    cmp x0, 0
+    b.le rtRfDone
+    add x20, x20, x0
+    b rtRfLoop
+rtRfGrow:
+    ldr x1, =1073741824
+    cmp x22, x1
+    b.hs rtRfDone
+    lsl x0, x22, 1
+    add x0, x0, 16
+    bl rtAlloc
+    mov x9, x0
+    add x1, x21, 16
+    add x2, x9, 16
+    mov x3, x20
+rtRfCopy:
+    ldr x4, [x1]
+    str x4, [x2]
+    add x1, x1, 8
+    add x2, x2, 8
+    subs x3, x3, 8
+    b.gt rtRfCopy
+    mov x21, x9
+    lsl x22, x22, 1
+    b rtRfLoop
+rtRfDone:
+    mov x0, 2
+    str x0, [x21]
+    str x20, [x21, 8]
     mov x0, x19
     mov x8, 57
     svc #0
     mov x0, x21
     b rtRfRet
 rtRfEmpty:
-    mov x0, 0
-    bl rtStrNew
+    ldp x22, xzr, [sp], 16
+    ldp x20, x21, [sp], 16
+    ldp lr, x19, [sp], 16
+    ldr x0, =strBadRead
+    b rtFail
 rtRfRet:
+    ldp x22, xzr, [sp], 16
     ldp x20, x21, [sp], 16
     ldp lr, x19, [sp], 16
     ret
@@ -395,7 +423,7 @@ rtWriteFile:
     mov x8, 56
     svc #0
     cmp x0, 0
-    b.lt rtWfDone
+    b.lt rtWfFail
     mov x19, x0
     add x1, x20, 16
     ldr x2, [x20, 8]
@@ -409,4 +437,9 @@ rtWfDone:
     ldp x20, xzr, [sp], 16
     ldp lr, x19, [sp], 16
     ret
+rtWfFail:
+    ldp x20, xzr, [sp], 16
+    ldp lr, x19, [sp], 16
+    ldr x0, =strBadWrite
+    b rtFail
 """

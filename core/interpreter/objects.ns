@@ -1,0 +1,77 @@
+# Control-flow signals, user functions and the small checks on what a value is.
+
+func loadPart(name):
+    candidates = [name, "interpreter/" + name, "core/interpreter/" + name, "../core/interpreter/" + name]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/interpreter/" + name)
+
+hostPart = loadPart("host.ns")
+errorsPart = loadPart("errors.ns")
+
+hostCallMethod = hostPart.hostCallMethod
+lineState = errorsPart.lineState
+
+# Statements hand back None, or one of these when control leaves them.
+class ReturnSignal:
+    func __init__(self, val):
+        self.kind = 3
+        self.val = val
+
+
+class LoopSignal:
+    func __init__(self, kind):
+        self.kind = kind
+
+
+BREAKSIGNAL = LoopSignal(1)
+
+CONTINUESIGNAL = LoopSignal(2)
+
+
+class UserFunction:
+    func __init__(self, name, params, body, closure, defaults = None, restName = None, kwName = None):
+        self.isFunction = True
+        self.file = lineState["file"]
+        self.restName = restName
+        self.kwName = kwName
+        self.name = name
+        self.params = params
+        self.body = body
+        self.closure = closure
+        self.defaults = defaults if defaults != None else {}
+
+
+func makeMethodCaller(target, name):
+    func caller(*items):
+        return hostCallMethod(target, name, items)
+    return caller
+
+
+func newClass(name, parent):
+    return {"isClass": True, "name": name, "parent": parent, "parentClass": None, "methods": {}, "attrs": {}, "statics": {}, "classMethods": {}, "props": {}, "setters": {}}
+
+
+BINARYDUNDERS = {"+": "__add__", "-": "__sub__", "*": "__mul__", "/": "__truediv__", "//": "__floordiv__", "%": "__mod__", "**": "__pow__", "<": "__lt__", "<=": "__le__", ">": "__gt__", ">=": "__ge__", "&": "__and__", "|": "__or__", "^": "__xor__", "<<": "__lshift__", ">>": "__rshift__"}
+
+REFLECTEDDUNDERS = {"+": "__radd__", "-": "__rsub__", "*": "__rmul__", "/": "__rtruediv__", "//": "__rfloordiv__", "%": "__rmod__"}
+
+
+func isSignal(e):
+    return hasattr(e, "isReturn") or hasattr(e, "isBreak") or hasattr(e, "isContinue")
+
+
+func isRange(x):
+    return tipe(x) == "peta" and "isRange" in x
+
+
+func isInstance(x):
+    return tipe(x) == "peta" and "isInstance" in x
+
+
+func isClass(x):
+    return tipe(x) == "peta" and "isClass" in x
+

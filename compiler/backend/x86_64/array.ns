@@ -1,4 +1,6 @@
 ARRAY_RUNTIME = """rtArrStr:
+    cmp rsp, [stackLimit]
+    jb rtStackOverflow
     push r12
     push r13
     push r14
@@ -38,6 +40,12 @@ rtArrNew:
     mov qword ptr [rax], 3
     ret
 rtArrPush:
+    test dil, 1
+    jnz rtApNotList
+    cmp rdi, 4
+    jbe rtApNotList
+    cmp qword ptr [rdi], 3
+    jne rtApNotList
     mov rax, [rdi+8]
     cmp rax, [rdi+16]
     jb rtApStore
@@ -73,7 +81,16 @@ rtApStore:
     mov rax, [rdi+8]
     lea rax, [rax*2+1]
     ret
+rtApNotList:
+    lea rdi, [strNeedList]
+    jmp rtFail
 rtArrPop:
+    test dil, 1
+    jnz rtApNotList
+    cmp rdi, 4
+    jbe rtApNotList
+    cmp qword ptr [rdi], 3
+    jne rtApNotList
     mov rax, [rdi+8]
     test rax, rax
     jz rtApEmpty
@@ -83,6 +100,6 @@ rtArrPop:
     mov rax, [rdx+rax*8]
     ret
 rtApEmpty:
-    xor eax, eax
-    ret
+    lea rdi, [strPopEmpty]
+    jmp rtFail
 """

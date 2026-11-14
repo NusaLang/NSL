@@ -98,6 +98,8 @@ rtToStrObj:
     ldr x1, [x0]
     cmp x1, 2
     b.eq rtTsRet
+    cmp x1, 7
+    b.eq rtBigToStr
     cmp x1, 3
     b.eq rtArrStr
     cmp x1, 4
@@ -106,6 +108,13 @@ rtToStrObj:
     b.eq rtFloatStr
     ldr x0, =strObj
 rtTsRet:
+    ret
+rtBigToStr:
+    stp lr, xzr, [sp, -16]!
+    str x0, [sp, -16]!
+    bl fnnsRtBigStr
+    add sp, sp, 16
+    ldp lr, xzr, [sp], 16
     ret
 rtRepr:
     tbnz x0, 0, rtToStr
@@ -124,6 +133,11 @@ rtRepr:
     ldp lr, x19, [sp], 16
     ret
 rtArrStr:
+    ldr x16, =stackLimit
+    ldr x16, [x16]
+    mov x17, sp
+    cmp x17, x16
+    b.lo rtStackOverflow
     stp lr, x19, [sp, -16]!
     stp x20, x21, [sp, -16]!
     mov x19, x0
@@ -156,6 +170,11 @@ rtAsEnd:
     ldp lr, x19, [sp], 16
     ret
 rtMapStr:
+    ldr x16, =stackLimit
+    ldr x16, [x16]
+    mov x17, sp
+    cmp x17, x16
+    b.lo rtStackOverflow
     stp lr, x19, [sp, -16]!
     stp x20, x21, [sp, -16]!
     stp x22, x23, [sp, -16]!
@@ -223,7 +242,22 @@ rtSubstr:
     ldp x20, x21, [sp], 16
     ldp lr, x19, [sp], 16
     ret
+rtNeedStrBad:
+    ldr x0, =strNeedText
+    b rtFail
 rtStrFind:
+    tbnz x0, 0, rtNeedStrBad
+    cmp x0, 4
+    b.ls rtNeedStrBad
+    ldr x9, [x0]
+    cmp x9, 2
+    b.ne rtNeedStrBad
+    tbnz x1, 0, rtNeedStrBad
+    cmp x1, 4
+    b.ls rtNeedStrBad
+    ldr x9, [x1]
+    cmp x9, 2
+    b.ne rtNeedStrBad
     ldr x4, [x0, 8]
     ldr x5, [x1, 8]
     asr x2, x2, 1
@@ -260,6 +294,18 @@ rtSfNotFound:
     mov x0, -1
     ret
 rtStrStartsWith:
+    tbnz x0, 0, rtNeedStrBad
+    cmp x0, 4
+    b.ls rtNeedStrBad
+    ldr x9, [x0]
+    cmp x9, 2
+    b.ne rtNeedStrBad
+    tbnz x1, 0, rtNeedStrBad
+    cmp x1, 4
+    b.ls rtNeedStrBad
+    ldr x9, [x1]
+    cmp x9, 2
+    b.ne rtNeedStrBad
     ldr x4, [x0, 8]
     ldr x5, [x1, 8]
     cmp x5, x4
@@ -277,6 +323,18 @@ rtSwLoop:
     add x6, x6, 1
     b rtSwLoop
 rtStrEndsWith:
+    tbnz x0, 0, rtNeedStrBad
+    cmp x0, 4
+    b.ls rtNeedStrBad
+    ldr x9, [x0]
+    cmp x9, 2
+    b.ne rtNeedStrBad
+    tbnz x1, 0, rtNeedStrBad
+    cmp x1, 4
+    b.ls rtNeedStrBad
+    ldr x9, [x1]
+    cmp x9, 2
+    b.ne rtNeedStrBad
     ldr x4, [x0, 8]
     ldr x5, [x1, 8]
     cmp x5, x4
@@ -296,6 +354,37 @@ rtEwLoop:
     add x6, x6, 1
     b rtEwLoop
 rtStrJoin:
+    tbnz x0, 0, rtSjBad
+    cmp x0, 4
+    b.ls rtSjBad
+    ldr x9, [x0]
+    cmp x9, 2
+    b.ne rtSjBad
+    tbnz x1, 0, rtSjBad
+    cmp x1, 4
+    b.ls rtSjBad
+    ldr x9, [x1]
+    cmp x9, 3
+    b.ne rtSjBad
+    ldr x9, [x1, 8]
+    ldr x10, [x1, 24]
+    mov x11, 0
+rtSjChk:
+    cmp x11, x9
+    b.hs rtSjChkDone
+    ldr x12, [x10, x11, lsl 3]
+    tbnz x12, 0, rtSjBad
+    cmp x12, 4
+    b.ls rtSjBad
+    ldr x13, [x12]
+    cmp x13, 2
+    b.ne rtSjBad
+    add x11, x11, 1
+    b rtSjChk
+rtSjBad:
+    ldr x0, =strJoinBad
+    b rtFail
+rtSjChkDone:
     stp lr, x19, [sp, -16]!
     stp x20, x21, [sp, -16]!
     stp x22, x23, [sp, -16]!
@@ -359,7 +448,24 @@ rtSjDone:
     ldp x20, x21, [sp], 16
     ldp lr, x19, [sp], 16
     ret
+rtSplitEmptySep:
+    ldr x0, =strSplitEmpty
+    b rtFail
 rtStrSplit:
+    tbnz x0, 0, rtNeedStrBad
+    cmp x0, 4
+    b.ls rtNeedStrBad
+    ldr x9, [x0]
+    cmp x9, 2
+    b.ne rtNeedStrBad
+    tbnz x1, 0, rtNeedStrBad
+    cmp x1, 4
+    b.ls rtNeedStrBad
+    ldr x9, [x1]
+    cmp x9, 2
+    b.ne rtNeedStrBad
+    ldr x9, [x1, 8]
+    cbz x9, rtSplitEmptySep
     stp lr, x19, [sp, -16]!
     stp x20, x21, [sp, -16]!
     stp x22, x23, [sp, -16]!

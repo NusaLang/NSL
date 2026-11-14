@@ -1,0 +1,115 @@
+// The kinds of number and the two boxes: a BigInt holds an int past 2^53, a FloatBox a float that happens to be whole.
+
+// The interpreter's numbers. The host engine only has doubles, so:
+//   a whole number up to 2^53 in magnitude is an int and stays a plain host number;
+//   a larger int is a BigInt object;
+//   a float with a fraction (or inf or nan) stays a plain host number;
+//   a float that happens to be whole is a FloatBox, so 1.0 and 1 stay apart.
+// The arithmetic follows Python: / always gives a float, // and % floor, ints never
+// lose digits, int and float compare exactly.
+
+func loadBigint():
+    candidates = ["bigint.ns", "../bigint.ns", "core/bigint.ns", "../core/bigint.ns", "experiment/core/bigint.ns"]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/bigint.ns")
+
+bigLib = loadBigint()
+
+TWO53 = 9007199254740992
+
+LIMIT53 = bigLib.nsRtMagFromStr("9007199254740992")
+
+hooks = {"fail": None}
+
+func fail(msg):
+    if hooks["fail"] != None:
+        hooks["fail"](msg)
+    err = {"pesan": msg}
+    lempar err
+
+class BigInt:
+    func __init__(self, sign, mag):
+        self.sign = sign
+        self.mag = mag
+
+class FloatBox:
+    func __init__(self, v):
+        self.v = v
+
+// 0 int, 1 plain float, 2 boxed float, 3 big int, 9 anything else
+func kindOf(v):
+    t = str(tipe(v))
+    if t == "angka":
+        if v != v:
+            return 1
+        if v - v != 0:
+            return 1
+        if v % 1 == 0:
+            return 0
+        return 1
+    if t == "FloatBox":
+        return 2
+    if t == "BigInt":
+        return 3
+    return 9
+
+func isNumber(v):
+    return kindOf(v) != 9
+
+func isIntKind(k):
+    return k == 0 or k == 3
+
+func isFloatKind(k):
+    return k == 1 or k == 2
+
+func mkFloat(x):
+    if x != x:
+        return x
+    if x - x != 0:
+        return x
+    if x % 1 == 0:
+        return FloatBox(x)
+    return x
+
+func mkIntFromMag(sign, m):
+    n = len(m)
+    if n == 0:
+        return 0
+    if n <= 2:
+        v = m[0]
+        if n == 2:
+            v += m[1] * 10000000
+        return v * sign
+    if n == 3 and bigLib.nsRtMagCmp(m, LIMIT53) < 0:
+        v = m[0] + m[1] * 10000000 + m[2] * 100000000000000
+        return v * sign
+    return BigInt(sign, m)
+
+func parts(v):
+    if str(tipe(v)) == "BigInt":
+        return [v.sign, v.mag]
+    if v < 0:
+        return [-1, bigLib.nsRtMagFromInt(0 - v)]
+    return [1, bigLib.nsRtMagFromInt(v)]
+
+func toDouble(v):
+    t = str(tipe(v))
+    if t == "angka":
+        return v
+    if t == "FloatBox":
+        return v.v
+    f = bigLib.nsRtMagToFloat(v.mag)
+    if f - f != 0 or f != f:
+        fail("OverflowError: int too large to convert to float")
+    if v.sign < 0:
+        return 0.0 - f
+    return f
+
+// ---------------------------------------------------------------- arithmetic
+
+func bigResult(r):
+    return mkIntFromMag(r[0], r[1])

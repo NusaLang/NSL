@@ -24,7 +24,7 @@ for i in range(10):
 ./app                       # no runtime, no dependencies
 ```
 
-`nusa main.ns` works like `go run`: the first run compiles, later runs start from the cache until the source or one of its imports changes. The compiler turns `.ns` source into x86-64 or ARM64 machine code — tagged integers, fixed-offset structs for classes, inline caches for field and method lookups — with its own assembler and ELF writer, so no `as`, `ld`, or C compiler is needed, on Linux or in Termux on Android. Programs that use something the compiler does not support yet (closures, comprehensions, `*args`, `with`, typed `catch`, operator methods, text with non-ASCII characters, sockets, and more) run in the interpreter instead, with identical results; `NUSA_INTERP=1` forces the interpreter.
+`nusa main.ns` works like `go run`: the first run compiles, later runs start from the cache until the source or one of its imports changes. The compiler turns `.ns` source into x86-64 or ARM64 machine code — tagged integers, fixed-offset structs for classes, inline caches for field and method lookups — with its own assembler and ELF writer, so no `as`, `ld`, or C compiler is needed, on Linux or in Termux on Android. Programs that use something the compiler does not support yet (closures, comprehensions, `*args`, `with`, typed `catch`, operator methods, text with non-ASCII characters, sockets, and more) run in the interpreter instead, with identical results; `NusaInterp=1` forces the interpreter. `nusa why file.ns` says which engine a program gets and the reason (for example `interpreter, native: komprehensi`), and `NusaExplain=1` prints the same line when running.
 
 ## Benchmarks
 
@@ -112,7 +112,7 @@ import .price as price            # next to this file; ..x is the folder above
 module = impor(name)              # any text, decided while the program runs
 ```
 
-A name is looked up next to the importing file, next to the main script, in every `nusa_packages` folder from there up to the root (this is where `nusa get` puts packages), in each folder of `NUSA_PATH` (colon separated), and finally in the standard library. Each file runs once, the first time it is imported, and every import of it shares the same module. Cycles are fine: a module sees what the other has defined so far. `__name__` is `"__main__"` in the file you run, so `if __name__ == "__main__":` works. Native builds support imports written as `name = impor("literal")` at the top of a file; programs that import in other ways run in the interpreter. See `examples/imports.ns`.
+A name is looked up next to the importing file, next to the main script, in every `nusa_packages` folder from there up to the root (this is where `nusa get` puts packages), in each folder of `NusaPath` (colon separated), and finally in the standard library. Each file runs once, the first time it is imported, and every import of it shares the same module. Cycles are fine: a module sees what the other has defined so far. `__name__` is `"__main__"` in the file you run, so `if __name__ == "__main__":` works. Native builds support imports written as `name = impor("literal")` at the top of a file; programs that import in other ways run in the interpreter. See `examples/imports.ns`.
 
 ### Classes
 
@@ -123,7 +123,7 @@ Single inheritance with `super()`, class attributes, `@property` with `.setter`,
 - `f"{value:.2f}"`, `"{x}"`-free templates in backticks, slices with steps (`s[::-1]`), `in` on text, lists, and maps.
 - Comprehensions (`[n * n for n in xs if n > 1]`, `{k: v for ...}`), tuple assignment (`a, b = b, a`), `for key, value in pairs`.
 - `try`/`catch`/`finally` with `throw`. Errors raised by the runtime are maps with a `pesan` field. A missing map key reads as `kosong`. `import name`, `from name import x`, decorators, and `print(a, b, sep = "-", end = "")` work as in Python.
-- Numbers are doubles; integer literals above 2^53 are rejected. Native code keeps whole numbers in registers while they stay exact (below 2^53) and switches to doubles beyond that, so results match the interpreter bit for bit.
+- Numbers follow Python. `int` has no limit and never loses digits (`9223372036854775807 + 1` is `9223372036854775808`); `float` is an IEEE double and prints as Python does (`1.0`, `1e+16`, `0.30000000000000004`). `1` and `1.0` are different types, `/` always gives a float, `//` and `%` round toward minus infinity, and `int` and `float` compare exactly (`9007199254740993 == 9007199254740992.0` is false). Native code keeps ints in a register up to 62 bits and switches to exact big numbers beyond that, so native and interpreter print the same digits. See `examples/numbers.ns`.
 
 ## Standard library highlights
 

@@ -1,0 +1,6 @@
+func main():
+    try:
+        value = 1e-5 // {"a": 1}
+    catch e:
+        print("caught")
+main()

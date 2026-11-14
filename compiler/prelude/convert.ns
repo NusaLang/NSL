@@ -1,0 +1,121 @@
+# Moving between tagged ints, big ints, floats and text.
+# The text below is Nusantara source that is compiled into every program that needs it.
+
+TEXT = """func nsRtMakeInt(sign, mag):
+    n = len(mag)
+    if n == 0:
+        return 0
+    if n <= 2:
+        v = mag[0]
+        if n == 2:
+            v += mag[1] * 10000000
+        if sign < 0:
+            return 0 - v
+        return v
+    if n == 3:
+        c = nsRtMagCmp(mag, nsRtMagFromStr("4611686018427387904"))
+        if c < 0:
+            v = mag[0] + mag[1] * 10000000 + mag[2] * 100000000000000
+            if sign < 0:
+                return 0 - v
+            return v
+        if c == 0 and sign < 0:
+            half = 1073741824 * 2147483648
+            return 0 - half - half
+    return nsBigBox(sign, mag)
+
+func nsRtParts(v):
+    if nsKind(v) == 6:
+        n = nsBigLen(v)
+        m = []
+        i = 0
+        while i < n:
+            push(m, nsBigGet(v, i))
+            i += 1
+        return [nsBigSign(v), m]
+    if v < 0:
+        m = nsRtMagAdd(nsRtMagFromInt(0 - (v + 1)), [1])
+        return [-1, m]
+    return [1, nsRtMagFromInt(v)]
+
+func nsRtToFloat(v):
+    k = nsKind(v)
+    if k == 1:
+        return v
+    if k == 6:
+        f = nsRtMagToFloat(nsRtParts(v)[1])
+        if f - f != 0:
+            lempar {"pesan": "int too large to convert to float"}
+        if nsBigSign(v) < 0:
+            return -f
+        return f
+    return float(v)
+
+func nsRtBigStr(v):
+    p = nsRtParts(v)
+    t = nsRtMagToStr(p[1])
+    if p[0] < 0:
+        return "-" + t
+    return t
+
+func nsRtBigLit(text):
+    return nsRtMakeInt(1, nsRtMagFromStr(text))
+
+func nsRtIntFromText(text):
+    t = text
+    i = 0
+    n = len(t)
+    while i < n and (t[i] == " " or t[i] == "\\t" or t[i] == "\\n" or t[i] == "\\r"):
+        i += 1
+    while n > i and (t[n - 1] == " " or t[n - 1] == "\\t" or t[n - 1] == "\\n" or t[n - 1] == "\\r"):
+        n -= 1
+    sign = 1
+    if i < n and (t[i] == "-" or t[i] == "+"):
+        if t[i] == "-":
+            sign = -1
+        i += 1
+    digits = ""
+    while i < n:
+        c = t[i]
+        if c >= "0" and c <= "9":
+            digits = digits + c
+        elif c != "_":
+            lempar {"pesan": "invalid number"}
+        i += 1
+    if len(digits) == 0:
+        lempar {"pesan": "invalid number"}
+    return nsRtMakeInt(sign, nsRtMagFromStr(digits))
+
+func nsRtIntFromFloat(x):
+    p = floatParts(x)
+    if p[3] == 2:
+        lempar {"pesan": "cannot convert float NaN to integer"}
+    if p[3] == 1:
+        lempar {"pesan": "cannot convert float infinity to integer"}
+    m = p[1]
+    e = p[2]
+    sign = 1
+    if p[0] == 1:
+        sign = -1
+    if m == 0:
+        return 0
+    mag = []
+    if e >= 0:
+        mag = nsRtMagMul(nsRtMagFromInt(m), nsRtMagPow([2], e))
+    else:
+        while e < 0 and m % 2 == 0:
+            m = m // 2
+            e += 1
+        if e < 0:
+            lempar {"pesan": "float is not whole"}
+        mag = nsRtMagFromInt(m)
+    return nsRtMakeInt(sign, mag)
+
+# int(x) for a float: the whole part, toward zero
+func nsRtFloatToInt(x):
+    f = nsRtFmod(x, 1.0)
+    fl = x - f
+    if f != 0.0 and x < 0.0:
+        fl = fl + 1.0
+    return nsRtIntFromFloat(fl)
+"""

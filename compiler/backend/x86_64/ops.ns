@@ -118,10 +118,23 @@ rtTypeNull:
     lea rax, [strTypeKosong]
     ret
 rtOrd:
+    test dil, 1
+    jnz rtOrdBad
+    cmp rdi, 4
+    jbe rtOrdBad
+    cmp qword ptr [rdi], 2
+    jne rtOrdBad
+    cmp qword ptr [rdi+8], 0
+    je rtOrdBad
     movzx eax, byte ptr [rdi+16]
     lea rax, [rax*2+1]
     ret
+rtOrdBad:
+    lea rdi, [strBadOrd]
+    jmp rtFail
 rtChr:
+    test dil, 1
+    jz rtChrBad
     sar rdi, 1
     push rdi
     mov rdi, 24
@@ -131,6 +144,9 @@ rtChr:
     mov qword ptr [rax+8], 1
     mov [rax+16], dl
     ret
+rtChrBad:
+    lea rdi, [strBadChr]
+    jmp rtFail
 rtIdxFail:
     lea rdi, [strBadIdx]
     jmp rtFail

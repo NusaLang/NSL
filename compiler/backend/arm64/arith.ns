@@ -30,7 +30,7 @@ rtTrFloat:
     ret
 rtEq:
     cmp x0, x1
-    b.eq rtEqYes
+    b.eq rtEqSame
     tbnz x0, 0, rtEqIntLeft
     tbnz x1, 0, rtEqIntRight
     cmp x0, 4
@@ -39,6 +39,10 @@ rtEq:
     b.ls rtEqNo
     ldr x2, [x0]
     ldr x3, [x1]
+    cmp x2, 7
+    b.eq rtEqNum
+    cmp x3, 7
+    b.eq rtEqNum
     cmp x2, x3
     b.ne rtEqNo
     cmp x2, 6
@@ -65,6 +69,16 @@ rtEqStrLoop:
     b.ne rtEqNo
     add x6, x6, 1
     b rtEqStrLoop
+rtEqSame:
+    tbnz x0, 0, rtEqYes
+    cmp x0, 4
+    b.ls rtEqYes
+    ldr x2, [x0]
+    cmp x2, 6
+    b.ne rtEqYes
+    ldr d0, [x0, 8]
+    fcmp d0, d0
+    b.vs rtEqNo
 rtEqYes:
     mov x0, 1
     ret
@@ -77,20 +91,50 @@ rtEqIntLeft:
     b.ls rtEqNo
     ldr x2, [x1]
     cmp x2, 6
-    b.ne rtEqNo
-    b rtEqMixed
+    b.eq rtEqMixed
+    cmp x2, 7
+    b.eq rtEqNum
+    b rtEqNo
 rtEqIntRight:
     cmp x0, 4
     b.ls rtEqNo
     ldr x2, [x0]
     cmp x2, 6
-    b.ne rtEqNo
+    b.eq rtEqMixed
+    cmp x2, 7
+    b.eq rtEqNum
+    b rtEqNo
 rtEqMixed:
+    mov x3, x0
+    tbnz x0, 0, rtEqMixTag
+    mov x3, x1
+rtEqMixTag:
+    asr x3, x3, 1
+    ldr x4, =9007199254740992
+    add x3, x3, x4
+    lsr x3, x3, 54
+    cbnz x3, rtEqNum
     stp lr, xzr, [sp, -16]!
     bl rtToFloat2
     ldp lr, xzr, [sp], 16
     fcmp d0, d1
     cset x0, eq
+    ret
+rtEqNum:
+    stp lr, xzr, [sp, -16]!
+    bl rtNumCmp
+    ldp lr, xzr, [sp], 16
+    cmp x0, 0
+    cset x0, eq
+    ret
+rtNumCmp:
+    stp lr, xzr, [sp, -16]!
+    str x0, [sp, -16]!
+    str x1, [sp, -16]!
+    bl fnnsRtNumCmp
+    add sp, sp, 32
+    ldp lr, xzr, [sp], 16
+    asr x0, x0, 1
     ret
 rtEqFloat:
     ldr d0, [x0, 8]
@@ -99,6 +143,11 @@ rtEqFloat:
     cset x0, eq
     ret
 rtEqArr:
+    ldr x16, =stackLimit
+    ldr x16, [x16]
+    mov x17, sp
+    cmp x17, x16
+    b.lo rtStackOverflow
     ldr x2, [x0, 8]
     ldr x3, [x1, 8]
     cmp x2, x3
@@ -127,6 +176,11 @@ rtEqArrDone:
     ldp lr, x19, [sp], 16
     ret
 rtEqMap:
+    ldr x16, =stackLimit
+    ldr x16, [x16]
+    mov x17, sp
+    cmp x17, x16
+    b.lo rtStackOverflow
     ldr x2, [x0, 8]
     ldr x3, [x1, 8]
     cmp x2, x3
@@ -184,7 +238,7 @@ rtCmpPos:
     ret
 rtCmpSlow:
     cmp x0, x1
-    b.eq rtCmpEq
+    b.eq rtCmpSame
     tbnz x0, 0, rtCmpMixed
     tbnz x1, 0, rtCmpMixed
     cmp x0, 4
@@ -193,6 +247,10 @@ rtCmpSlow:
     b.ls rtCmpOne
     ldr x2, [x0]
     ldr x3, [x1]
+    cmp x2, 7
+    b.eq rtNumCmp
+    cmp x3, 7
+    b.eq rtNumCmp
     cmp x2, x3
     b.ne rtCmpOne
     cmp x2, 6
@@ -227,17 +285,52 @@ rtCmpLen:
     b.gt rtCmpPos
     mov x0, 0
     ret
+rtCmpSame:
+    tbnz x0, 0, rtCmpEq
+    cmp x0, 4
+    b.ls rtCmpEq
+    ldr x2, [x0]
+    cmp x2, 6
+    b.ne rtCmpEq
+    ldr d0, [x0, 8]
+    fcmp d0, d0
+    b.vs rtCmpNan
 rtCmpEq:
     mov x0, 0
     ret
-rtCmpOne:
-    mov x0, 1
+rtCmpNan:
+    mov x0, 2
     ret
+rtCmpOne:
+    mov x0, 3
+    ret
+rtCmpTypeError:
+    ldr x0, =strBadCmp
+    b rtFail
 rtCmpMixed:
+    mov x3, x0
+    mov x4, x1
+    tbnz x0, 0, rtCmpMixKind
+    mov x3, x1
+    mov x4, x0
+rtCmpMixKind:
+    cmp x4, 4
+    b.ls rtCmpOne
+    ldr x5, [x4]
+    cmp x5, 7
+    b.eq rtNumCmp
+    cmp x5, 6
+    b.ne rtCmpOne
+    asr x3, x3, 1
+    ldr x6, =9007199254740992
+    add x3, x3, x6
+    lsr x3, x3, 54
+    cbnz x3, rtNumCmp
     stp lr, xzr, [sp, -16]!
     bl rtToFloat2
     ldp lr, xzr, [sp], 16
     fcmp d0, d1
+    b.vs rtCmpNan
     b.mi rtCmpNeg
     b.gt rtCmpPos
     mov x0, 0
@@ -246,6 +339,7 @@ rtCmpFloat:
     ldr d0, [x0, 8]
     ldr d1, [x1, 8]
     fcmp d0, d1
+    b.vs rtCmpNan
     b.mi rtCmpNeg
     b.gt rtCmpPos
     mov x0, 0
@@ -310,7 +404,34 @@ rtIsNumYes:
 rtIsNumNo:
     mov x0, 0
     ret
+rtNumSlow:
+    stp lr, xzr, [sp, -16]!
+    lsl x3, x2, 1
+    add x3, x3, 1
+    str x3, [sp, -16]!
+    str x0, [sp, -16]!
+    str x1, [sp, -16]!
+    bl fnnsRtNumOp
+    add sp, sp, 48
+    ldp lr, xzr, [sp], 16
+    ret
 rtArith:
+    and x3, x0, x1
+    tbnz x3, 0, rtNumSlow
+    tbnz x0, 0, rtArithChkB
+    cmp x0, 4
+    b.ls rtArithChkB
+    ldr x3, [x0]
+    cmp x3, 7
+    b.eq rtNumSlow
+rtArithChkB:
+    tbnz x1, 0, rtArithGo
+    cmp x1, 4
+    b.ls rtArithGo
+    ldr x3, [x1]
+    cmp x3, 7
+    b.eq rtNumSlow
+rtArithGo:
     stp lr, x19, [sp, -16]!
     stp x20, x21, [sp, -16]!
     mov x19, x0
@@ -321,6 +442,8 @@ rtArith:
     mov x0, x20
     bl rtIsNum
     cbz x0, rtArithOther
+    cmp x21, 4
+    b.hs rtArithToSlow
     mov x0, x19
     mov x1, x20
     bl rtToFloat2
@@ -332,13 +455,14 @@ rtArith:
     b.eq rtArMul
     cmp x21, 3
     b.eq rtArDiv
-    cmp x21, 5
-    b.eq rtArFloorDiv
     b rtArMod
-rtArFloorDiv:
-    fdiv d0, d0, d1
-    frintm d0, d0
-    b rtArDone
+rtArithToSlow:
+    mov x0, x19
+    mov x1, x20
+    mov x2, x21
+    ldp x20, x21, [sp], 16
+    ldp lr, x19, [sp], 16
+    b rtNumSlow
 rtFloorDiv:
     and x2, x0, x1
     tbnz x2, 0, rtIntDiv
@@ -354,6 +478,10 @@ rtArMul:
     fmul d0, d0, d1
     b rtArDone
 rtArDiv:
+    fcmp d1, #0.0
+    b.vs rtArDivOk
+    b.eq rtDivZero
+rtArDivOk:
     fdiv d0, d0, d1
     b rtArDone
 rtArMod:
@@ -578,10 +706,6 @@ rtAdd:
     sub x3, x1, 1
     adds x3, x3, x0
     b.vs rtAddSlow
-    asr x6, x3, 54
-    add x6, x6, 1
-    cmp x6, 1
-    b.hi rtAddSlow
     mov x0, x3
     ret
 rtAddSlow:
@@ -594,10 +718,6 @@ rtSub:
     b.vs rtSubSlow
     adds x3, x3, 1
     b.vs rtSubSlow
-    asr x6, x3, 54
-    add x6, x6, 1
-    cmp x6, 1
-    b.hi rtSubSlow
     mov x0, x3
     ret
 rtSubSlow:
@@ -613,10 +733,6 @@ rtMul:
     cmp x6, x5, asr 63
     b.ne rtMulSlow
     add x7, x5, 1
-    asr x6, x7, 54
-    add x6, x6, 1
-    cmp x6, 1
-    b.hi rtMulSlow
     mov x0, x7
     ret
 rtMulSlow:
@@ -625,11 +741,18 @@ rtMulSlow:
 rtDiv:
     and x2, x0, x1
     tbz x2, 0, rtDivSlow
-    asr x1, x1, 1
-    cbz x1, rtDivZero
-    asr x0, x0, 1
-    scvtf d0, x0
-    scvtf d1, x1
+    asr x3, x1, 1
+    cbz x3, rtDivZero
+    asr x4, x0, 1
+    ldr x5, =9007199254740992
+    add x6, x4, x5
+    lsr x6, x6, 54
+    cbnz x6, rtDivSlow
+    add x6, x3, x5
+    lsr x6, x6, 54
+    cbnz x6, rtDivSlow
+    scvtf d0, x4
+    scvtf d1, x3
     fdiv d0, d0, d1
     b rtBoxFloat
 rtDivSlow:
@@ -660,9 +783,21 @@ rtModSlow:
 rtNeg:
     tbz x0, 0, rtNegSlow
     mov x1, 2
-    sub x0, x1, x0
+    subs x2, x1, x0
+    b.vs rtNegBig
+    mov x0, x2
     ret
+rtNegBig:
+    mov x1, 1
+    mov x2, 6
+    b rtNumSlow
 rtNegSlow:
+    cmp x0, 4
+    b.ls rtNegFloat
+    ldr x3, [x0]
+    cmp x3, 7
+    b.eq rtNegBig
+rtNegFloat:
     stp lr, xzr, [sp, -16]!
     bl rtToDouble
     fneg d0, d0
@@ -675,7 +810,7 @@ rtBitAnd:
     mov x0, x2
     ret
 rtBitAndSlow:
-    mov x2, 0
+    mov x2, 9
     b rtBitSlow
 rtBitOr:
     and x2, x0, x1
@@ -683,7 +818,7 @@ rtBitOr:
     orr x0, x0, x1
     ret
 rtBitOrSlow:
-    mov x2, 1
+    mov x2, 10
     b rtBitSlow
 rtBitXor:
     and x2, x0, x1
@@ -692,89 +827,64 @@ rtBitXor:
     orr x0, x0, 1
     ret
 rtBitXorSlow:
-    mov x2, 2
+    mov x2, 11
     b rtBitSlow
 rtShl:
     and x2, x0, x1
     tbz x2, 0, rtShlSlow
     asr x3, x1, 1
+    cmp x3, 0
+    b.lt rtShlSlow
     cmp x3, 62
     b.hi rtShlSlow
     asr x4, x0, 1
-    lsl x4, x4, x3
-    asr x5, x4, 53
-    add x5, x5, 1
-    cmp x5, 1
-    b.hi rtShlSlow
-    lsl x0, x4, 1
-    add x0, x0, 1
+    lsl x5, x4, x3
+    asr x6, x5, x3
+    cmp x6, x4
+    b.ne rtShlSlow
+    adds x7, x5, x5
+    b.vs rtShlSlow
+    add x0, x7, 1
     ret
 rtShlSlow:
-    mov x2, 3
+    mov x2, 7
     b rtBitSlow
 rtShr:
     and x2, x0, x1
     tbz x2, 0, rtShrSlow
+    asr x3, x1, 1
+    cmp x3, 0
+    b.lt rtShrSlow
+    mov x4, 63
+    cmp x3, x4
+    csel x3, x3, x4, ls
     asr x0, x0, 1
-    asr x1, x1, 1
-    asr x0, x0, x1
+    asr x0, x0, x3
     lsl x0, x0, 1
     add x0, x0, 1
     ret
 rtShrSlow:
-    mov x2, 4
+    mov x2, 8
     b rtBitSlow
 rtBitSlow:
-    stp lr, x19, [sp, -16]!
-    mov x19, x2
-    bl rtToFloat2
-    fcvtzs x8, d0
-    fcvtzs x9, d1
-    ldr x10, =0x7fffffffffffffff
-    cmp x8, x10
-    b.ne rtSatA
-    ldr x8, =0x8000000000000000
-rtSatA:
-    ldr x10, =0x7fffffffffffffff
-    cmp x9, x10
-    b.ne rtSatB
-    ldr x9, =0x8000000000000000
-rtSatB:
-    cmp x19, 0
-    b.eq rtBsAnd
-    cmp x19, 1
-    b.eq rtBsOr
-    cmp x19, 2
-    b.eq rtBsXor
-    cmp x19, 3
-    b.eq rtBsShl
-    asr x8, x8, x9
-    b rtBsDone
-rtBsAnd:
-    and x8, x8, x9
-    b rtBsDone
-rtBsOr:
-    orr x8, x8, x9
-    b rtBsDone
-rtBsXor:
-    eor x8, x8, x9
-    b rtBsDone
-rtBsShl:
-    lsl x8, x8, x9
-rtBsDone:
-    asr x2, x8, 53
-    add x2, x2, 1
-    cmp x2, 1
-    b.hi rtBsFloat
-    lsl x0, x8, 1
-    add x0, x0, 1
-    ldp lr, x19, [sp], 16
-    ret
-rtBsFloat:
-    scvtf d0, x8
-    bl rtBoxFloat
-    ldp lr, x19, [sp], 16
-    ret
+    tbnz x0, 0, rtBsA
+    cmp x0, 4
+    b.ls rtBsBad
+    ldr x3, [x0]
+    cmp x3, 7
+    b.ne rtBsBad
+rtBsA:
+    tbnz x1, 0, rtBsB
+    cmp x1, 4
+    b.ls rtBsBad
+    ldr x3, [x1]
+    cmp x3, 7
+    b.ne rtBsBad
+rtBsB:
+    b rtNumSlow
+rtBsBad:
+    ldr x0, =strBadBitwise
+    b rtFail
 rtBitNot:
     tbz x0, 0, rtBitNotSlow
     asr x0, x0, 1
@@ -783,29 +893,18 @@ rtBitNot:
     add x0, x0, 1
     ret
 rtBitNotSlow:
-    stp lr, xzr, [sp, -16]!
-    bl rtToDouble
-    fcvtzs x8, d0
-    ldr x10, =0x7fffffffffffffff
-    cmp x8, x10
-    b.ne rtSatC
-    ldr x8, =0x8000000000000000
-rtSatC:
-    mvn x8, x8
-    asr x2, x8, 53
-    add x2, x2, 1
-    cmp x2, 1
-    b.hi rtBnFloat
-    lsl x0, x8, 1
-    add x0, x0, 1
-    ldp lr, xzr, [sp], 16
-    ret
-rtBnFloat:
-    scvtf d0, x8
-    bl rtBoxFloat
-    ldp lr, xzr, [sp], 16
-    ret
+    cmp x0, 4
+    b.ls rtBsBad
+    ldr x3, [x0]
+    cmp x3, 7
+    b.ne rtBsBad
+    mov x1, 1
+    mov x2, 12
+    b rtNumSlow
 rtIntDiv:
+    mov x3, -1
+    cmp x1, x3
+    b.eq rtNeg
     asr x0, x0, 1
     asr x1, x1, 1
     cbz x1, rtDivZero
@@ -882,6 +981,8 @@ rtInt:
     cmp x0, 4
     b.ls rtIntSelf
     ldr x1, [x0]
+    cmp x1, 7
+    b.eq rtIntSelf
     cmp x1, 6
     b.eq rtIntFloat
     cmp x1, 2
@@ -890,12 +991,33 @@ rtIntSelf:
     ret
 rtIntFloat:
     ldr d0, [x0, 8]
-    fcvtzs x0, d0
-    lsl x0, x0, 1
-    add x0, x0, 1
+    fcmp d0, d0
+    b.vs rtIntFloatBig
+    fcvtzs x1, d0
+    lsl x2, x1, 1
+    asr x3, x2, 1
+    cmp x3, x1
+    b.ne rtIntFloatBig
+    add x0, x2, 1
+    ret
+rtIntFloatBig:
+    stp lr, xzr, [sp, -16]!
+    str x0, [sp, -16]!
+    bl fnnsRtFloatToInt
+    add sp, sp, 16
+    ldp lr, xzr, [sp], 16
+    ret
+rtIntParseBig:
+    stp lr, xzr, [sp, -16]!
+    str x0, [sp, -16]!
+    bl fnnsRtIntFromText
+    add sp, sp, 16
+    ldp lr, xzr, [sp], 16
     ret
 rtIntParse:
     ldr x1, [x0, 8]
+    cmp x1, 18
+    b.hi rtIntParseBig
     add x2, x0, 16
     mov x0, 0
     mov x5, 0
@@ -958,10 +1080,18 @@ rtFloat:
     cmp x0, 4
     b.ls rtFloatNum
     ldr x1, [x0]
+    cmp x1, 7
+    b.eq rtFloatBig
     cmp x1, 2
     b.ne rtFloatNum
     bl rtStrToDouble
     b rtFloatBox
+rtFloatBig:
+    str x0, [sp, -16]!
+    bl fnnsRtToFloat
+    add sp, sp, 16
+    ldp lr, xzr, [sp], 16
+    ret
 rtFloatNum:
     bl rtToDouble
 rtFloatBox:
@@ -1100,4 +1230,71 @@ rtSdRet:
 rtSdBad:
     ldr x0, =strBadNum
     b rtFail
+rtKind:
+    tbnz x0, 0, rtKindInt
+    cmp x0, 4
+    b.ls rtKindOther
+    ldr x1, [x0]
+    cmp x1, 6
+    b.eq rtKindFloat
+    cmp x1, 7
+    b.eq rtKindBig
+rtKindOther:
+    mov x0, 19
+    ret
+rtKindInt:
+    mov x0, 1
+    ret
+rtKindFloat:
+    mov x0, 3
+    ret
+rtKindBig:
+    mov x0, 13
+    ret
+rtBigLen:
+    ldr x0, [x0, 16]
+    lsl x0, x0, 1
+    add x0, x0, 1
+    ret
+rtBigSign:
+    ldr x0, [x0, 8]
+    lsl x0, x0, 1
+    add x0, x0, 1
+    ret
+rtBigGet:
+    asr x1, x1, 1
+    add x2, x0, 24
+    ldr x0, [x2, x1, lsl 3]
+    lsl x0, x0, 1
+    add x0, x0, 1
+    ret
+rtBigBox:
+    stp lr, x19, [sp, -16]!
+    stp x20, x21, [sp, -16]!
+    mov x19, x0
+    mov x20, x1
+    ldr x21, [x20, 8]
+    lsl x0, x21, 3
+    add x0, x0, 24
+    bl rtAlloc
+    mov x2, 7
+    str x2, [x0]
+    asr x19, x19, 1
+    str x19, [x0, 8]
+    str x21, [x0, 16]
+    ldr x3, [x20, 24]
+    add x6, x0, 24
+    mov x4, 0
+rtBbLoop:
+    cmp x4, x21
+    b.hs rtBbDone
+    ldr x5, [x3, x4, lsl 3]
+    asr x5, x5, 1
+    str x5, [x6, x4, lsl 3]
+    add x4, x4, 1
+    b rtBbLoop
+rtBbDone:
+    ldp x20, x21, [sp], 16
+    ldp lr, x19, [sp], 16
+    ret
 """

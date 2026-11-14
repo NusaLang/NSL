@@ -1,0 +1,30 @@
+# Map views and list repeat.
+# The text below is Nusantara source that is compiled into every program that needs it.
+
+TEXT = """func nsRtMapKeys(m):
+    out = []
+    for k in m:
+        push(out, k)
+    return out
+
+func nsRtMapValues(m):
+    out = []
+    for k in m:
+        push(out, m[k])
+    return out
+
+func nsRtMapItems(m):
+    out = []
+    for k in m:
+        push(out, [k, m[k]])
+    return out
+
+func nsRtListRepeat(a, n):
+    res = []
+    i = 0
+    while i < n:
+        for x in a:
+            push(res, x)
+        i += 1
+    return res
+"""

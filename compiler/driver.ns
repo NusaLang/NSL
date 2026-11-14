@@ -22,6 +22,7 @@ resolveModulePath = resolverModule.resolveModulePath
 
 JalankanPerintah = jalankan_perintah
 FileAda = file_ada
+hostGetEnv = ambil_env
 BacaFile = baca_file
 TulisFile = tulis_file
 
@@ -63,6 +64,7 @@ func loadSubmodule(path):
     return impor(path)
 
 assemblerModule = loadSubmodule("compiler/assembler/assembler.ns")
+shakeModule = loadSubmodule("compiler/shake.ns")
 assembleToFile = assemblerModule.assembleToFile
 
 func getBackendCompiler(targetArch):
@@ -184,7 +186,12 @@ func build(inputFile, outputFile, keepAsm = False, targetArch = None):
         print(e)
         builtinsSys.exit(1)
 
-    depsPath = ambil_env("NUSA_DEPS")
+    if not compiler.usesGoBridge and hostGetEnv("NusaNoShake") == None:
+        asm = shakeModule.shake(asm)
+
+    depsPath = hostGetEnv("NusaDeps")
+    if depsPath == None:
+        depsPath = hostGetEnv("NUSA_DEPS")
     if depsPath != None and depsPath != "":
         writeDeps(depsPath, inputFile, compiler.backend)
 

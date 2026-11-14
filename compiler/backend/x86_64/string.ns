@@ -83,7 +83,14 @@ rtToStrObj:
     jne rtTsNotStr
     mov rax, rdi
     ret
+rtBigToStr:
+    push rdi
+    call fnnsRtBigStr
+    add rsp, 8
+    ret
 rtTsNotStr:
+    cmp rax, 7
+    je rtBigToStr
     cmp rax, 3
     je rtArrStr
     cmp rax, 4
@@ -159,7 +166,26 @@ rtSubstrCopy:
     jmp rtSubstrCopy
 rtSubstrDone:
     ret
+rtNeedStr:
+    test dil, 1
+    jnz rtNeedStrBad
+    cmp rdi, 4
+    jbe rtNeedStrBad
+    cmp qword ptr [rdi], 2
+    jne rtNeedStrBad
+    ret
+rtNeedStrBad:
+    lea rdi, [strNeedText]
+    jmp rtFail
+rtNeedStr2:
+    push rdi
+    call rtNeedStr
+    mov rdi, rsi
+    call rtNeedStr
+    pop rdi
+    ret
 rtStrFind:
+    call rtNeedStr2
     mov r8, [rdi+8]
     mov r9, [rsi+8]
     sar rdx, 1
@@ -195,6 +221,7 @@ rtSfNotFound:
     mov rax, -1
     ret
 rtStrStartsWith:
+    call rtNeedStr2
     mov r8, [rdi+8]
     mov r9, [rsi+8]
     cmp r9, r8
@@ -216,6 +243,7 @@ rtSwFalse:
     mov rax, 2
     ret
 rtStrEndsWith:
+    call rtNeedStr2
     mov r8, [rdi+8]
     mov r9, [rsi+8]
     cmp r9, r8
@@ -241,6 +269,32 @@ rtEwFalse:
     mov rax, 2
     ret
 rtStrJoin:
+    call rtNeedStr
+    test sil, 1
+    jnz rtSjBad
+    cmp rsi, 4
+    jbe rtSjBad
+    cmp qword ptr [rsi], 3
+    jne rtSjBad
+    mov r8, [rsi+8]
+    mov r9, [rsi+24]
+    xor rcx, rcx
+rtSjChk:
+    cmp rcx, r8
+    jae rtSjChkDone
+    mov rax, [r9+rcx*8]
+    test al, 1
+    jnz rtSjBad
+    cmp rax, 4
+    jbe rtSjBad
+    cmp qword ptr [rax], 2
+    jne rtSjBad
+    inc rcx
+    jmp rtSjChk
+rtSjBad:
+    lea rdi, [strJoinBad]
+    jmp rtFail
+rtSjChkDone:
     push r12
     push r13
     push r14
@@ -316,7 +370,13 @@ rtSjOuterDone:
     pop r13
     pop r12
     ret
+rtSplitEmptySep:
+    lea rdi, [strSplitEmpty]
+    jmp rtFail
 rtStrSplit:
+    call rtNeedStr2
+    cmp qword ptr [rsi+8], 0
+    je rtSplitEmptySep
     push rbx
     push r12
     push r13

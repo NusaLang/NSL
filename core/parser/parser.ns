@@ -761,7 +761,7 @@ class Parser:
         if e.type == "IDENT":
             return self.copyPos(IdentExpr(e.name), e)
         if e.type == "NUMBER":
-            return self.copyPos(NumberExpr(e.value, e.isFloat), e)
+            return self.copyPos(NumberExpr(e.value, e.isFloat, e.big), e)
         if e.type == "STRING":
             return self.copyPos(StringExpr(e.value), e)
         if e.type == "BOOL":
@@ -990,7 +990,7 @@ class Parser:
         t = tok.type
         if t == TokenType.NUMBER:
             self.advance()
-            return self.at(NumberExpr(tok.number, tok.isFloat), tok)
+            return self.at(NumberExpr(tok.number, tok.isFloat, tok.big), tok)
         if t == TokenType.STRING:
             self.advance()
             return self.at(StringExpr(tok.text), tok)

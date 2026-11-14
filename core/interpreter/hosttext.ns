@@ -1,0 +1,61 @@
+# Text helpers the interpreter provides on top of the host's text type.
+
+func loadPart(name):
+    candidates = [name, "interpreter/" + name, "core/interpreter/" + name, "../core/interpreter/" + name]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/interpreter/" + name)
+
+errorsPart = loadPart("errors.ns")
+
+rtError = errorsPart.rtError
+
+func replaceText(text, old, new):
+    if old == "":
+        return text
+    return gabung(pisah(text, old), new)
+
+
+func countText(text, sub):
+    if sub == "":
+        return len(text) + 1
+    return len(pisah(text, sub)) - 1
+
+
+func padLeft(text):
+    i = 0
+    while i < len(text) and (text[i] == " " or text[i] == "\t" or text[i] == "\n" or text[i] == "\r"):
+        i += 1
+    return text[i:]
+
+
+func padRight(text):
+    j = len(text)
+    while j > 0 and (text[j - 1] == " " or text[j - 1] == "\t" or text[j - 1] == "\n" or text[j - 1] == "\r"):
+        j -= 1
+    return text[:j]
+
+
+func makeStrFind(text):
+    func finder(sub, start = 0):
+        if start <= 0:
+            return text.find(sub)
+        rest = text[start:]
+        found = rest.find(sub)
+        if found < 0:
+            return -1
+        return found + start
+    return finder
+
+
+func joinChecked(items, sep):
+    if tipe(items) != "larik":
+        rtError("join(): butuh larik")
+    for item in items:
+        if tipe(item) != "teks":
+            rtError("join(): elemen harus teks")
+    return gabung(items, sep)
+

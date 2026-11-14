@@ -511,6 +511,7 @@ class X86_64Compiler:
         self.loops = []
         self.tryDepth = 0
         self.exactInts = False
+        self.compact = False
         self.forceLocal = False
         self.moduleAssigned = {}
         self.externalFields = {}
@@ -591,6 +592,14 @@ class X86_64Compiler:
         if name in self.aliasOf:
             return self.aliasOf[name]
         return name
+
+    func bigintSource(self):
+        home = resolverModule.stdlibHome()
+        candidates = [home + "/core/bigint.ns", "core/bigint.ns", "../core/bigint.ns", "experiment/core/bigint.ns"]
+        for c in candidates:
+            if FileAda(c):
+                return BacaFile(c)
+        fail("cannot find core/bigint.ns")
 
     func processImports(self, tree):
         self.importIndex = {}
@@ -783,7 +792,7 @@ class X86_64Compiler:
                     methodDefaults[m.name] = m.defaults
                 self.classes[c.name] = {"base": c.baseClass, "methods": methods, "methodParams": methodParams, "methodDefaults": methodDefaults}
                 classStmts.append(c)
-        preludeParser = Parser(Lexer(preludeModule.PRELUDE).tokenize())
+        preludeParser = Parser(Lexer(preludeModule.PRELUDE + "\n" + preludeModule.PRELUDEGLUE + "\n" + self.bigintSource()).tokenize())
         for pf in preludeParser.parse():
             if pf.type == "FUNC":
                 self.funcs[pf.name] = len(pf.params)
@@ -861,17 +870,38 @@ class X86_64Compiler:
             self.emit("lea rax, [rsp-7340032]")
             self.emit("mov [stackLimit], rax")
         else:
+            tryLbl = self.newLabel()
+            okLbl = self.newLabel()
+            doneLbl = self.newLabel()
+            self.emit("mov rsi, 1073741824")
+            self.label(tryLbl)
             self.emit("mov rax, 9")
             self.emit("xor rdi, rdi")
-            self.emit("mov rsi, 1073741824")
             self.emit("mov rdx, 3")
             self.emit("mov r10, 16418")
             self.emit("mov r8, -1")
             self.emit("xor r9, r9")
             self.emit("syscall")
-            self.emit("lea rdx, [rax+262144]")
+            self.emit("cmp rax, -4095")
+            self.emit("jb " + okLbl)
+            self.emit("shr rsi, 1")
+            self.emit("cmp rsi, 1048576")
+            self.emit("jae " + tryLbl)
+            self.emit("lea rax, [rsp-2097152]")
+            self.emit("mov [stackLimit], rax")
+            self.emit("jmp " + doneLbl)
+            self.label(okLbl)
+            self.emit("mov r12, rax")
+            self.emit("mov r13, rsi")
+            self.emit("mov rdi, rax")
+            self.emit("mov rsi, 65536")
+            self.emit("xor edx, edx")
+            self.emit("mov rax, 10")
+            self.emit("syscall")
+            self.emit("lea rdx, [r12+262144]")
             self.emit("mov [stackLimit], rdx")
-            self.emit("lea rsp, [rax+1073741824]")
+            self.emit("lea rsp, [r12+r13]")
+            self.label(doneLbl)
         self.emit("call rtInit")
         self.emit("call rtSysInit")
         for s in mainStmts:
@@ -915,6 +945,7 @@ class X86_64Compiler:
 
     func genFunc(self, f, label, plainName):
         self.exactInts = plainName.startswith("nsRt")
+        self.compact = self.exactInts
         self.inFn = True
         self.fnName = label
         self.params = {}
@@ -962,6 +993,7 @@ class X86_64Compiler:
         tail.append("    ret")
         self.inFn = False
         self.exactInts = False
+        self.compact = False
         return "\n".join(head + loads + bodyLines + tail + self.cold)
 
     func addr(self, name, create):
@@ -1016,7 +1048,7 @@ class X86_64Compiler:
         return self.addr(name, True)
 
     func smallInt(self, e):
-        if e.type != "NUMBER" or e.isFloat:
+        if e.type != "NUMBER" or e.isFloat or e.big != None:
             return False
         v = e.value
         return v == int(v) and int(v) < 1000000000 and int(v) > -1000000000
@@ -1073,6 +1105,23 @@ class X86_64Compiler:
                 self.genExpr(e.right)
                 self.emit("mov rcx, rax")
                 self.emit("pop rax")
+            if self.compact:
+                # the runtime's own code favours size: one call, no inline fast path
+                compactOp = e.op
+                if e.op == ">" or e.op == ">=":
+                    self.emit("mov rdi, rcx")
+                    self.emit("mov rsi, rax")
+                    compactOp = "<" if e.op == ">" else "<="
+                else:
+                    self.emit("mov rdi, rax")
+                    self.emit("mov rsi, rcx")
+                self.emit("call rtCmp")
+                if e.op != "==" and e.op != "!=":
+                    self.emit("cmp rax, 3")
+                    self.emit("je rtCmpTypeError")
+                self.emit("cmp rax, 0")
+                self.emit(JUMPS[compactOp] + " " + falseLabel)
+                return None
             cold = self.newLabel()
             back = self.newLabel()
             if self.smallInt(e.right):
@@ -1088,11 +1137,21 @@ class X86_64Compiler:
             self.emit(JUMPS[e.op] + " " + falseLabel)
             self.label(back)
             self.cold.append(cold + ":")
-            self.cold.append("    mov rdi, rax")
-            self.cold.append("    mov rsi, rcx")
+            jumpOp = e.op
+            if e.op == ">" or e.op == ">=":
+                # b < a and b <= a keep an unordered nan on the false side
+                self.cold.append("    mov rdi, rcx")
+                self.cold.append("    mov rsi, rax")
+                jumpOp = "<" if e.op == ">" else "<="
+            else:
+                self.cold.append("    mov rdi, rax")
+                self.cold.append("    mov rsi, rcx")
             self.cold.append("    call rtCmp")
+            if e.op != "==" and e.op != "!=":
+                self.cold.append("    cmp rax, 3")
+                self.cold.append("    je rtCmpTypeError")
             self.cold.append("    cmp rax, 0")
-            self.cold.append("    " + JUMPS[e.op] + " " + falseLabel)
+            self.cold.append("    " + JUMPS[jumpOp] + " " + falseLabel)
             self.cold.append("    jmp " + back)
         elif e.type == "BINARY" and (e.op == "and" or e.op == "&&"):
             self.genCond(e.left, falseLabel)
@@ -1285,6 +1344,14 @@ class X86_64Compiler:
                 self.emit("mov " + mem(curLoc) + ", rax")
                 self.genExpr(rangeArgs[1])
                 self.emit("mov " + mem(stopLoc) + ", rax")
+            rangeOk = self.newLabel()
+            self.emit("mov rcx, " + curLoc)
+            self.emit("and rcx, " + stopLoc)
+            self.emit("test cl, 1")
+            self.emit("jnz " + rangeOk)
+            self.emit("lea rdi, [strRangeInt]")
+            self.emit("call rtFail")
+            self.label(rangeOk)
             self.loops.append([cont, end, self.tryDepth])
             self.label(top)
             self.emit("mov rax, " + curLoc)
@@ -1492,7 +1559,7 @@ class X86_64Compiler:
             self.genExpr(e.right)
             self.emit("mov rcx, rax")
             self.emit("pop rax")
-        if op == "+" or op == "-":
+        if (op == "+" or op == "-") and not self.compact:
             cold = self.newLabel()
             back = self.newLabel()
             immRight = self.smallInt(e.right)
@@ -1548,6 +1615,11 @@ class X86_64Compiler:
             self.genExpr(e.right)
             self.emit("mov rcx, rax")
             self.emit("pop rax")
+        if self.compact:
+            self.emit("mov rdi, rax")
+            self.emit("mov rsi, rcx")
+            self.emit("call " + (BITWISEX[op] if self.exactInts else BITWISE[op]))
+            return None
         cold = self.newLabel()
         back = self.newLabel()
         self.emit("mov rdx, rax")
@@ -1611,15 +1683,16 @@ class X86_64Compiler:
             v = e.value
             if e.isFloat:
                 self.emit("lea rax, [" + self.floatConst(v) + "]")
-            elif v == int(v) and (int(v) >= INTLIMIT or int(v) <= 0 - INTLIMIT):
-                self.emit("lea rax, [" + self.floatConst(v) + "]")
-            elif v == int(v) and (int(v) > 1000000000000000 or int(v) < -1000000000000000):
+            elif e.big != None:
+                self.emit("lea rax, [" + self.internString(e.big) + "]")
+                self.emit("push rax")
+                self.emit("call fnnsRtBigLit")
+                self.emit("add rsp, 8")
+            elif int(v) > 1000000000000000 or int(v) < -1000000000000000:
                 self.emit("mov rax, " + str(int(v)))
                 self.emit("lea rax, [rax*2+1]")
-            elif v == int(v):
-                self.emit("mov rax, " + str(2 * int(v) + 1))
             else:
-                self.emit("lea rax, [" + self.floatConst(v) + "]")
+                self.emit("mov rax, " + str(2 * int(v) + 1))
         elif t == "STRING":
             self.emit("lea rax, [" + self.internString(e.value) + "]")
         elif t == "BOOL":
@@ -2231,6 +2304,22 @@ class X86_64Compiler:
             self.genExpr(args[0])
             self.emit("mov rdi, rax")
             self.emit("call rtFloatParts")
+        elif name == "nsKind" or name == "nsBigLen" or name == "nsBigSign":
+            self.genExpr(args[0])
+            self.emit("mov rdi, rax")
+            helper = "rtKind"
+            if name == "nsBigLen":
+                helper = "rtBigLen"
+            elif name == "nsBigSign":
+                helper = "rtBigSign"
+            self.emit("call " + helper)
+        elif name == "nsBigGet" or name == "nsBigBox":
+            self.genExpr(args[0])
+            self.emit("push rax")
+            self.genExpr(args[1])
+            self.emit("mov rsi, rax")
+            self.emit("pop rdi")
+            self.emit("call " + ("rtBigGet" if name == "nsBigGet" else "rtBigBox"))
         elif name == "intDiv":
             self.genExpr(args[0])
             self.emit("push rax")

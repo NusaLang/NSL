@@ -1,0 +1,85 @@
+// Exact comparison of ints, big ints and floats.
+
+func load(name):
+    candidates = [name, "numbers/" + name, "core/numbers/" + name, "../core/numbers/" + name]
+    for candidate in candidates:
+        try:
+            return impor(candidate)
+        except err:
+            pass
+    return impor("core/numbers/" + name)
+
+kinds = load("kinds.ns")
+intops = load("intops.ns")
+
+kindOf = kinds.kindOf
+isIntKind = kinds.isIntKind
+toDouble = kinds.toDouble
+cmpInts = intops.cmpInts
+intFromDouble = intops.intFromDouble
+
+// the exact comparison of an int and a double: -1, 0, 1, or None when x is nan
+func cmpIntFloat(i, x):
+    if x != x:
+        return None
+    if x - x != 0:
+        if x > 0:
+            return -1
+        return 1
+    if str(tipe(i)) == "angka":
+        if i < x:
+            return -1
+        if i > x:
+            return 1
+        return 0
+    // a big int against a double
+    fl = x
+    frac = 0
+    if x % 1 != 0:
+        fl = x - (x % 1)
+        frac = 1
+    fi = intFromDouble(fl)
+    c = cmpInts(i, fi)
+    if c != 0:
+        return c
+    if frac == 1:
+        return -1
+    return 0
+
+func cmpValues(a, b):
+    ka = kindOf(a)
+    kb = kindOf(b)
+    if isIntKind(ka) and isIntKind(kb):
+        return cmpInts(a, b)
+    if isIntKind(ka):
+        return cmpIntFloat(a, toDouble(b))
+    if isIntKind(kb):
+        c = cmpIntFloat(b, toDouble(a))
+        if c == None:
+            return None
+        return 0 - c
+    x = toDouble(a)
+    y = toDouble(b)
+    if x != x or y != y:
+        return None
+    if x < y:
+        return -1
+    if x > y:
+        return 1
+    return 0
+
+func compare(op, a, b):
+    c = cmpValues(a, b)
+    if c == None:
+        return op == "!="
+    if op == "==":
+        return c == 0
+    if op == "!=":
+        return c != 0
+    if op == "<":
+        return c < 0
+    if op == "<=":
+        return c <= 0
+    if op == ">":
+        return c > 0
+    return c >= 0

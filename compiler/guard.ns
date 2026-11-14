@@ -31,6 +31,9 @@ ForInStmt = astModule.ForInStmt
 ThrowStmt = astModule.ThrowStmt
 TryStmt = astModule.TryStmt
 
+# camelCase names of the builtins the native backends know by their host names.
+CAMELBUILTINS = {"BacaFile": "baca_file", "TulisFile": "tulis_file", "FileAda": "file_ada", "KeTeks": "ke_teks", "KeAngka": "ke_angka", "GcInfo": "gc_info", "GcPaksa": "gc_paksa", "HapusAkhir": "hapus_akhir"}
+
 INITNAMES = ["__init__", "konstruktor", "init", "constructor"]
 
 # Methods the interpreter has on lists, texts, and maps that native code does not.
@@ -363,6 +366,8 @@ class Prep:
             e.operand = self.lowerExpr(e.operand, False)
             return e
         if t == "CALL":
+            if e.callee.type == "IDENT" and (e.callee.name in CAMELBUILTINS) and not (e.callee.name in self.funcSigs) and not (e.callee.name in self.classes):
+                e.callee = IdentExpr(CAMELBUILTINS[e.callee.name])
             if e.callee.type == "IDENT" and (e.callee.name == "impor" or e.callee.name == "import") and not hasattr(e, "topImport"):
                 unsupported("impor di luar penugasan tingkat atas")
             if e.callee.type == "IDENT" and (e.callee.name == "range" or e.callee.name == "rentang") and len(e.args) == 3:
@@ -675,7 +680,7 @@ class Prep:
                 return self.copyWith(subst[e.name], {})
             return IdentExpr(e.name)
         if t == "NUMBER":
-            return NumberExpr(e.value, e.isFloat)
+            return NumberExpr(e.value, e.isFloat, e.big)
         if t == "STRING":
             return StringExpr(e.value)
         if t == "BOOL":

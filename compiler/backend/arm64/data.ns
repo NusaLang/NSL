@@ -99,6 +99,65 @@ strDivZero: .quad 2
  .quad 16
  .ascii "division by zero"
 .align 8
+strBadOrd: .quad 2
+ .quad 18
+ .ascii "ord(): teks kosong"
+.align 8
+strBadChr: .quad 2
+ .quad 18
+ .ascii "chr(): butuh angka"
+.align 8
+strBadRead: .quad 2
+ .quad 34
+ .ascii "BacaFile(): file tidak bisa dibuka"
+.align 8
+strBadWrite: .quad 2
+ .quad 36
+ .ascii "TulisFile(): file tidak bisa ditulis"
+.align 8
+strNeedText: .quad 2
+ .quad 18
+ .ascii "argumen harus teks"
+.align 8
+strNeedList: .quad 2
+ .quad 11
+ .ascii "butuh larik"
+.align 8
+strJoinBad: .quad 2
+ .quad 25
+ .ascii "join(): elemen harus teks"
+.align 8
+strSplitEmpty: .quad 2
+ .quad 23
+ .ascii "split(): pemisah kosong"
+.align 8
+strPopEmpty: .quad 2
+ .quad 19
+ .ascii "pop from empty list"
+.align 8
+strBadCmp: .quad 2
+ .quad 50
+ .ascii "Operand perbandingan harus dua angka atau dua teks"
+.align 8
+strBadBitwise: .quad 2
+ .quad 46
+ .ascii "unsupported operand type for bitwise operation"
+.align 8
+strRangeInt: .quad 2
+ .quad 36
+ .ascii "range() needs whole-number arguments"
+.align 8
+strHeapKey: .ascii "NusaHeap="
+ .zero 1
+.align 8
+strOutOfMemory: .quad 2
+ .quad 13
+ .ascii "out of memory"
+.align 8
+strNoMemory: .quad 2
+ .quad 35
+ .ascii "nusa: error: cannot reserve memory\\n"
+.align 8
 strIdxRange: .quad 2
  .quad 18
  .ascii "index out of range"
@@ -178,4 +237,6 @@ strBadLen: .quad 2
 excTop: .quad 0
 .align 8
 heapPtr: .quad 0
+heapEnd: .quad 0
+heapLimit: .quad 0
 """

@@ -329,7 +329,7 @@ rtCStrTerm:
 rtFileExists:
     call rtToCStr
     mov rdi, rax
-    xor rsi, rsi
+    mov rsi, 4
     mov rax, 21
     syscall
     test rax, rax
@@ -343,6 +343,7 @@ rtReadFile:
     push r12
     push r13
     push r14
+    push r15
     call rtToCStr
     mov rdi, rax
     xor rsi, rsi
@@ -352,45 +353,55 @@ rtReadFile:
     test rax, rax
     js rtRfEmpty
     mov r12, rax
-    mov rdi, r12
-    xor rsi, rsi
-    mov rdx, 2
-    mov rax, 8
-    syscall
-    mov r13, rax
-    mov rdi, r12
-    xor rsi, rsi
-    xor rdx, rdx
-    mov rax, 8
-    syscall
-    mov rdi, r13
-    add rdi, 16
+    mov r15, 4096
+    lea rdi, [r15+16]
     call rtAlloc
     mov r14, rax
-    mov qword ptr [r14], 2
-    mov [r14+8], r13
+    xor r13, r13
+rtRfLoop:
+    mov rdx, r15
+    sub rdx, r13
+    jz rtRfGrow
     mov rdi, r12
-    lea rsi, [r14+16]
-    mov rdx, r13
+    lea rsi, [r14+r13+16]
     xor rax, rax
     syscall
+    test rax, rax
+    jle rtRfDone
+    add r13, rax
+    jmp rtRfLoop
+rtRfGrow:
+    cmp r15, 1073741824
+    jae rtRfDone
+    lea rdi, [r15*2+16]
+    call rtAlloc
+    mov r8, rax
+    lea rdi, [rax+16]
+    lea rsi, [r14+16]
+    mov rcx, r13
+    rep movsb
+    mov r14, r8
+    shl r15, 1
+    jmp rtRfLoop
+rtRfDone:
+    mov qword ptr [r14], 2
+    mov [r14+8], r13
     mov rdi, r12
     mov rax, 3
     syscall
     mov rax, r14
+    pop r15
     pop r14
     pop r13
     pop r12
     ret
 rtRfEmpty:
-    mov rdi, 16
-    call rtAlloc
-    mov qword ptr [rax], 2
-    mov qword ptr [rax+8], 0
+    pop r15
     pop r14
     pop r13
     pop r12
-    ret
+    lea rdi, [strBadRead]
+    jmp rtFail
 rtWriteFile:
     push r12
     push r13
@@ -402,7 +413,7 @@ rtWriteFile:
     mov rax, 2
     syscall
     test rax, rax
-    js rtWfDone
+    js rtWfFail
     mov r12, rax
     mov rdi, r12
     lea rsi, [r13+16]
@@ -417,4 +428,9 @@ rtWfDone:
     pop r13
     pop r12
     ret
+rtWfFail:
+    pop r13
+    pop r12
+    lea rdi, [strBadWrite]
+    jmp rtFail
 """

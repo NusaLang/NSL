@@ -1,22 +1,101 @@
 ALLOC_RUNTIME = """rtAlloc:
-    add x0, x0, 7
-    and x0, x0, -8
+    add x3, x0, 7
+    cmp x3, x0
+    b.lo rtAllocFail
+    and x3, x3, -8
     ldr x1, =heapPtr
     ldr x2, [x1]
-    add x3, x2, x0
+    ldr x4, =heapEnd
+    ldr x4, [x4]
+    sub x4, x4, x2
+    cmp x3, x4
+    b.hi rtAllocFail
+    add x3, x2, x3
     str x3, [x1]
     mov x0, x2
     ret
+rtAllocFail:
+    ldr x1, =heapLimit
+    ldr x1, [x1]
+    ldr x2, =heapEnd
+    str x1, [x2]
+    ldr x0, =strOutOfMemory
+    b rtFail
 rtInit:
+    ldr x1, =8589934592
+    ldr x2, =gEnvp
+    ldr x2, [x2]
+rtHeapEnv:
+    ldr x3, [x2]
+    cbz x3, rtInitTry
+    ldr x4, =strHeapKey
+    mov x5, 0
+rtHeapCmp:
+    ldrb w6, [x3, x5]
+    ldrb w7, [x4, x5]
+    cbz w7, rtHeapMatch
+    cmp w6, w7
+    b.ne rtHeapNext
+    add x5, x5, 1
+    b rtHeapCmp
+rtHeapMatch:
+    add x3, x3, x5
     mov x0, 0
-    ldr x1, =17179869184
+rtHeapDig:
+    ldrb w6, [x3]
+    sub w6, w6, 48
+    cmp w6, 9
+    b.hi rtHeapEnd
+    mov x7, 10
+    mul x0, x0, x7
+    add x0, x0, x6
+    add x3, x3, 1
+    b rtHeapDig
+rtHeapEnd:
+    cbz x0, rtInitTry
+    ldr x7, =1048576
+    cmp x0, x7
+    b.hi rtInitTry
+    lsl x1, x0, 20
+    b rtInitTry
+rtHeapNext:
+    add x2, x2, 8
+    b rtHeapEnv
+rtInitTry:
+    mov x0, 0
     mov x2, 3
     mov x3, 0x4022
     mov x4, -1
     mov x5, 0
     mov x8, 222
+    mov x9, x1
     svc #0
+    mov x1, x9
+    mov x10, -4095
+    cmp x0, x10
+    b.lo rtInitOk
+    lsr x1, x1, 1
+    ldr x2, =16777216
+    cmp x1, x2
+    b.hs rtInitTry
+    mov x0, 2
+    ldr x1, =strNoMemory
+    ldr x2, [x1, 8]
+    add x1, x1, 16
+    mov x8, 64
+    svc #0
+    mov x0, 1
+    mov x8, 94
+    svc #0
+rtInitOk:
     ldr x1, =heapPtr
+    str x0, [x1]
+    add x0, x0, x9
+    ldr x1, =heapLimit
+    str x0, [x1]
+    ldr x2, =1048576
+    sub x0, x0, x2
+    ldr x1, =heapEnd
     str x0, [x1]
     ret
 """
